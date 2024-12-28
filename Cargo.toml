@@ -1,0 +1,9 @@
+[package]
+name = "snmp-rust"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rasn-snmp = "0.22.0"
+rasn-smi = "0.22.0"
+rasn = "0.22.0"
