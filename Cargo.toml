@@ -1,5 +1,5 @@
 [package]
-name = "snmp-rust"
+name = "snmp_rust_agent"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,3 +7,8 @@ edition = "2021"
 rasn-snmp = "0.22.0"
 rasn-smi = "0.22.0"
 rasn = "0.22.0"
+log = "0.4.22"
+env_logger = "0.11.6"
+sha1 = "0.10.6"
+hex = "0.4.3"
+regex = "1.11.1"
