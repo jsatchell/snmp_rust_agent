@@ -8,7 +8,7 @@ use std::str::FromStr;
 pub struct User {
     pub name: Vec<u8>,
     auth_key: Vec<u8>,
-    priv_key: Vec<u8>,
+    pub priv_key: Vec<u8>,
     k1: [u8; 64],
     k2: [u8; 64],
 }
@@ -25,7 +25,6 @@ impl FromStr for User {
         let caps = re.captures(s).ok_or(ParseUserError)?;
 
         let akb = hex::decode(&caps["ak"]).unwrap();
-        let l = akb.len();
         Ok(User {
             name: caps["name"].as_bytes().to_vec(),
             auth_key: akb.clone(),
@@ -38,15 +37,15 @@ impl FromStr for User {
 
 impl User {
     pub fn auth_from_bytes(&self, data: &[u8]) -> Vec<u8> {
-       let mut hasher = Sha1::new();
-       hasher.update(self.k1);
-       hasher.update(data);
-       let mid = hasher.finalize();
-       let mut hash2 = Sha1::new();
-       hash2.update(self.k2);
-       hash2.update(mid);
-       let last: [u8; 20] = hash2.finalize().into();
-       return last[0..12].to_owned();
+        let mut hasher = Sha1::new();
+        hasher.update(self.k1);
+        hasher.update(data);
+        let mid = hasher.finalize();
+        let mut hash2 = Sha1::new();
+        hash2.update(self.k2);
+        hash2.update(mid);
+        let last: [u8; 20] = hash2.finalize().into();
+        return last[0..12].to_owned();
     }
 }
 
@@ -93,13 +92,13 @@ pub fn load_users() -> Vec<User> {
     users
 }
 
-
 #[test]
-fn rfc2021_test () {
+fn rfc2021_test() {
     let s ="test sha1 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
     let u = User::from_str(s).unwrap();
 
-    assert_eq!(u.auth_from_bytes(b"Hi There"),
-                 b"\xb6\x17\x31\x86\x55\x05\x72\x64\xe2\x8b\xc0\xb6"); //  \x4c\x1a\x03\x42\x4b\x55\xe0\x7f\xe7\xf2\x7b\xe1")
-
+    assert_eq!(
+        u.auth_from_bytes(b"Hi There"),
+        b"\xb6\x17\x31\x86\x55\x05\x72\x64\xe2\x8b\xc0\xb6"
+    );
 }

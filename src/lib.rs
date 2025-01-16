@@ -1,3 +1,4 @@
+mod privacy;
 mod usm;
 
 pub mod snmp_agent {
@@ -17,11 +18,13 @@ pub mod snmp_agent {
     use std::str::FromStr;
     use std::time::Instant;
 
+    use crate::privacy;
     use crate::usm;
 
     const BOOTCNT_FILENAME: &str = "boot-cnt.txt";
     const B12: [u8; 12] = [0; 12];
     const Z12: OctetString = OctetString::from_static(&B12);
+    const ZB: OctetString = OctetString::from_static(b"");
 
     pub fn always_42() -> VarBindValue {
         VarBindValue::Value(ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(
@@ -84,9 +87,7 @@ pub mod snmp_agent {
 
         fn id_resp(&self, request_id: i32, message_id: Integer) -> Message {
             let vb: Vec<VarBind> = vec![VarBind {
-                name: ObjectIdentifier::new_unchecked(
-                    vec![1, 3, 6, 1, 6, 3, 15, 1, 1, 4].into(),
-                ),
+                name: ObjectIdentifier::new_unchecked(vec![1, 3, 6, 1, 6, 3, 15, 1, 1, 4].into()),
                 value: VarBindValue::Value(ObjectSyntax::Simple(SimpleSyntax::Integer(
                     Integer::from(4),
                 ))),
@@ -116,15 +117,15 @@ pub mod snmp_agent {
                 authoritative_engine_boots: Integer::Primitive(self.boots),
                 authoritative_engine_id: self.engine_id.clone(),
                 authoritative_engine_time: Integer::Primitive(run_time),
-                user_name: OctetString::from_static(b""),
-                authentication_parameters: OctetString::from_static(b""),
-                privacy_parameters: OctetString::from_static(b""),
+                user_name: ZB,
+                authentication_parameters: ZB,
+                privacy_parameters: ZB,
             };
             let mut message: Message = Message {
                 version: Integer::Primitive(3),
                 global_data: head,
                 scoped_data: spd,
-                security_parameters: OctetString::from_static(b""),
+                security_parameters: ZB,
             };
             _ = message.encode_security_parameters(rasn::Codec::Ber, &usm);
             println!("Out message {message:?}");
@@ -141,7 +142,7 @@ pub mod snmp_agent {
             };
             let scpd: ScopedPdu = ScopedPdu {
                 engine_id: self.engine_id.clone(),
-                name: OctetString::from_static(b""),
+                name: ZB,
                 data: Pdus::Response(resp),
             };
             let spd: ScopedPduData = ScopedPduData::CleartextPdu(scpd);
@@ -149,15 +150,15 @@ pub mod snmp_agent {
                 version: Integer::Primitive(3),
                 global_data: head,
                 scoped_data: spd,
-                security_parameters: OctetString::from_static(b""),
+                security_parameters: ZB,
             };
             let usm: USMSecurityParameters = USMSecurityParameters {
                 authoritative_engine_boots: Integer::Primitive(5),
                 authoritative_engine_id: self.engine_id.clone(),
                 authoritative_engine_time: Integer::Primitive(11),
                 user_name: OctetString::from_static(b"myv3user"),
-                authentication_parameters: OctetString::from_static(b""),
-                privacy_parameters: OctetString::from_static(b""),
+                authentication_parameters: ZB,
+                privacy_parameters: ZB,
             };
             _ = output.encode_security_parameters(rasn::Codec::Ber, &usm);
             output
@@ -203,8 +204,8 @@ pub mod snmp_agent {
                         return Some(self.prepare_back(message_id, resp));
                     }
                 }
-                Pdus::GetNextRequest(r) => {} //let request_id = r.0.request_id},
-                Pdus::SetRequest(r) => {}     //et request_id = r.0.request_id},
+                Pdus::GetNextRequest(_r) => {} //let request_id = r.0.request_id},
+                Pdus::SetRequest(_r) => {}     //et request_id = r.0.request_id},
                 _ => {}
             }
             None
@@ -212,7 +213,7 @@ pub mod snmp_agent {
 
         pub fn loop_forever(&mut self) {
             let mut buf = [0; 65100];
-            let mut opt_user:Option<&usm::User> = None;
+            let mut opt_user: Option<&usm::User> = None;
             loop {
                 let recv_res = self.socket.recv_from(&mut buf);
                 if recv_res.is_err() {
@@ -244,7 +245,7 @@ pub mod snmp_agent {
                         continue;
                     }
                     opt_user = self.lookup_user(usp.user_name.to_vec());
-                    if self.wrong_auth(&mut message, opt_user, usp) {
+                    if self.wrong_auth(&mut message, opt_user, usp.clone()) {
                         println!("Wrong auth, dropping");
                         continue;
                     }
@@ -263,34 +264,51 @@ pub mod snmp_agent {
                         }
                         send(&self.socket, src, out_message);
                     }
-                    ScopedPduData::EncryptedPdu(_enc_oct) => {
-                        println!("Ignoring encrypted")
+                    ScopedPduData::EncryptedPdu(enc_octs) => {
+                        println!("Try encrypted");
+                        let key = &opt_user.unwrap().priv_key;
+                        let buf2: Vec<u8> = privacy::decrypt(&mut enc_octs.to_vec(), usp, key);
+                        let pdu_decode_res: Result<ScopedPdu, rasn::error::DecodeError> =
+                            rasn::ber::decode(&buf2);
+                        if pdu_decode_res.is_err() {
+                            println!("Decode error {pdu_decode_res:?}");
+                            continue;
+                        }
+                        let scoped_pdu: ScopedPdu = pdu_decode_res.unwrap();
+                        let mess_opt: Option<Message> = self.do_scoped_pdu(scoped_pdu, message_id);
+                        if mess_opt.is_none() {
+                            continue;
+                        }
+                        let mut out_message = mess_opt.unwrap();
+                        out_message.global_data.flags = message.global_data.flags;
+                        if flags & 1 == 1 {
+                            self.set_auth(&mut out_message, opt_user);
+                        }
+                        send(&self.socket, src, out_message);
                     }
                 }
             }
         }
 
-        fn set_auth(&self,
-            message: &mut Message,
-            opt_usr: Option<&usm::User>) -> Vec<u8> {
+        fn set_auth(&self, message: &mut Message, opt_usr: Option<&usm::User>) -> Vec<u8> {
             let r_sp: Result<USMSecurityParameters, Box<dyn Display>> =
-            message.decode_security_parameters(rasn::Codec::Ber);
+                message.decode_security_parameters(rasn::Codec::Ber);
             if r_sp.is_err() {
-               return vec![];
+                return vec![];
             }
             let mut usp: USMSecurityParameters = r_sp.ok().expect("Errors caught above");
             usp.authentication_parameters = Z12;
             let _ = message.encode_security_parameters(rasn::Codec::Ber, &usp);
             let buf = rasn::ber::encode(message).unwrap();
-            if opt_usr.is_none() {return vec![]}
+            if opt_usr.is_none() {
+                return vec![];
+            }
             let usr = opt_usr.unwrap();
             let auth = usr.auth_from_bytes(&buf);
-            println!("Auth set to {auth:?}");
             usp.authentication_parameters = OctetString::copy_from_slice(&auth);
             let _ = message.encode_security_parameters(rasn::Codec::Ber, &usp);
             auth
-            } 
-
+        }
 
         fn wrong_auth(
             &self,
@@ -317,7 +335,6 @@ pub mod snmp_agent {
         fn lookup_user(&self, name: Vec<u8>) -> Option<&usm::User> {
             for user in &self.users {
                 let uname = user.name.clone();
-                println!("Trying {uname:?} {name:?}");
                 if uname == name {
                     return Some(user);
                 }
