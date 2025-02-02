@@ -1,4 +1,4 @@
-use hex;
+//use hex;
 use regex::Regex;
 use sha1::{Digest, Sha1};
 use std::fs::read_to_string;
@@ -45,30 +45,26 @@ impl User {
         hash2.update(self.k2);
         hash2.update(mid);
         let last: [u8; 20] = hash2.finalize().into();
-        return last[0..12].to_owned();
+        last[0..12].to_owned()
     }
 }
 
 fn k1_from_ak(ak: &[u8]) -> [u8; 64] {
     let mut eak: [u8; 64] = [0; 64];
-    for i in 0..20 {
-        eak[i] = ak[i];
-    }
-    for i in 0..64 {
+    eak[..20].copy_from_slice(&ak[..20]);
+    for i in &mut eak {
         // XOR with 0x36
-        eak[i] = eak[i] ^ 0x36;
+        *i ^= 0x36;
     }
     eak
 }
 
 fn k2_from_ak(ak: &[u8]) -> [u8; 64] {
     let mut eak: [u8; 64] = [0; 64];
-    for i in 0..20 {
-        eak[i] = ak[i];
-    }
-    for i in 0..64 {
+    eak[..20].copy_from_slice(&ak[..20]);
+    for i in &mut eak {
         // XOR with 0x5C
-        eak[i] = eak[i] ^ 0x5C;
+        *i ^= 0x5C;
     }
     eak
 }

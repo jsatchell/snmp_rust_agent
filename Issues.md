@@ -1,6 +1,6 @@
 # Issues to MVP
 
-* Privacy - 1/2, decrypt but not encrypt
+* Privacy - Done
 * Swap to Trie for Oid table
 * Get-next
 * Trait for OidKeeper, and sample Impl

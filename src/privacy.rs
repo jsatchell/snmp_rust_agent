@@ -1,5 +1,4 @@
 use aes::cipher::{AsyncStreamCipher, KeyIvInit};
-use cfb_mode;
 use rasn::types::IntegerType;
 use rasn_snmp::v3::USMSecurityParameters;
 
@@ -28,11 +27,10 @@ fn make_iv(usp: USMSecurityParameters) -> [u8; 16] {
     for i in 0..8 {
         iv[i + 8] = saltb[i];
     }
-    println! {"{usp:?} {iv:?}"};
     iv
 }
 
-pub fn decrypt(data: &mut Vec<u8>, usp: USMSecurityParameters, pkey: &Vec<u8>) -> Vec<u8> {
+pub fn decrypt(data: &mut [u8], usp: USMSecurityParameters, pkey: &[u8]) -> Vec<u8> {
     let iv = make_iv(usp);
     let key: &[u8] = &pkey[0..16];
     let dec: cfb_mode::Decryptor<aes::Aes128> = Aes128CfbDec::new_from_slices(key, &iv).unwrap();
@@ -40,10 +38,9 @@ pub fn decrypt(data: &mut Vec<u8>, usp: USMSecurityParameters, pkey: &Vec<u8>) -
     data.to_vec()
 }
 
-pub fn encrypt(data: &mut Vec<u8>, usp: USMSecurityParameters, pkey: &Vec<u8>) -> Vec<u8> {
+pub fn encrypt(data: &mut [u8], usp: USMSecurityParameters, pkey: &[u8]) -> Vec<u8> {
     let iv = make_iv(usp);
     let key: &[u8] = &pkey[0..16];
-    println!("Key {key:?}");
     Aes128CfbEnc::new_from_slices(key, &iv)
         .unwrap()
         .encrypt(data);
