@@ -6,7 +6,7 @@ mod usm;
 pub mod snmp_agent {
 
     pub use crate::engine_id::snmp_engine_id;
-    use crate::keeper::oid_keep::{self, OidKeeper, ScalarMemOid};
+    use crate::keeper::oid_keep::OidKeeper;
     use crate::privacy;
     use crate::usm;
     use rasn;
@@ -28,24 +28,6 @@ pub mod snmp_agent {
     const Z12: OctetString = OctetString::from_static(&B12);
     const ZB: OctetString = OctetString::from_static(b"");
 
-    pub fn always_42() -> VarBindValue {
-        VarBindValue::Value(ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(
-            42,
-        ))))
-    }
-
-    pub fn always_17() -> VarBindValue {
-        VarBindValue::Value(ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(
-            17,
-        ))))
-    }
-
-    /// Send Message back to originator at addr
-    fn send(socket: &UdpSocket, addr: SocketAddr, message: Message) {
-        let buf = rasn::ber::encode(&message).unwrap();
-        let _ = socket.send_to(&buf, addr);
-    }
-
     /// Get the boot count from non-volatile storage, creating file if it does not exist.
     /// Panic if the file cannot be parsed or updated, as that indicates tampering or hardware failure.
     fn get_increment_boot_cnt() -> isize {
@@ -59,11 +41,12 @@ pub mod snmp_agent {
         boots
     }
 
-    pub type OidMap<'a> = Vec<(&'a ObjectIdentifier, &'a mut oid_keep::ScalarMemOid)>;
+    /// Type used to hold mapping between ObjectIdentifiers and instances
+    /// that support OidKeep
+    pub type OidMap<'a, T> = Vec<(&'a ObjectIdentifier, &'a mut T)>;
 
+    /// Main Agent object.
     pub struct Agent {
-        //pub oid_map: BTreeMap<ObjectIdentifier, fn() -> VarBindValue>,
-        //pub oid_map: OTrie<fn() -> VarBindValue>,
         socket: UdpSocket,
         engine_id: OctetString,
         users: Vec<usm::User>,
@@ -72,11 +55,15 @@ pub mod snmp_agent {
     }
 
     impl Agent {
-        pub fn build(eid: OctetString, addr_str: &str) -> Agent {
+        /// Constructor for Agent
+        /// eid is the engine id. 
+        /// addr_str is the address to listen on - often "0.0.0.0:161" can be a good choice
+        /// But systems with multiple interfaces (like a firewall) might only listen on an internal
+        /// address.
+        pub fn build(eid: OctetString, addr_str: &str) -> Self {
             let sock = UdpSocket::bind(addr_str).expect("Couldn't bind to address");
             let users = usm::load_users();
             Agent {
-                //oid_map: Vec::new(),
                 socket: sock,
                 engine_id: eid,
                 users,
@@ -85,6 +72,7 @@ pub mod snmp_agent {
             }
         }
 
+        /// Internal method for supporting engine ID discovery
         fn id_resp(&self, request_id: i32, message_id: Integer) -> Message {
             let vb: Vec<VarBind> = vec![VarBind {
                 name: ObjectIdentifier::new_unchecked(vec![1, 3, 6, 1, 6, 3, 15, 1, 1, 4].into()),
@@ -179,26 +167,38 @@ pub mod snmp_agent {
             output
         }
 
-        fn do_scoped_pdu(&self, scoped_pdu: ScopedPdu, oid_map: &mut OidMap) -> Option<Response> {
+        /// Process a Scoped PDU, returning a Response
+        fn do_scoped_pdu<T: OidKeeper>(
+            &self,
+            scoped_pdu: ScopedPdu,
+            oid_map: &mut OidMap<T>,
+        ) -> Option<Response> {
             //
+            let mut skip_pdu = false;
             let mut vb: Vec<VarBind> = Vec::new();
+            let mut error_status = Pdu::ERROR_STATUS_NO_ERROR;
+            let mut error_index = 0;
+            let mut request_id = 0;
+            let mut vb_cnt = 0;
             match scoped_pdu.data {
                 Pdus::GetRequest(r) => {
-                    let request_id = r.0.request_id;
+                    request_id = r.0.request_id;
                     for vbind in r.0.variable_bindings {
                         let roid = vbind.name.clone();
                         let opt_get: Result<usize, usize> =
                             oid_map.binary_search_by(|a| a.0.cmp(&roid));
-                        //let opt_get = self.oid_map.get(&roid);
                         match opt_get {
                             Err(_ew) => {
                                 // This should error and generate a report?
+                                error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
                                 vb.push(VarBind {
                                     name: roid,
-                                    value: always_17(),
+                                    value: VarBindValue::NoSuchObject,
                                 });
+                                error_index = vb_cnt;
                             }
                             Ok(which) => {
+                                vb_cnt += 1;
                                 let okeep = &oid_map[which].1;
                                 vb.push(VarBind {
                                     name: roid.clone(),
@@ -207,57 +207,67 @@ pub mod snmp_agent {
                             }
                         }
                     }
-
-                    let pdu = Pdu {
-                        request_id,
-                        error_index: 0,
-                        error_status: 0,
-                        variable_bindings: vb,
-                    };
-                    return Some(Response(pdu));
                 }
                 Pdus::GetNextRequest(r) => {
-                    let request_id = r.0.request_id;
+                    request_id = r.0.request_id;
                     for vbind in r.0.variable_bindings {
                         let roid = vbind.name.clone();
                         let opt_get: Result<usize, usize> =
                             oid_map.binary_search_by(|a| a.0.cmp(&roid));
                         match opt_get {
-                            Err(_ew) => {
-                                // This should error and generate a report?
-                                vb.push(VarBind {
-                                    name: roid,
-                                    value: always_17(),
-                                });
+                            Err(insert_point) => {
+                                if insert_point == 0 {  // Off the front of our range.
+                                    error_index = vb_cnt;
+                                    error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
+                                    vb.push(VarBind {
+                                        name: roid,
+                                        value: VarBindValue::NoSuchObject,
+                                    });
+                                } else {
+                                    if insert_point == oid_map.len() {
+                                        vb.push(VarBind {
+                                            name: roid.clone(),
+                                            value: VarBindValue::EndOfMibView,
+                                        });
+                                    } else {
+                                        let last_keep = &oid_map[insert_point - 1].1;
+                                        if last_keep.is_scalar() {
+                                            error_index = vb_cnt;
+                                            error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
+                                            vb.push(VarBind {
+                                                name: roid,
+                                                value: VarBindValue::NoSuchObject,
+                                            });
+                                        } else {
+                                           ///////////////// vb.push()
+                                        }
+                                    }
+                                }
+                                
+                                
                             }
                             Ok(which) => {
-                                if which == oid_map.len() - 1 {
+                                vb_cnt += 1;
+                                if which == oid_map.len() {
                                     // This should error and generate a report?
                                     vb.push(VarBind {
                                         name: roid,
-                                        value: always_17(),
+                                        value: VarBindValue::EndOfMibView,
                                     });
                                 } else {
-                                    let noid: ObjectIdentifier = oid_map[which + 1].0.clone();
+                                    let next_oid: ObjectIdentifier = oid_map[which + 1].0.clone();
                                     let okeep = &oid_map[which + 1].1;
                                     vb.push(VarBind {
-                                        name: noid.clone(),
-                                        value: okeep.get(noid.clone()).unwrap(),
+                                        name: next_oid.clone(),
+                                        value: okeep.get(next_oid.clone()).unwrap(),
                                     });
                                 }
                             }
                         }
                     }
-                    let pdu = Pdu {
-                        request_id,
-                        error_index: 0,
-                        error_status: 0,
-                        variable_bindings: vb,
-                    };
-                    return Some(Response(pdu));
                 }
                 Pdus::SetRequest(r) => {
-                    let request_id = r.0.request_id;
+                    request_id = r.0.request_id;
                     for vbind in r.0.variable_bindings {
                         let roid = vbind.name.clone();
                         let opt_get: Result<usize, usize> =
@@ -265,38 +275,68 @@ pub mod snmp_agent {
                         match opt_get {
                             Err(_ew) => {
                                 // This should error and generate a report?
+                                error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
+                                error_index = vb_cnt;
                                 vb.push(VarBind {
                                     name: roid,
-                                    value: always_17(),
+                                    value: VarBindValue::NoSuchObject,
                                 });
+                                break;
                             }
                             Ok(which) => {
+                                vb_cnt += 1;
                                 let noid: ObjectIdentifier = oid_map[which].0.clone();
-                                let okeep: &mut &mut ScalarMemOid = &mut oid_map[which].1;
-                                let svalue = (**okeep).set(noid.clone(), vbind.value).unwrap();
-                                vb.push(VarBind {
-                                    name: noid.clone(),
-                                    value: svalue,
-                                });
+                                let okeep: &mut &mut T = &mut oid_map[which].1;
+                                let set_result = (**okeep).set(noid.clone(), vbind.value.clone());
+                                if set_result.is_err() {
+                                    error_status = Pdu::ERROR_STATUS_WRONG_TYPE;
+                                    vb.push(VarBind {
+                                        name: noid.clone(),
+                                        value: vbind.value,
+                                    });
+                                } else {
+                                    let svalue = set_result.unwrap();
+                                    // Need to catch size, data type etc
+                                    vb.push(VarBind {
+                                        name: noid.clone(),
+                                        value: svalue,
+                                    });
+                                }
                             }
                         }
                     }
-                    let pdu = Pdu {
-                        request_id,
-                        error_index: 0,
-                        error_status: 0,
-                        variable_bindings: vb,
-                    };
-                    return Some(Response(pdu));
                 }
-                _ => {}
+                // Do BulkRequest once tables work properly
+                _ => skip_pdu = true,
             }
-            None
+            if skip_pdu {
+                None
+            } else {
+                let pdu = Pdu {
+                    request_id,
+                    error_index,
+                    error_status,
+                    variable_bindings: vb,
+                };
+                Some(Response(pdu))
+            }
         }
 
-        pub fn loop_forever(&mut self, oid_map: &mut OidMap) {
+        /// Send Message back to originator at addr
+        fn send(&self, addr: SocketAddr, message: Message) {
+            let buf = rasn::ber::encode(&message).unwrap();
+            let _ = self.socket.send_to(&buf, addr);
+        }
+        /// Main server loop entry point
+        ///
+        /// oid_map is Vec of tuples of & ObjectIdentifier, &mut OidKeeper
+        ///
+        /// This can be populated in any order, as it is sorted before the loop starts.
+        ///
+        pub fn loop_forever<T: OidKeeper>(&mut self, oid_map: &mut OidMap<T>) {
             let mut buf = [0; 65100];
             let mut opt_user: Option<&usm::User> = None;
+            // Sort by oid, the lookups use binary search.
             oid_map.sort_by(|a, b| a.0.cmp(b.0));
             loop {
                 let recv_res = self.socket.recv_from(&mut buf);
@@ -308,6 +348,8 @@ pub mod snmp_agent {
                 // Redeclare `buf` as slice of the received data
                 let buf = &mut buf[..amt];
                 let decode_res: Result<Message, rasn::error::DecodeError> = rasn::ber::decode(buf);
+                // Simply ignore packets that do not decode
+                // In theory, should send decode error
                 if decode_res.is_err() {
                     continue;
                 }
@@ -318,11 +360,14 @@ pub mod snmp_agent {
                 /* */
                 let r_sp: Result<USMSecurityParameters, Box<dyn Display>> =
                     message.decode_security_parameters(rasn::Codec::Ber);
+                // Simply ignore packets that do not decode
+                // In theory, should send decode error
                 if r_sp.is_err() {
                     continue;
                 }
                 let usp: USMSecurityParameters = r_sp.ok().expect("Errors caught above");
                 if flags & 1 == 1 {
+                    // Both these cases should send Authentication Failure
                     if usp.authentication_parameters.len() != 12 {
                         println!("Authentication parameters must be 12 bytes");
                         continue;
@@ -336,10 +381,11 @@ pub mod snmp_agent {
 
                 match message.scoped_data {
                     ScopedPduData::CleartextPdu(scoped_pdu) => {
+                        // Add extra conditions here
                         if scoped_pdu.engine_id.to_vec() == b"" {
                             if let Pdus::GetRequest(r) = scoped_pdu.data {
                                 let request_id = r.0.request_id;
-                                send(&self.socket, src, self.id_resp(request_id, message_id));
+                                self.send(src, self.id_resp(request_id, message_id));
                             }
                             continue;
                         }
@@ -353,7 +399,7 @@ pub mod snmp_agent {
                         if flags & 1 == 1 {
                             self.set_auth(&mut out_message, opt_user);
                         }
-                        send(&self.socket, src, out_message);
+                        self.send(src, out_message);
                     }
                     ScopedPduData::EncryptedPdu(enc_octs) => {
                         let key = &opt_user.unwrap().priv_key;
@@ -378,7 +424,7 @@ pub mod snmp_agent {
                         if flags & 1 == 1 {
                             self.set_auth(&mut out_message, opt_user);
                         }
-                        send(&self.socket, src, out_message);
+                        self.send(src, out_message);
                     }
                 }
             }
@@ -424,6 +470,7 @@ pub mod snmp_agent {
             false
         }
 
+        /// Lookup user by name.
         fn lookup_user(&self, name: Vec<u8>) -> Option<&usm::User> {
             for user in &self.users {
                 let uname = user.name.clone();

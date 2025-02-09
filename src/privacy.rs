@@ -5,13 +5,9 @@ use rasn_snmp::v3::USMSecurityParameters;
 type Aes128CfbEnc = cfb_mode::Encryptor<aes::Aes128>;
 type Aes128CfbDec = cfb_mode::Decryptor<aes::Aes128>;
 
-/*let key = [0x42; 16];
-let iv = [0x24; 16];
-let plaintext = *b"hello world! this is my plaintext.";
-let ciphertext = hex!(
-    "3357121ebb5a29468bd861467596ce3d6f99e251cc2d9f0a598032ae386d0ab995b3"
-) */
-
+/// Calculate the Initial Value for the crypt.
+/// If you get this wrong, the first block comes out wrong,
+/// but it then recovers - this is a CFB feature
 fn make_iv(usp: USMSecurityParameters) -> [u8; 16] {
     // Manager chooses salt, agent just uses it (except for traps, which we don't do)
     let mut iv: [u8; 16] = [0; 16];
@@ -30,6 +26,7 @@ fn make_iv(usp: USMSecurityParameters) -> [u8; 16] {
     iv
 }
 
+/// Decrypt the data
 pub fn decrypt(data: &mut [u8], usp: USMSecurityParameters, pkey: &[u8]) -> Vec<u8> {
     let iv = make_iv(usp);
     let key: &[u8] = &pkey[0..16];
@@ -38,6 +35,7 @@ pub fn decrypt(data: &mut [u8], usp: USMSecurityParameters, pkey: &[u8]) -> Vec<
     data.to_vec()
 }
 
+/// Encrypt the data
 pub fn encrypt(data: &mut [u8], usp: USMSecurityParameters, pkey: &[u8]) -> Vec<u8> {
     let iv = make_iv(usp);
     let key: &[u8] = &pkey[0..16];

@@ -22,13 +22,13 @@ impl FromStr for User {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let re = Regex::new(r"^(?<name>[^ ]+) sha1 (?<ak>[^ ]+) aes (?<pk>[^ ]+)$").unwrap();
 
-        let caps = re.captures(s).ok_or(ParseUserError)?;
+        let captures = re.captures(s).ok_or(ParseUserError)?;
 
-        let akb = hex::decode(&caps["ak"]).unwrap();
+        let akb = hex::decode(&captures["ak"]).unwrap();
         Ok(User {
-            name: caps["name"].as_bytes().to_vec(),
+            name: captures["name"].as_bytes().to_vec(),
             auth_key: akb.clone(),
-            priv_key: hex::decode(&caps["pk"]).unwrap(),
+            priv_key: hex::decode(&captures["pk"]).unwrap(),
             k1: k1_from_ak(&akb),
             k2: k2_from_ak(&akb),
         })

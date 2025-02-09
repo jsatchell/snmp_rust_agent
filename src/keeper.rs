@@ -1,37 +1,94 @@
 pub mod oid_keep {
     use rasn::types::{Integer, ObjectIdentifier};
-    use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
-    use rasn_snmp::v3::VarBindValue;
-    // use rasn_snmp::v2::{Pdu, Report, VarBind};
-    //use std::error::Error;
+    use rasn_smi::v2::{ApplicationSyntax, ObjectSyntax, SimpleSyntax};
+    use rasn_snmp::v3::{VarBindValue, VarBind};
+
+    // Constants for table row management
+    /* const ROW_STATUS_ACTIVE: Integer = Integer::Primitive(1);
+    const ROW_STATUS_NOT_IN_SERVICE: Integer = Integer::Primitive(2);
+    const ROW_STATUS_NOT_READY: Integer = Integer::Primitive(3);
+    const ROW_STATUS_CREATE_AND_GO: Integer = Integer::Primitive(4);
+    const ROW_STATUS_CREATE_AND_WAIT: Integer = Integer::Primitive(5);
+    const ROW_STATUS_DELETE: Integer = Integer::Primitive(6); */
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
     pub struct OidErr;
 
+    fn check_type(otype: char, val: &ObjectSyntax) -> bool {
+        match val {
+            ObjectSyntax::Simple(SimpleSyntax::Integer(_)) => otype == 'i' || otype == 'r',
+            ObjectSyntax::Simple(SimpleSyntax::String(_)) => otype == 's',
+            ObjectSyntax::Simple(SimpleSyntax::ObjectId(_)) => otype == 'o',
+            ObjectSyntax::ApplicationWide(ApplicationSyntax::Address(_)) => otype == 'a',
+            ObjectSyntax::ApplicationWide(ApplicationSyntax::Unsigned(_)) => otype == 'u',
+            ObjectSyntax::ApplicationWide(ApplicationSyntax::Arbitrary(_)) => otype == '?',
+            ObjectSyntax::ApplicationWide(ApplicationSyntax::Counter(_)) => otype == 'c',
+            ObjectSyntax::ApplicationWide(ApplicationSyntax::BigCounter(_)) => otype == 'b',
+            ObjectSyntax::ApplicationWide(ApplicationSyntax::Ticks(_)) => otype == 't',
+        }
+    }
+
+    fn check_otype(otype: char) -> bool {
+        ['a', 'b', 'c', 'i', 'o', 's', 't', 'u', '?', 'r'].contains(&otype)
+    }
+
     pub trait OidKeeper {
+        fn is_scalar(&self) -> bool;
         fn get(&self, oid: ObjectIdentifier) -> Result<VarBindValue, OidErr>;
+        fn get_next(&self, oid: ObjectIdentifier) -> Result<VarBind, OidErr>;
         fn set(
             &mut self,
             oid: ObjectIdentifier,
             value: VarBindValue,
         ) -> Result<VarBindValue, OidErr>;
-        // fn get_next(oid: ObjectIdentifier) -> Result<(ObjectIdentifier, VarBindValue), OidErr>;
     }
 
+    /// Simplistic scalar stored in memory.
+    /// Initialized in constructor.
     pub struct ScalarMemOid {
-        value: isize,
+        value: ObjectSyntax,
+        otype: char,
     }
 
     impl ScalarMemOid {
-        pub fn new(value: isize) -> Self {
-            ScalarMemOid { value }
+        /// Initialize with initial value, and char that selects type checking.
+        /// Any variant of ObjectSyntax is OK
+        /// 
+        /// There is are self consistency checks that the char is a known one,
+        /// and that the initial value is consitent with that type.
+        /// 
+        /// The type mapping is:
+        /// * Simple(SimpleSyntax::Integer(_)) => 'i' (also 'r' for RowStatus in tables),
+        /// * Simple(SimpleSyntax::String(_)) => 's',
+        /// * Simple(SimpleSyntax::ObjectId(_)) => 'o',
+        /// * ApplicationWide(ApplicationSyntax::Address(_)) => 'a',
+        /// * ApplicationWide(ApplicationSyntax::Unsigned(_)) => 'u',
+        /// * ApplicationWide(ApplicationSyntax::Arbitrary(_)) => '?',
+        /// * ApplicationWide(ApplicationSyntax::Counter(_)) => 'c',
+        /// * ApplicationWide(ApplicationSyntax::BigCounter(_)) => 'b',
+        /// * ApplicationWide(ApplicationSyntax::Ticks(_)) => 't',
+        pub fn new(value: ObjectSyntax, otype: char) -> Self {
+            if !check_otype(otype) {
+                panic!("Unrecognised type char {otype}");
+            }
+            if !check_type(otype, &value) {
+                panic!("Initial value is unexpected type {otype} {value:?}");
+            }
+            ScalarMemOid { value, otype }
         }
     }
     impl OidKeeper for ScalarMemOid {
+        fn is_scalar(&self) -> bool {
+            true
+        }
+
         fn get(&self, _oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {
-            Ok(VarBindValue::Value(ObjectSyntax::Simple(
-                SimpleSyntax::Integer(Integer::from(self.value)),
-            )))
+            Ok(VarBindValue::Value(self.value.clone()))
+        }
+
+        // Scalar, so next item always lies outside
+        fn get_next(&self, _oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
+            Err(OidErr)
         }
 
         fn set(
@@ -39,12 +96,110 @@ pub mod oid_keep {
             _oid: ObjectIdentifier,
             value: VarBindValue,
         ) -> Result<VarBindValue, OidErr> {
-            if let VarBindValue::Value(ObjectSyntax::Simple(SimpleSyntax::Integer(
-                Integer::Primitive(new_value),
-            ))) = value
-            {
-                self.value = new_value;
+            if let VarBindValue::Value(new_value) = value.clone() {
+                if check_type(self.otype, &new_value) {
+                    self.value = new_value;
+                } else {
+                    return Err(OidErr);
+                }
             }
+            Ok(value)
+        }
+    }
+
+    pub struct TableMemOid {
+        rows: Vec<Vec<ObjectSyntax>>,
+        cols: usize,
+        base: Vec<u32>,
+    }
+
+    impl TableMemOid {
+        pub fn new(data: Vec<Vec<ObjectSyntax>>, cols: usize, base: &ObjectIdentifier) -> Self {
+            TableMemOid {
+                rows: data,
+                cols,
+                base: base.to_vec(),
+            }
+        }
+
+        fn suffix(&self, oid: ObjectIdentifier) -> Vec<u32> {
+            let blen = self.base.len();
+            if oid.len() > blen {
+                oid.to_vec()[blen + 1..].to_vec()
+            } else {
+                vec![]
+            }
+        }
+
+        fn make_oid(&self, col:usize, index: ObjectSyntax) -> ObjectIdentifier {
+            let mut tmp = self.base.clone();
+            let c32: u32 = col.try_into().unwrap();
+            tmp.push(c32);
+            // FIXME push index too
+            ObjectIdentifier::new(tmp).unwrap().to_owned()
+        }
+    }
+
+    impl OidKeeper for TableMemOid {
+        fn is_scalar(&self) -> bool {
+            false
+        }
+
+        /// Get value, for case where index is first column and Integer type
+        ///
+        /// Need to generalise to all index types and multicolumn
+        fn get(&self, oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {
+            let suffix = self.suffix(oid);
+            if suffix.len() < 2 {
+                return Err(OidErr);
+            }
+            // This is OK on 32bit and larger machines. Might fail on a microcontroller,
+            // but you probably don't want more than 255 columns on such a machine anyway
+            let col: usize = suffix[0].try_into().unwrap();
+            // Complex indices (not integer and/or multicolumn need longer than 2)
+            if col == 0 || col > self.cols || suffix.len() != 2 {
+                return Err(OidErr);
+            }
+            // FIXME - support full index cases, e.g. index not first column, nor Integer, multi-column index
+            let index = ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(suffix[1])));
+            // FIXME nice to do something faster than O(N) sequential search
+            // Maybe argument for keeping rows sorted by index, then binary_search
+            for row in &self.rows {
+                if index == row[0] {
+                    return Ok(VarBindValue::Value(row[col - 1].clone()));
+                }
+            }
+            Err(OidErr)
+        }
+
+        fn get_next(&self, oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
+            let suffix = self.suffix(oid);
+            let col: usize = if suffix.len() == 0usize { 
+                1 } else {
+                    suffix[0].try_into().unwrap()};
+            if col == 0 || col > self.cols || suffix.len() > 2 {
+                return Err(OidErr);
+            }
+            if suffix.len() == 2 {
+                let index = ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(suffix[1])));
+            } else {
+                let row = & self.rows[0];
+                let value = VarBindValue::Value(row[col].clone());
+                let name = self.make_oid(col, row[0].clone());
+                return Ok(VarBind{name, value});
+            }
+
+            Err(OidErr)
+        }
+
+  
+
+        /// Supports updating existing cells, NOT YET new row creation via RowStatus column
+        fn set(
+            &mut self,
+            _oid: ObjectIdentifier,
+            value: VarBindValue,
+        ) -> Result<VarBindValue, OidErr> {
             Ok(value)
         }
     }
