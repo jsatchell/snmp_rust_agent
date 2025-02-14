@@ -56,7 +56,7 @@ pub mod snmp_agent {
 
     impl Agent {
         /// Constructor for Agent
-        /// eid is the engine id. 
+        /// eid is the engine id.
         /// addr_str is the address to listen on - often "0.0.0.0:161" can be a good choice
         /// But systems with multiple interfaces (like a firewall) might only listen on an internal
         /// address.
@@ -188,22 +188,54 @@ pub mod snmp_agent {
                         let opt_get: Result<usize, usize> =
                             oid_map.binary_search_by(|a| a.0.cmp(&roid));
                         match opt_get {
-                            Err(_ew) => {
+                            Err(insert_point) => {
+                                //
                                 // This should error and generate a report?
-                                error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
-                                vb.push(VarBind {
-                                    name: roid,
-                                    value: VarBindValue::NoSuchObject,
-                                });
-                                error_index = vb_cnt;
+                                println!("Get miss case {insert_point}");
+                                let okeep = &oid_map[insert_point - 1].1;
+                                if !okeep.is_scalar() {
+                                    println!("Scalar get ");
+                                    error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
+                                    vb.push(VarBind {
+                                        name: roid,
+                                        value: VarBindValue::NoSuchObject,
+                                    });
+                                    error_index = vb_cnt;
+                                } else {
+                                    let get_res = okeep.get(roid.clone());
+                                    println!("Table get {get_res:?}");
+                                    match get_res {
+                                        Ok(res) => vb.push(VarBind {
+                                            name: roid.clone(),
+                                            value: res,
+                                        }),
+                                        Err(_) => {
+                                            error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
+                                            vb.push(VarBind {
+                                                name: roid,
+                                                value: VarBindValue::NoSuchObject,
+                                            });
+                                        }
+                                    }
+                                }
                             }
                             Ok(which) => {
                                 vb_cnt += 1;
                                 let okeep = &oid_map[which].1;
-                                vb.push(VarBind {
-                                    name: roid.clone(),
-                                    value: okeep.get(roid.clone()).expect("Should work"),
-                                });
+                                let value_res = okeep.get(roid.clone());
+                                if let Ok(value) = value_res {
+                                    vb.push(VarBind {
+                                        name: roid.clone(),
+                                        value,
+                                    });
+                                } else {
+                                    error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
+                                    vb.push(VarBind {
+                                        name: roid,
+                                        value: VarBindValue::NoSuchInstance,
+                                    });
+                                    error_index = vb_cnt;
+                                }
                             }
                         }
                     }
@@ -216,51 +248,87 @@ pub mod snmp_agent {
                             oid_map.binary_search_by(|a| a.0.cmp(&roid));
                         match opt_get {
                             Err(insert_point) => {
-                                if insert_point == 0 {  // Off the front of our range.
+                                println!("Get next miss case {insert_point}");
+                                if insert_point == 0 {
+                                    // Off the front of our range.
                                     error_index = vb_cnt;
                                     error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
                                     vb.push(VarBind {
                                         name: roid,
                                         value: VarBindValue::NoSuchObject,
                                     });
+                                } else if insert_point == oid_map.len() {
+                                    vb.push(VarBind {
+                                        name: roid.clone(),
+                                        value: VarBindValue::EndOfMibView,
+                                    });
                                 } else {
-                                    if insert_point == oid_map.len() {
+                                    let last_keep = &oid_map[insert_point - 1].1;
+                                    if last_keep.is_scalar() {
+                                        error_index = vb_cnt;
+                                        error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
                                         vb.push(VarBind {
-                                            name: roid.clone(),
-                                            value: VarBindValue::EndOfMibView,
+                                            name: roid,
+                                            value: VarBindValue::NoSuchObject,
                                         });
                                     } else {
-                                        let last_keep = &oid_map[insert_point - 1].1;
-                                        if last_keep.is_scalar() {
+                                        // Table
+                                        println!("table case {insert_point}");
+                                        let next_res = last_keep.get_next(roid.clone());
+                                        if let Ok(next) = next_res {
+                                            vb.push(next);
+                                        } else if insert_point == oid_map.len() - 1 {
+                                            vb.push(VarBind {
+                                                name: roid.clone(),
+                                                value: VarBindValue::EndOfMibView,
+                                            });
+                                        } else {
                                             error_index = vb_cnt;
                                             error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
                                             vb.push(VarBind {
                                                 name: roid,
                                                 value: VarBindValue::NoSuchObject,
                                             });
-                                        } else {
-                                           ///////////////// vb.push()
                                         }
+
+                                        ///////////////// vb.push()
                                     }
                                 }
-                                
-                                
                             }
                             Ok(which) => {
+                                println!("hit case {which}");
                                 vb_cnt += 1;
-                                if which == oid_map.len() {
+                                if which == oid_map.len() - 1 {
+                                    println!("End of oids, ");
                                     // This should error and generate a report?
                                     vb.push(VarBind {
-                                        name: roid,
+                                        name: roid.clone(),
                                         value: VarBindValue::EndOfMibView,
                                     });
-                                } else {
+                                } else if oid_map[which].1.is_scalar() {
                                     let next_oid: ObjectIdentifier = oid_map[which + 1].0.clone();
                                     let okeep = &oid_map[which + 1].1;
-                                    vb.push(VarBind {
-                                        name: next_oid.clone(),
-                                        value: okeep.get(next_oid.clone()).unwrap(),
-                                    });
+                                    if okeep.is_scalar() {
+                                        vb.push(VarBind {
+                                            name: next_oid.clone(),
+                                            value: okeep.get(next_oid.clone()).unwrap(),
+                                        });
+                                    } else {
+                                        vb.push(okeep.get_next(roid.clone()).unwrap());
+                                    };
+                                } else {
+                                    let okeep = &oid_map[which].1;
+                                    println!("Trying okeep");
+                                    let gn_res = okeep.get_next(roid.clone());
+                                    match gn_res {
+                                        Ok(nvb) => vb.push(nvb),
+                                        Err(_) => {
+                                            vb.push(VarBind {
+                                                name: roid.clone(),
+                                                value: VarBindValue::EndOfMibView,
+                                            });
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -331,7 +399,7 @@ pub mod snmp_agent {
         ///
         /// oid_map is Vec of tuples of & ObjectIdentifier, &mut OidKeeper
         ///
-        /// This can be populated in any order, as it is sorted before the loop starts.
+        /// This can be populated in any order, as it is sorted on the Oids before the loop starts.
         ///
         pub fn loop_forever<T: OidKeeper>(&mut self, oid_map: &mut OidMap<T>) {
             let mut buf = [0; 65100];

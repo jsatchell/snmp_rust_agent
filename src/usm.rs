@@ -88,13 +88,18 @@ pub fn load_users() -> Vec<User> {
     users
 }
 
-#[test]
-fn rfc2021_test() {
-    let s ="test sha1 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
-    let u = User::from_str(s).unwrap();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    assert_eq!(
-        u.auth_from_bytes(b"Hi There"),
-        b"\xb6\x17\x31\x86\x55\x05\x72\x64\xe2\x8b\xc0\xb6"
-    );
+    #[test]
+    fn rfc2021_test() {
+        let s ="test sha1 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
+        let u = User::from_str(s).unwrap();
+
+        assert_eq!(
+            u.auth_from_bytes(b"Hi There"),
+            b"\xb6\x17\x31\x86\x55\x05\x72\x64\xe2\x8b\xc0\xb6"
+        );
+    }
 }

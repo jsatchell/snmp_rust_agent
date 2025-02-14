@@ -1,4 +1,5 @@
 use rasn::types::{Integer, ObjectIdentifier, OctetString};
+use rasn_smi::v1::InvalidVariant;
 use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
 use rasn_snmp::v3::{VarBind, VarBindValue};
 use snmp_rust_agent::keeper::oid_keep::{OidErr, OidKeeper, ScalarMemOid, TableMemOid};
@@ -54,6 +55,18 @@ impl OidKeeper for OT {
     }
 }
 
+fn col1(row: &[ObjectSyntax]) -> Vec<u32> {
+    let ind_res: Result<u32, InvalidVariant> = row[0].clone().try_into();
+    match ind_res {
+        Ok(ind) => {
+            vec![ind]
+        }
+        Err(_) => {
+            panic!("Wanted integer in index")
+        }
+    }
+}
+
 /// Simplistic example main
 fn main() -> std::io::Result<()> {
     let oid: ObjectIdentifier = ObjectIdentifier::new(&ARC).unwrap();
@@ -64,12 +77,18 @@ fn main() -> std::io::Result<()> {
     let s5 = simple_from_int(5);
     let mut k4 = OT::Scalar(ScalarMemOid::new(s42.clone(), 'i'));
     let mut k5 = OT::Scalar(ScalarMemOid::new(s5.clone(), 'i'));
-    let mut k6 = OT::Table(TableMemOid::new(vec![vec![s5, s42]], 2, &oid2));
+    let mut k6 = OT::Table(TableMemOid::new(
+        vec![vec![s5, s42]],
+        2,
+        &oid1,
+        vec!['i', 'i'],
+        col1,
+    ));
     //snmp_engine_id::mac_engine_id(20012, "04:cf:4b:e3:cb:64");
     let mut oid_map = OidMap::<OT>::new();
     oid_map.push((&oid, &mut k4));
-    oid_map.push((&oid1, &mut k5));
-    oid_map.push((&oid2, &mut k6));
+    oid_map.push((&oid1, &mut k6));
+    oid_map.push((&oid2, &mut k5));
     let mut agent: Agent = Agent::build(eid, "127.0.0.1:2161");
     agent.loop_forever(&mut oid_map);
     Ok(())
