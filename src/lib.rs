@@ -56,10 +56,12 @@ pub mod snmp_agent {
 
     impl Agent {
         /// Constructor for Agent
+        ///
         /// eid is the engine id.
+        ///
         /// addr_str is the address to listen on - often "0.0.0.0:161" can be a good choice
-        /// But systems with multiple interfaces (like a firewall) might only listen on an internal
-        /// address.
+        /// But systems with multiple interfaces (like a firewall, router or crypto) might only listen
+        /// on an internal address.
         pub fn build(eid: OctetString, addr_str: &str) -> Self {
             let sock = UdpSocket::bind(addr_str).expect("Couldn't bind to address");
             let users = usm::load_users();
@@ -72,7 +74,7 @@ pub mod snmp_agent {
             }
         }
 
-        /// Internal method for supporting engine ID discovery
+        /// Internal method for supporting engine ID discovery by managers
         fn id_resp(&self, request_id: i32, message_id: Integer) -> Message {
             let vb: Vec<VarBind> = vec![VarBind {
                 name: ObjectIdentifier::new_unchecked(vec![1, 3, 6, 1, 6, 3, 15, 1, 1, 4].into()),
@@ -167,7 +169,11 @@ pub mod snmp_agent {
             output
         }
 
-        /// Process a Scoped PDU, returning a Response
+        /// Process a Scoped PDU, returning an Option<Response>
+        ///
+        /// Returns None on unsupported PDU types, like BulkRequest
+        ///
+        /// When everything is supported, remove Option
         fn do_scoped_pdu<T: OidKeeper>(
             &self,
             scoped_pdu: ScopedPdu,
@@ -193,7 +199,7 @@ pub mod snmp_agent {
                                 // This should error and generate a report?
                                 println!("Get miss case {insert_point}");
                                 let okeep = &oid_map[insert_point - 1].1;
-                                if !okeep.is_scalar() {
+                                if okeep.is_scalar() {
                                     println!("Scalar get ");
                                     error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
                                     vb.push(VarBind {
@@ -202,6 +208,7 @@ pub mod snmp_agent {
                                     });
                                     error_index = vb_cnt;
                                 } else {
+                                    println!("Table get ");
                                     let get_res = okeep.get(roid.clone());
                                     println!("Table get {get_res:?}");
                                     match get_res {
@@ -408,6 +415,7 @@ pub mod snmp_agent {
             oid_map.sort_by(|a, b| a.0.cmp(b.0));
             loop {
                 let recv_res = self.socket.recv_from(&mut buf);
+                // If the socket read fails, there is nothing much we can do.
                 if recv_res.is_err() {
                     continue;
                 }
@@ -425,7 +433,7 @@ pub mod snmp_agent {
                 let message_id = message.global_data.message_id.to_owned();
                 let flags: u8 = *message.global_data.flags.first().unwrap();
 
-                /* */
+                // Now do inner decode of security parameters
                 let r_sp: Result<USMSecurityParameters, Box<dyn Display>> =
                     message.decode_security_parameters(rasn::Codec::Ber);
                 // Simply ignore packets that do not decode
@@ -435,7 +443,9 @@ pub mod snmp_agent {
                 }
                 let usp: USMSecurityParameters = r_sp.ok().expect("Errors caught above");
                 if flags & 1 == 1 {
-                    // Both these cases should send Authentication Failure
+                    // FIXME
+                    // Both these cases should send Authentication Failure, rather
+                    // than silently dropping the packet
                     if usp.authentication_parameters.len() != 12 {
                         println!("Authentication parameters must be 12 bytes");
                         continue;
@@ -449,7 +459,7 @@ pub mod snmp_agent {
 
                 match message.scoped_data {
                     ScopedPduData::CleartextPdu(scoped_pdu) => {
-                        // Add extra conditions here
+                        // FIXME Add extra conditions here on engine_id discovery
                         if scoped_pdu.engine_id.to_vec() == b"" {
                             if let Pdus::GetRequest(r) = scoped_pdu.data {
                                 let request_id = r.0.request_id;

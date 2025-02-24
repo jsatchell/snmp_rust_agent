@@ -1,8 +1,8 @@
 pub mod oid_keep {
+    use num_traits::cast::ToPrimitive;
     use rasn::types::ObjectIdentifier;
     use rasn_smi::v2::{ApplicationSyntax, ObjectSyntax, SimpleSyntax};
     use rasn_snmp::v3::{VarBind, VarBindValue};
-
     // Constants for table row management
     /* const ROW_STATUS_ACTIVE: Integer = Integer::Primitive(1);
     const ROW_STATUS_NOT_IN_SERVICE: Integer = Integer::Primitive(2);
@@ -12,7 +12,12 @@ pub mod oid_keep {
     const ROW_STATUS_DELETE: Integer = Integer::Primitive(6); */
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-    pub struct OidErr;
+    pub enum OidErr {
+        OutOfRange,
+        WrongType,
+        NoSuchInstance,
+        NoSuchName,
+    }
 
     fn check_type(otype: char, val: &ObjectSyntax) -> bool {
         match val {
@@ -55,7 +60,7 @@ pub mod oid_keep {
         /// Any variant of ObjectSyntax is OK
         ///
         /// There is are self consistency checks that the char is a known one,
-        /// and that the initial value is consitent with that type.
+        /// and that the initial value is consistent with that type.
         ///
         /// The type mapping is:
         /// * Simple(SimpleSyntax::Integer(_)) => 'i' (also 'r' for RowStatus in tables),
@@ -88,7 +93,7 @@ pub mod oid_keep {
 
         // Scalar, so next item always lies outside
         fn get_next(&self, _oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
-            Err(OidErr)
+            Err(OidErr::OutOfRange)
         }
 
         fn set(
@@ -100,7 +105,7 @@ pub mod oid_keep {
                 if check_type(self.otype, &new_value) {
                     self.value = new_value;
                 } else {
-                    return Err(OidErr);
+                    return Err(OidErr::WrongType);
                 }
             }
             Ok(value)
@@ -108,11 +113,11 @@ pub mod oid_keep {
     }
 
     pub struct TableMemOid {
-        rows: Vec<Vec<ObjectSyntax>>,
+        rows: Vec<(Vec<u32>, Vec<ObjectSyntax>)>,
         cols: usize,
         base: Vec<u32>,
         otypes: Vec<char>,
-        index_fn: fn(&[ObjectSyntax]) -> Vec<u32>,
+        index_cols: Vec<usize>,
     }
 
     impl TableMemOid {
@@ -121,19 +126,50 @@ pub mod oid_keep {
             cols: usize,
             base: &ObjectIdentifier,
             otypes: Vec<char>,
-            index_fn: fn(&[ObjectSyntax]) -> Vec<u32>,
+            index_cols: Vec<usize>,
         ) -> Self {
             assert_eq!(cols, otypes.len());
             for ot in &otypes {
                 assert!(check_otype(*ot));
             }
+            assert!(index_cols.len() < cols);
+            let mut row_data = Vec::new();
+            for row in data {
+                let idx = TableMemOid::index_imp(&index_cols, &row);
+                row_data.push((idx, row));
+            }
+            row_data.sort_by(|a, b| a.0.cmp(&b.0));
             TableMemOid {
-                rows: data,
+                rows: row_data,
                 cols,
                 base: base.to_vec(),
                 otypes,
-                index_fn,
+                index_cols,
             }
+        }
+
+        fn index_imp(icols: &Vec<usize>, row: &[ObjectSyntax]) -> Vec<u32> {
+            let mut ret: Vec<u32> = Vec::new();
+            for index_column_number in icols {
+                let col = &row[*index_column_number - 1];
+                match col {
+                    ObjectSyntax::Simple(SimpleSyntax::Integer(i)) => {
+                        let iu32: u32 = i.to_u32().unwrap();
+                        ret.push(iu32);
+                    }
+                    ObjectSyntax::Simple(SimpleSyntax::String(s)) => {
+                        for i in s {
+                            let ir: u8 = *i;
+                            let ui32: u32 = ir.into();
+                            ret.push(ui32);
+                        }
+                    }
+                    _ => {
+                        panic!("Unsupported type in index construction")
+                    }
+                }
+            }
+            ret
         }
 
         fn suffix(&self, oid: ObjectIdentifier) -> Vec<u32> {
@@ -145,12 +181,30 @@ pub mod oid_keep {
             }
         }
 
+        pub fn row_count(&self) -> usize {
+            self.rows.len()
+        }
+
+        pub fn add_row(&mut self, row: &[ObjectSyntax]) {
+            let idx = TableMemOid::index_imp(&self.index_cols, row);
+            // FIXME, replace push / sort by find and insert
+            self.rows.push((idx, row.to_owned()));
+            self.rows.sort_by(|a, b| a.0.cmp(&b.0));
+        }
+
+        /// Generate oid corresponding to column and index
+        ///
+        /// If the table has OID x.y, the table entry is always x.y.1
+        /// Column n definition is x.y.1.n and never has instances
+        /// Column n and index m (which could be a whole array) is x.y.1.n.m
+        ///
         fn make_oid(&self, col: usize, index: &[u32]) -> ObjectIdentifier {
             let mut tmp = self.base.clone();
+            tmp.push(1u32); // Table entry
             let c32: u32 = col.try_into().unwrap();
-            tmp.push(c32);
+            tmp.push(c32); // Column
             for i in index {
-                tmp.push(*i);
+                tmp.push(*i); // However many pieces of index
             }
             ObjectIdentifier::new(tmp).unwrap().to_owned()
         }
@@ -165,59 +219,66 @@ pub mod oid_keep {
         fn get(&self, oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {
             let suffix = self.suffix(oid);
             println!("Suffix is {suffix:?}");
-            // Complex indices (not integer and/or multicolumn need longer than 2)
-            if suffix.len() < 2 {
-                return Err(OidErr);
+            // Complex indices (not integer and/or multicolumn need longer than 3)
+            if suffix.len() < 3 {
+                return Err(OidErr::NoSuchInstance);
+            }
+            if suffix[0] != 1u32 {
+                return Err(OidErr::NoSuchName);
             }
             // This is OK on 32bit and larger machines. Might fail on a microcontroller,
             // but you probably don't want more than 255 columns on such a machine anyway
-            let col: usize = suffix[0].try_into().unwrap();
+            let col: usize = suffix[1].try_into().unwrap();
             if col == 0 || col > self.cols {
-                return Err(OidErr);
+                return Err(OidErr::NoSuchName);
             }
-            let index = &suffix[1..];
+            let index = &suffix[2..];
+            println!("Col {col} Index is {index:?}");
             // FIXME nice to do something faster than O(N) sequential search
             // Maybe argument for keeping rows sorted by index, then binary_search
             for row in &self.rows {
-                if index == (self.index_fn)(row) {
-                    return Ok(VarBindValue::Value(row[col - 1].clone()));
+                let r0 = &row.0;
+                println!("Index {index:?} r0 {r0:?}");
+                if index == row.0 {
+                    return Ok(VarBindValue::Value(row.1[col - 1].clone()));
                 }
             }
-            Err(OidErr)
+            Err(OidErr::NoSuchName)
         }
 
         fn get_next(&self, oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
             let suffix = self.suffix(oid);
-            let mut col: usize = if suffix.is_empty() {
+            let mut col: usize = if suffix.len() < 3 {
                 1
             } else {
-                suffix[0].try_into().unwrap()
+                suffix[1].try_into().unwrap()
             };
             if col == 0 || col > self.cols {
-                return Err(OidErr);
+                return Err(OidErr::NoSuchName);
             }
-            if suffix.len() >= 2 {
-                let index = &suffix[1..];
+            if suffix.len() >= 3 {
+                let index = &suffix[2..];
                 for (i, row) in self.rows.iter().enumerate() {
-                    if index == (self.index_fn)(row) {
+                    if index == row.0 {
                         if i < self.rows.len() - 1 {
-                            let value = VarBindValue::Value(row[col - 1].clone());
-                            let name = self.make_oid(col, index);
+                            let (next_index, next_row) = &self.rows[i + 1];
+                            let value = VarBindValue::Value(next_row[col - 1].clone());
+                            let name = self.make_oid(col, next_index);
                             return Ok(VarBind { name, value });
                         } else if col < self.cols {
                             col += 1;
-                            let value = VarBindValue::Value(self.rows[0][col - 1].clone());
-                            let name = self.make_oid(col, &(self.index_fn)(&self.rows[0]));
+                            let value = VarBindValue::Value(self.rows[0].1[col - 1].clone());
+                            let name = self.make_oid(col, &self.rows[0].0);
                             return Ok(VarBind { name, value });
                         }
                     }
                 }
 
-                Err(OidErr)
+                Err(OidErr::OutOfRange)
             } else {
                 let row = &self.rows[0];
-                let value = VarBindValue::Value(row[col].clone());
-                let name = self.make_oid(col, &(self.index_fn)(row));
+                let value = VarBindValue::Value(row.1[col].clone());
+                let name = self.make_oid(col, &row.0);
                 Ok(VarBind { name, value })
             }
         }
@@ -232,28 +293,28 @@ pub mod oid_keep {
             println!("Suffix is {suffix:?}");
             // Complex indices (not integer and/or multicolumn need longer than 2)
             if suffix.len() < 2 {
-                return Err(OidErr);
+                return Err(OidErr::NoSuchInstance);
             }
             // This is OK on 32bit and larger machines. Might fail on a microcontroller,
             // but you probably don't want more than 255 columns on such a machine anyway
             let col: usize = suffix[0].try_into().unwrap();
             if col == 0 || col > self.cols {
-                return Err(OidErr);
+                return Err(OidErr::NoSuchName);
             }
             let index = &suffix[1..];
             for row in &mut self.rows {
-                if index == (self.index_fn)(row) {
+                if index == row.0 {
                     if let VarBindValue::Value(new_value) = value.clone() {
                         if check_type(self.otypes[col - 1], &new_value) {
-                            row[col - 1] = new_value;
+                            row.1[col - 1] = new_value;
                             return Ok(value);
                         } else {
-                            return Err(OidErr);
+                            return Err(OidErr::WrongType);
                         }
                     }
                 }
             }
-            Err(OidErr)
+            Err(OidErr::NoSuchInstance)
         }
     }
 }
@@ -263,10 +324,7 @@ mod tests {
     use super::*;
     use oid_keep::{OidErr, OidKeeper as _, TableMemOid};
     use rasn::types::{Integer, ObjectIdentifier};
-    use rasn_smi::{
-        v1::InvalidVariant,
-        v2::{ObjectSyntax, SimpleSyntax},
-    };
+    use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
     use rasn_snmp::v3::VarBindValue;
 
     fn simple_from_int(value: i32) -> ObjectSyntax {
@@ -274,32 +332,42 @@ mod tests {
     }
 
     const ARC2: [u32; 2] = [1, 6];
-    fn col1(row: &[ObjectSyntax]) -> Vec<u32> {
-        let ind_res: Result<u32, InvalidVariant> = row[0].clone().try_into();
-        match ind_res {
-            Ok(ind) => {
-                vec![ind]
-            }
-            Err(_) => {
-                panic!("Wanted integer in index")
-            }
-        }
-    }
-    //use crate::keeper::oid_keep:OidKeeper;
+
     #[test]
-    fn tab_get_test() {
+    fn test_simple_from_int() {
+        let x = simple_from_int(21);
+        assert_eq!(
+            x,
+            ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(21)))
+        );
+    }
+
+    fn tab_fixture() -> TableMemOid {
         let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap();
         let s42 = simple_from_int(42);
+        let s41 = simple_from_int(41);
+        let s4 = simple_from_int(4);
         let s5 = simple_from_int(5);
-        let tab = TableMemOid::new(vec![vec![s5, s42]], 2, &oid2, vec!['i', 'i'], col1);
+        TableMemOid::new(
+            vec![vec![s4.clone(), s41.clone()], vec![s5.clone(), s42.clone()]],
+            2,
+            &oid2,
+            vec!['i', 'i'],
+            vec![1usize],
+        )
+    }
+    #[test]
+    fn tab_get_test() {
+        let tab = tab_fixture();
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap();
         let res = tab.get(oid2);
-        assert_eq!(res, Err(OidErr));
-        let o3 = ObjectIdentifier::new(&[1, 6, 1, 5]).unwrap();
+        assert_eq!(res, Err(OidErr::NoSuchInstance));
+        let o3 = ObjectIdentifier::new(&[1, 6, 1, 1, 5]).unwrap();
         let res = tab.get(o3);
         assert!(res.is_ok());
         let s5 = simple_from_int(5);
         assert_eq!(res.unwrap(), VarBindValue::Value(s5));
-        let o4 = ObjectIdentifier::new(&[1, 6, 2, 5]).unwrap();
+        let o4 = ObjectIdentifier::new(&[1, 6, 1, 2, 5]).unwrap();
         let res = tab.get(o4);
         assert!(res.is_ok());
         let s42 = simple_from_int(42);
@@ -309,31 +377,40 @@ mod tests {
     #[test]
     fn tab_get_next_test() {
         let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap();
-        let s41 = simple_from_int(41);
-        let s42 = simple_from_int(42);
-        let s5 = simple_from_int(5);
-        let s6 = simple_from_int(6);
-        let tab = TableMemOid::new(
-            vec![vec![s5, s42], vec![s6, s41]],
-            2,
-            &oid2,
-            vec!['i', 'i'],
-            col1,
-        );
+        let tab = tab_fixture();
         let res = tab.get_next(oid2);
         assert!(res.is_ok());
-        let o3 = ObjectIdentifier::new(&[1, 6, 1, 5]).unwrap();
+        let o3 = ObjectIdentifier::new(&[1, 6, 1, 1, 4]).unwrap();
         let res = tab.get_next(o3);
         assert!(res.is_ok());
-        let o4 = ObjectIdentifier::new(&[1, 6, 1, 6]).unwrap();
+        let vb = res.unwrap();
+        let o4 = ObjectIdentifier::new(&[1, 6, 1, 1, 5]).unwrap();
+        assert_eq!(vb.name, o4);
+        let o4 = ObjectIdentifier::new(&[1, 6, 1, 1, 5]).unwrap();
         let res = tab.get_next(o4);
         assert!(res.is_ok());
-        /*let s5 = simple_from_int(5);
-        assert_eq!(res.unwrap(), VarBindValue::Value(s5));
-        let o4 = ObjectIdentifier::new(&[1, 6, 2, 5]).unwrap();
-        let res = tab.get_next(o4);
+        let vb = res.unwrap();
+        let o5 = ObjectIdentifier::new(&[1, 6, 1, 2, 4]).unwrap();
+        assert_eq!(vb.name, o5);
+        assert_eq!(vb.value, VarBindValue::Value(simple_from_int(41)));
+        let res = tab.get_next(o5);
         assert!(res.is_ok());
         let s42 = simple_from_int(42);
-        assert_eq!(res.unwrap(), VarBindValue::Value(s42)); */
+        let vb = res.unwrap();
+        assert_eq!(vb.value, VarBindValue::Value(s42));
+        let ol = ObjectIdentifier::new(&[1, 6, 1, 2, 5]).unwrap();
+        let res = tab.get_next(ol);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_add_row() {
+        let mut tab = tab_fixture();
+        assert_eq!(tab.row_count(), 2);
+        let s6 = simple_from_int(6);
+        let s37 = simple_from_int(37);
+        let row = vec![s6, s37];
+        tab.add_row(&row);
+        assert_eq!(tab.row_count(), 3);
     }
 }

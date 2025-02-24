@@ -1,3 +1,4 @@
 /target
 users.txt
 boot-cnt.txt
+Cargo.lock
