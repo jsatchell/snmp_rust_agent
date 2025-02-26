@@ -2,7 +2,8 @@ use rasn::types::{Integer, ObjectIdentifier, OctetString};
 use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
 use rasn_snmp::v3::{VarBind, VarBindValue};
 use snmp_rust_agent::keeper::oid_keep::{OidErr, OidKeeper, ScalarMemOid, TableMemOid};
-use snmp_rust_agent::snmp_agent::{Agent, OidMap};
+use snmp_rust_agent::oidmap::OidMap;
+use snmp_rust_agent::snmp_agent::Agent;
 //Change this to match your organisation's IANA registration, This example
 // uses the "dynamic" MAC address scheme, but many other name systems work.
 
@@ -72,6 +73,7 @@ fn main() -> std::io::Result<()> {
         &oid1,
         vec!['i', 'i'],
         vec![1],
+        false
     ));
     //snmp_engine_id::mac_engine_id(20012, "04:cf:4b:e3:cb:64");
     let mut oid_map = OidMap::<OT>::new();

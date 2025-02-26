@@ -2,3 +2,4 @@
 users.txt
 boot-cnt.txt
 Cargo.lock
+tools/__pycache__/

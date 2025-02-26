@@ -1,12 +1,14 @@
 mod engine_id;
 pub mod keeper;
+pub mod oidmap;
 mod privacy;
 mod usm;
 
 pub mod snmp_agent {
 
     pub use crate::engine_id::snmp_engine_id;
-    use crate::keeper::oid_keep::OidKeeper;
+    use crate::keeper::oid_keep::{OidErr, OidKeeper};
+    use crate::oidmap::OidMap;
     use crate::privacy;
     use crate::usm;
     use rasn;
@@ -40,10 +42,6 @@ pub mod snmp_agent {
         write(BOOTCNT_FILENAME, boots.to_string().as_bytes()).unwrap();
         boots
     }
-
-    /// Type used to hold mapping between ObjectIdentifiers and instances
-    /// that support OidKeep
-    pub type OidMap<'a, T> = Vec<(&'a ObjectIdentifier, &'a mut T)>;
 
     /// Main Agent object.
     pub struct Agent {
@@ -191,14 +189,13 @@ pub mod snmp_agent {
                     request_id = r.0.request_id;
                     for vbind in r.0.variable_bindings {
                         let roid = vbind.name.clone();
-                        let opt_get: Result<usize, usize> =
-                            oid_map.binary_search_by(|a| a.0.cmp(&roid));
+                        let opt_get: Result<usize, usize> = oid_map.search(&roid);
                         match opt_get {
                             Err(insert_point) => {
                                 //
                                 // This should error and generate a report?
                                 println!("Get miss case {insert_point}");
-                                let okeep = &oid_map[insert_point - 1].1;
+                                let okeep = &oid_map.idx(insert_point - 1);
                                 if okeep.is_scalar() {
                                     println!("Scalar get ");
                                     error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
@@ -228,7 +225,7 @@ pub mod snmp_agent {
                             }
                             Ok(which) => {
                                 vb_cnt += 1;
-                                let okeep = &oid_map[which].1;
+                                let okeep = &oid_map.idx(which);
                                 let value_res = okeep.get(roid.clone());
                                 if let Ok(value) = value_res {
                                     vb.push(VarBind {
@@ -251,8 +248,7 @@ pub mod snmp_agent {
                     request_id = r.0.request_id;
                     for vbind in r.0.variable_bindings {
                         let roid = vbind.name.clone();
-                        let opt_get: Result<usize, usize> =
-                            oid_map.binary_search_by(|a| a.0.cmp(&roid));
+                        let opt_get: Result<usize, usize> = oid_map.search(&roid);
                         match opt_get {
                             Err(insert_point) => {
                                 println!("Get next miss case {insert_point}");
@@ -270,7 +266,7 @@ pub mod snmp_agent {
                                         value: VarBindValue::EndOfMibView,
                                     });
                                 } else {
-                                    let last_keep = &oid_map[insert_point - 1].1;
+                                    let last_keep = &oid_map.idx(insert_point - 1);
                                     if last_keep.is_scalar() {
                                         error_index = vb_cnt;
                                         error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
@@ -312,9 +308,9 @@ pub mod snmp_agent {
                                         name: roid.clone(),
                                         value: VarBindValue::EndOfMibView,
                                     });
-                                } else if oid_map[which].1.is_scalar() {
-                                    let next_oid: ObjectIdentifier = oid_map[which + 1].0.clone();
-                                    let okeep = &oid_map[which + 1].1;
+                                } else if oid_map.idx(which).is_scalar() {
+                                    let next_oid: ObjectIdentifier = oid_map.oid(which + 1).clone();
+                                    let okeep = &oid_map.idx(which + 1);
                                     if okeep.is_scalar() {
                                         vb.push(VarBind {
                                             name: next_oid.clone(),
@@ -324,7 +320,7 @@ pub mod snmp_agent {
                                         vb.push(okeep.get_next(roid.clone()).unwrap());
                                     };
                                 } else {
-                                    let okeep = &oid_map[which].1;
+                                    let okeep = &oid_map.idx(which);
                                     println!("Trying okeep");
                                     let gn_res = okeep.get_next(roid.clone());
                                     match gn_res {
@@ -342,38 +338,59 @@ pub mod snmp_agent {
                     }
                 }
                 Pdus::SetRequest(r) => {
+                    // FIXME this is scalar only!
                     request_id = r.0.request_id;
                     for vbind in r.0.variable_bindings {
                         let roid = vbind.name.clone();
-                        let opt_get: Result<usize, usize> =
-                            oid_map.binary_search_by(|a| a.0.cmp(&roid));
-                        match opt_get {
-                            Err(_ew) => {
-                                // This should error and generate a report?
-                                error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
-                                error_index = vb_cnt;
-                                vb.push(VarBind {
-                                    name: roid,
-                                    value: VarBindValue::NoSuchObject,
-                                });
-                                break;
+                        let opt_set: Result<usize, usize> = oid_map.search(&roid);
+                        match opt_set {
+                            Err(insert_point) => {
+                                println!("Set miss case {insert_point}");
+                                let okeep = &mut oid_map.idx(insert_point - 1);
+                                if okeep.is_scalar() {
+                                    println!("Scalar set miss"); // This should error and generate a report?
+                                    error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
+                                    error_index = vb_cnt;
+                                    vb.push(VarBind {
+                                        name: roid,
+                                        value: VarBindValue::NoSuchObject,
+                                    });
+                                    break;
+                                } else {
+                                    println!("Table set ");
+                                    let set_res = okeep.set(roid.clone(), vbind.value);
+                                    println!("Table set {set_res:?}");
+                                    match set_res {
+                                        Ok(res) => vb.push(VarBind {
+                                            name: roid.clone(),
+                                            value: res,
+                                        }),
+                                        Err(_) => {
+                                            error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
+                                            vb.push(VarBind {
+                                                name: roid,
+                                                value: VarBindValue::NoSuchObject,
+                                            });
+                                        }
+                                    }
+                                }
                             }
                             Ok(which) => {
                                 vb_cnt += 1;
-                                let noid: ObjectIdentifier = oid_map[which].0.clone();
-                                let okeep: &mut &mut T = &mut oid_map[which].1;
-                                let set_result = (**okeep).set(noid.clone(), vbind.value.clone());
-                                if set_result.is_err() {
+                                // let noid: ObjectIdentifier = oid_map.oid(which).clone();
+                                let okeep: &mut &mut T = &mut oid_map.idx(which);
+                                let set_result = (**okeep).set(roid.clone(), vbind.value.clone());
+                                if let Err(OidErr::WrongType) = set_result {
                                     error_status = Pdu::ERROR_STATUS_WRONG_TYPE;
                                     vb.push(VarBind {
-                                        name: noid.clone(),
+                                        name: roid.clone(),
                                         value: vbind.value,
                                     });
                                 } else {
                                     let svalue = set_result.unwrap();
                                     // Need to catch size, data type etc
                                     vb.push(VarBind {
-                                        name: noid.clone(),
+                                        name: roid.clone(),
                                         value: svalue,
                                     });
                                 }
@@ -381,7 +398,20 @@ pub mod snmp_agent {
                         }
                     }
                 }
-                // Do BulkRequest once tables work properly
+                Pdus::GetBulkRequest(r) => {
+                    // Do BulkRequest once tables work properly
+                    request_id = r.0.request_id;
+                    let non_repeaters: usize = r.0.non_repeaters.try_into().unwrap();
+                    let _max_repeats = r.0.max_repetitions;
+                    for (n, vbind) in r.0.variable_bindings.iter().enumerate() {
+                        if n < non_repeaters {
+                            println!("Non rep {vbind:?}");
+                        } else {
+                            println!("Repeat {vbind:?}");
+                        }
+                    }
+                    skip_pdu = true
+                }
                 _ => skip_pdu = true,
             }
             if skip_pdu {
@@ -404,7 +434,7 @@ pub mod snmp_agent {
         }
         /// Main server loop entry point
         ///
-        /// oid_map is Vec of tuples of & ObjectIdentifier, &mut OidKeeper
+        /// oid_map is Vec of tuples of (&ObjectIdentifier, &mut OidKeeper)
         ///
         /// This can be populated in any order, as it is sorted on the Oids before the loop starts.
         ///
@@ -412,7 +442,7 @@ pub mod snmp_agent {
             let mut buf = [0; 65100];
             let mut opt_user: Option<&usm::User> = None;
             // Sort by oid, the lookups use binary search.
-            oid_map.sort_by(|a, b| a.0.cmp(b.0));
+            oid_map.sort();
             loop {
                 let recv_res = self.socket.recv_from(&mut buf);
                 // If the socket read fails, there is nothing much we can do.

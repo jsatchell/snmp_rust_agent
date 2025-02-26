@@ -118,6 +118,7 @@ pub mod oid_keep {
         base: Vec<u32>,
         otypes: Vec<char>,
         index_cols: Vec<usize>,
+        implicit_last: bool,
     }
 
     impl TableMemOid {
@@ -127,6 +128,7 @@ pub mod oid_keep {
             base: &ObjectIdentifier,
             otypes: Vec<char>,
             index_cols: Vec<usize>,
+            implicit_last: bool
         ) -> Self {
             assert_eq!(cols, otypes.len());
             for ot in &otypes {
@@ -135,7 +137,7 @@ pub mod oid_keep {
             assert!(index_cols.len() < cols);
             let mut row_data = Vec::new();
             for row in data {
-                let idx = TableMemOid::index_imp(&index_cols, &row);
+                let idx = TableMemOid::index_imp(&index_cols, &row, implicit_last);
                 row_data.push((idx, row));
             }
             row_data.sort_by(|a, b| a.0.cmp(&b.0));
@@ -145,12 +147,13 @@ pub mod oid_keep {
                 base: base.to_vec(),
                 otypes,
                 index_cols,
+                implicit_last,
             }
         }
 
-        fn index_imp(icols: &Vec<usize>, row: &[ObjectSyntax]) -> Vec<u32> {
+        fn index_imp(icols: &Vec<usize>, row: &[ObjectSyntax], implicit_last: bool) -> Vec<u32> {
             let mut ret: Vec<u32> = Vec::new();
-            for index_column_number in icols {
+            for (n, index_column_number) in icols.iter().enumerate() {
                 let col = &row[*index_column_number - 1];
                 match col {
                     ObjectSyntax::Simple(SimpleSyntax::Integer(i)) => {
@@ -158,9 +161,22 @@ pub mod oid_keep {
                         ret.push(iu32);
                     }
                     ObjectSyntax::Simple(SimpleSyntax::String(s)) => {
+                        if !implicit_last || n <  icols.len() -1 {
+                            let sl: u32 = s.len().try_into().unwrap();
+                            ret.push(sl);
+                        }
                         for i in s {
                             let ir: u8 = *i;
                             let ui32: u32 = ir.into();
+                            ret.push(ui32);
+                        }
+                    }
+                    ObjectSyntax::Simple(SimpleSyntax::ObjectId(o)) => {
+                        if !implicit_last || n <  icols.len() -1 {
+                            let ol: u32 = o.len().try_into().unwrap();
+                            ret.push(ol);
+                        }
+                        for ui32 in o.to_vec() {
                             ret.push(ui32);
                         }
                     }
@@ -186,7 +202,7 @@ pub mod oid_keep {
         }
 
         pub fn add_row(&mut self, row: &[ObjectSyntax]) {
-            let idx = TableMemOid::index_imp(&self.index_cols, row);
+            let idx = TableMemOid::index_imp(&self.index_cols, row, self.implicit_last);
             // FIXME, replace push / sort by find and insert
             self.rows.push((idx, row.to_owned()));
             self.rows.sort_by(|a, b| a.0.cmp(&b.0));
@@ -354,6 +370,7 @@ mod tests {
             &oid2,
             vec!['i', 'i'],
             vec![1usize],
+            false,
         )
     }
     #[test]
