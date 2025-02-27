@@ -4,7 +4,7 @@ import sys
 
 LOGGER = logging.getLogger(__file__)
 NAME_CHAR = {"INTEGER": 'i',
-             "TimeStamp": 's',
+             "TimeStamp": 't',
              "DateAndTime": 's',
              "TimeTicks": 't',
              "TimeInterval": 'i',
@@ -116,8 +116,8 @@ fn main() -> std::io::Result<()> {
             if child_name in otypes:
                 child = otypes[child_name]
                 index_list = child["index"]
-                LOGGER.info("entry %s", entry)
-                LOGGER.info("index %s", index_list)
+                LOGGER.debug("entry %s", entry)
+                LOGGER.debug("index %s", index_list)
                 implied = "IMPLIED" in index_list[-1]
                 if implied:
                     index_list[-1] = index_list[-1].split()[-1]

@@ -1,7 +1,7 @@
 """Comedy MIB compiler
 
 Usage:
-  mib-play.py [-d] [-p [-o <out>]] <mibfile> 
+  mib-play.py [-d] [-p [-o <out>]] [-l <listen>] <mibfile> 
   mib-play.py -h
   mib-play.py -b
 
@@ -13,11 +13,15 @@ Options:
   -p, --play     Generate self-contained "play" code using memory based
                   classes, rather than stubs that must be completed.
   -o <out>, --out <out>      Write code to file named <out>, rather than to stdout.
+  -l <listen>, --listen <listen>   Listen address [default: 127.0.0.1:2161]
 
 <mibfile> can be an absolute path, or if it is a short name the code will try
 looking it up in a built-in search path.
 
 At present, generates code in "play" mode regardless of absence of option!!
+
+For many production cases, a good listen address is 0.0.0.0:161. If you system has multiple
+interfaces, like a firewall, you may only want to listen on one address.
 
 Copyright Julian Satchell 2025
 """
@@ -96,7 +100,13 @@ def parse_text_conventions(text: str):
                 post = part.split("DESCRIPTION", 1)[1].split('"', 2)[2]
 
             if "SYNTAX" in post:
-                data["syntax"] = post.split("SYNTAX", 1)[1].split("\n")[0].strip()
+                syntax = post.split("SYNTAX", 1)[1].split("\n")
+                if syntax[0].split()[-1] == "{":
+                    defs = post.split("{")[1].split("}", 1)[0].split("\n")
+                    dsyntax = syntax[0].strip() + " ".join(_.split("--")[0].strip() for _ in defs) + "}"
+                else:
+                    dsyntax = syntax[0].strip()
+                data["syntax"] = dsyntax
             LOGGER.debug("Defining TC %s as %s", tc_name, data)
             tcs[tc_name] = data
     return tcs
@@ -140,6 +150,7 @@ def parse_oids(text: str, oids: dict):
                 val = y.split("}")[0].strip() + " }"
                 oids[oname.strip()] = val
 
+
 def parse_module_id(text: str) -> dict:
     ret = {}
     if "MODULE-IDENTITY\n" in text:
@@ -154,28 +165,71 @@ def parse_module_id(text: str) -> dict:
     return ret
 
 
+def parse_object_types(text: str) -> dict:
+    otypes = {}
+    parts = text.split(" OBJECT-TYPE")
+    for i, part in enumerate(parts[1:]):
+        _, oname = parts[i].rsplit("\n", 1)
+        if "SYNTAX" not in part or "MAX-ACCESS" not in part:
+            LOGGER.debug("No SYNTAX, skipping, probably initial import")
+            continue
+        data = {}
+        if "INDEX" in part:
+            itext = part.split("INDEX", 1)[1].split("}", 1)[0].strip() + "}"
+            data["index"] = [_.strip() for _ in itext[1:-1].split(",")]
+        if "DESCRIPTION" in part:
+            data["description"] = dedent_description(part.split("DESCRIPTION")[1].split('"')[1])
+        if "MAX-ACCESS" in part:
+            data["access"] = part.split("MAX-ACCESS")[1].split("\n")[0].strip()
+        data["def"] = part.split("::=")[1].split("}", 1)[0] + "}"
+        parent = data["def"].split()[1]
+        if parent in otypes and "index" in otypes[parent]:
+            data["col"] = True
+        else:
+            data["col"] = False
+        
+        data["syntax"] = part.split("SYNTAX", 1)[1].split("\n")[0].strip()
+        data["table"] = "SEQUENCE" in data["syntax"]
+        if data["table"]:
+            entry = data["syntax"].split("OF")[1].strip()
+            data["entry"] = entry
+        otypes[oname.strip()] = data
+    return otypes
+
+def strip_comments(text):
+    return "\n".join([_.split("--")[0] for _ in text.split("\n")])
+
 def parse_mib(mib_file: str, depth=0):
     # Bootstrap list of OIDs to get started
-    resolve = {"iso": [1],
+    resolve = {"0": [0], "iso": [1],
                "org": [1, 3],
                "dod": [1, 3, 6],
                "internet": [1, 3, 6, 1 ],
                "mib-2": [1, 3, 6, 1, 2, 1],
                "system": [1, 3, 6, 1, 2, 1, 1],
+               "interfaces": [1, 3, 6, 1, 2, 1, 2],
                "mgmt": [1, 3, 6, 1, 2 ],
                "transmission": [1, 3, 6, 1, 2, 1, 10],
                "snmp": [1, 3, 6, 1, 2, 1, 11],
+               "snmpv2": [1, 3, 6, 1, 6],
+               "snmpModules": [1, 3, 6, 1, 6, 3],
+               "snmpMIB": [1, 3, 6, 1, 6, 3, 1],
                "private": [1, 3, 6, 1, 4],
                "enterprises": [1, 3, 6, 1, 4, 1],
-               "ucdavis": [1, 3, 6, 1, 4, 1, 2021],
                }
+    builtins = {'TimeTicks', 'OBJECT-TYPE', 'Counter32', 'Gauge32',
+                'NOTIFICATION-TYPE', 'Unsigned32', 'Counter64',
+                'IpAddress',
+                'Integer32', 'MODULE-IDENTITY', 'TEXTUAL-CONVENTION',
+                'NOTIFICATION-GROUP', 'OBJECT-GROUP', 'MODULE-COMPLIANCE'
+                } 
     mib_file = find_mib_file(mib_file)
     if not mib_file:
         exit(99)
     with open(mib_file, "r") as stream:
        
         otypes = {}
-        text = stream.read()
+        text = strip_comments(stream.read())
         ents = parse_table_entries(text)
         tcs = parse_text_conventions(text)
         #lines = text.split("\n")
@@ -190,54 +244,50 @@ def parse_mib(mib_file: str, depth=0):
                     if i>0:
                         names[0] = names[0].split()[-1]
                     LOGGER.debug("Import names %s", names)
-                        
+                    name_set = set(names)
                     imp_mib = impart.split()[0].strip()
                     imp_path = find_mib_file(imp_mib)
                     if imp_path:
                         with open(imp_path, "r") as nest:
-                            itext = nest.read()
+                            itext = strip_comments(nest.read())
                             inner_oids = {}
                             parse_oids(itext, inner_oids)
                             inner_tcs = parse_text_conventions(itext)
                             for key, value in inner_oids.items():
-                                if key in names:
-                                    oids[key] = value
+                                oids[key] = value
+                                if key in name_set:
+                                    
+                                    name_set.discard(key)
                             for key, value in inner_tcs.items():
-                                if key in names:
+                                if key in name_set:
                                     tcs[key] = value
+                                    name_set.discard(key)
+                            name_set = name_set.difference(builtins)
+                            if name_set:
+                                LOGGER.debug("Unresolved import(s) %s", name_set)
+                                LOGGER.debug("Try importing object types ")
+                                inner_types = parse_object_types(itext)
+                                for key, value in inner_types.items():
+                                    otypes[key] = value
+                                    if key in name_set:
+                                        name_set.discard(key)
+                                if name_set:
+                                    inner_mod_id = parse_module_id(itext)
+                                    for key in inner_mod_id:
+                                        name_set.discard(key)
+                                    oids.update(inner_mod_id)
+                            if name_set:
+                                LOGGER.error("Unresolved import(s) %s for %s",
+                                             name_set, imp_mib)                            
+
+                           
         # Just ignore compliance stuff for now 
         #if "MODULE-COMPLIANCE" in rest:
         #    rest, _ = rest.split("MODULE-COMPLIANCE", 1)
         # Find all the OBJECT IDENTIFIERs
         parse_oids(text, oids)
-
-        parts = text.split(" OBJECT-TYPE")
-        for i, part in enumerate(parts[1:]):
-            _, oname = parts[i].rsplit("\n", 1)
-            if "SYNTAX" not in part or "MAX-ACCESS" not in part:
-                LOGGER.debug("No SYNTAX, skipping, probably initial import")
-                continue
-            data = {}
-            if "INDEX" in part:
-                itext = part.split("INDEX", 1)[1].split("}", 1)[0].strip() + "}"
-                data["index"] = [_.strip() for _ in itext[1:-1].split(",")]
-            if "DESCRIPTION" in part:
-                data["description"] = dedent_description(part.split("DESCRIPTION")[1].split('"')[1])
-            if "MAX-ACCESS" in part:
-                data["access"] = part.split("MAX-ACCESS")[1].split("\n")[0].strip()
-            data["def"] = part.split("::=")[1].split("}", 1)[0] + "}"
-            parent = data["def"].split()[1]
-            if parent in otypes and "index" in otypes[parent]:
-                data["col"] = True
-            else:
-                data["col"] = False
-           
-            data["syntax"] = part.split("SYNTAX", 1)[1].split("\n")[0].strip()
-            data["table"] = "SEQUENCE" in data["syntax"]
-            if data["table"]:
-                entry = data["syntax"].split("OF")[1].strip()
-                data["entry"] = entry
-            otypes[oname.strip()] = data
+        otypes.update(parse_object_types(text))
+        
         # Make two passes resolving stuff
         for name, data in oids.items():
             content = data.split("{", 1)[1].split("}")[0].strip()
@@ -293,13 +343,16 @@ mib_files =  ["UDP-MIB",
 
 def write_bugs():
     print("""
-          MODULE-COMPLIANCE is ignored
+          MODULE-COMPLIANCE is ignored, but maybe hand coded stubs are OK
           AUGMENTS is ignored
-          IMPLIED in INDEX definitions is ignored
           constraints in SYNTAX are ignored
           constraints in TEXTUAL-CONVENTIONS are ignored
-          imports are only followed one layer down
-          OIDs are defined in the code that are never referenced
+          imports are only followed one layer down. Sometimes
+             you will need to add bootstrap definitions to resolve.
+          import of anything beyond OIDs and TCs does not work 
+            (for example, it won't import a table entry definition
+             for AUGMENTS)
+          OIDs are defined in the code that are never referenced.
     """)
     exit()
 
@@ -316,6 +369,7 @@ if __name__ == '__main__':
 
     if arguments["--out"]:
         with open(arguments["--out"], "w") as out:
-            gen_rs(otypes, resolve, tcs, ents, arguments["--play"], out)
+            gen_rs(otypes, resolve, tcs, ents, arguments["--play"],
+                   out=out, listen=arguments["--listen"])
     else:
-        gen_rs(otypes, resolve, tcs, ents, arguments["--play"])
+        gen_rs(otypes, resolve, tcs, ents, arguments["--play"], listen=arguments["--listen"]) 

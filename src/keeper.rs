@@ -128,7 +128,7 @@ pub mod oid_keep {
             base: &ObjectIdentifier,
             otypes: Vec<char>,
             index_cols: Vec<usize>,
-            implicit_last: bool
+            implicit_last: bool,
         ) -> Self {
             assert_eq!(cols, otypes.len());
             for ot in &otypes {
@@ -151,7 +151,7 @@ pub mod oid_keep {
             }
         }
 
-        fn index_imp(icols: &Vec<usize>, row: &[ObjectSyntax], implicit_last: bool) -> Vec<u32> {
+        fn index_imp(icols: &[usize], row: &[ObjectSyntax], implicit_last: bool) -> Vec<u32> {
             let mut ret: Vec<u32> = Vec::new();
             for (n, index_column_number) in icols.iter().enumerate() {
                 let col = &row[*index_column_number - 1];
@@ -161,7 +161,7 @@ pub mod oid_keep {
                         ret.push(iu32);
                     }
                     ObjectSyntax::Simple(SimpleSyntax::String(s)) => {
-                        if !implicit_last || n <  icols.len() -1 {
+                        if !implicit_last || n < icols.len() - 1 {
                             let sl: u32 = s.len().try_into().unwrap();
                             ret.push(sl);
                         }
@@ -172,11 +172,11 @@ pub mod oid_keep {
                         }
                     }
                     ObjectSyntax::Simple(SimpleSyntax::ObjectId(o)) => {
-                        if !implicit_last || n <  icols.len() -1 {
+                        if !implicit_last || n < icols.len() - 1 {
                             let ol: u32 = o.len().try_into().unwrap();
                             ret.push(ol);
                         }
-                        for ui32 in o.to_vec() {
+                        for ui32 in o.iter().copied() {
                             ret.push(ui32);
                         }
                     }
@@ -289,11 +289,11 @@ pub mod oid_keep {
                         }
                     }
                 }
-
+                println!("Off end of table");
                 Err(OidErr::OutOfRange)
             } else {
                 let row = &self.rows[0];
-                let value = VarBindValue::Value(row.1[col].clone());
+                let value = VarBindValue::Value(row.1[col - 1].clone());
                 let name = self.make_oid(col, &row.0);
                 Ok(VarBind { name, value })
             }

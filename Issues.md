@@ -16,19 +16,19 @@
   * Usm - 1
   * Privacy
   * Lib  Hardest, needs mocks etc.
-* Debug /Fix snmpwalk ?
+* Debug /Fix snmpwalk  - done.
 * Table model
   * Integer indices in column 1 - Done
     * Get - Done
     * Set existing cells - Done
-  * Multicolumn indices: Integers, strings and addresses - started.
+  * Multicolumn indices: Integers, strings and addresses - done.
   * Text-Convention range checking
   * Row management via row status column
     * Delete
     * Active / "not in service" switching
     * Create and Wait
     * Create and Go
-  * Extra errors
+  * Extra errors - done except for permissions / read-only
 * Rough outline of MiB compiler / code generator - Started
 * Simplistic permissions model
 * Get-bulk - only interesting in table case
@@ -40,7 +40,8 @@
 * more hash / cipler choices (at least SHA-256, AES-256) - RFC 7360
 * View model and user mapping to views
 * Multiple contexts - separate Oid maps?
+* Traps
 
 ## Blue Sky
 
-* Proper MIB compiler, sing nom!
+* Proper MIB compiler, using nom!
