@@ -49,9 +49,10 @@ pub mod oid_keep {
     }
 
     pub trait OidKeeper {
-        fn is_scalar(&self) -> bool;
+        fn is_scalar(&self, oid: ObjectIdentifier) -> bool;
         fn get(&self, oid: ObjectIdentifier) -> Result<VarBindValue, OidErr>;
         fn get_next(&self, oid: ObjectIdentifier) -> Result<VarBind, OidErr>;
+        fn access(&self, oid: ObjectIdentifier) -> Access;
         fn set(
             &mut self,
             oid: ObjectIdentifier,
@@ -99,7 +100,7 @@ pub mod oid_keep {
         }
     }
     impl OidKeeper for ScalarMemOid {
-        fn is_scalar(&self) -> bool {
+        fn is_scalar(&self, _oid: ObjectIdentifier) -> bool {
             true
         }
 
@@ -114,6 +115,10 @@ pub mod oid_keep {
         // Scalar, so next item always lies outside
         fn get_next(&self, _oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
             Err(OidErr::OutOfRange)
+        }
+
+        fn access(&self, _oid: ObjectIdentifier) -> Access {
+            self.access
         }
 
         fn set(
@@ -255,7 +260,7 @@ pub mod oid_keep {
     }
 
     impl OidKeeper for TableMemOid {
-        fn is_scalar(&self) -> bool {
+        fn is_scalar(&self, _oid: ObjectIdentifier) -> bool {
             false
         }
 
@@ -270,9 +275,10 @@ pub mod oid_keep {
             if suffix[0] != 1u32 {
                 return Err(OidErr::NoSuchName);
             }
-            if suffix[1] > 8192 {
+            if suffix[1] > 16384 {
                 // Some sort of denial of service attack?
-                // This would only allow 8 bytes per column
+                // This would only allow 4 bytes per column in
+                // the biggest UDP packet.
                 return Err(OidErr::NoSuchName);
             }
             // This is OK on 16 bit and larger machines. Might fail on a microcontroller,
@@ -343,6 +349,24 @@ pub mod oid_keep {
             }
         }
 
+        fn access(&self, oid: ObjectIdentifier) -> Access {
+            let suffix = self.suffix(oid);
+            if suffix.len() < 2 {
+                return Access::NoAccess
+            }
+            if suffix[0] != 1u32 {
+                return Access::NoAccess
+            }
+            if suffix[1] > 16384 {
+                return Access::NoAccess
+            }
+            let col: usize = suffix[1].try_into().unwrap();
+            if col == 0 || col > self.cols {
+                return Access::NoAccess
+            }
+            self.access[col - 1]
+        }
+
         /// Supports updating existing cells, NOT YET new row creation via RowStatus column
         fn set(
             &mut self,
@@ -358,7 +382,7 @@ pub mod oid_keep {
             if suffix[0] != 1u32 {
                 return Err(OidErr::NoSuchName);
             }
-            if suffix[1] > 8192 {
+            if suffix[1] > 16384 {
                 // Some sort of denial of service attack?
                 // This would only allow 8 bytes per column
                 return Err(OidErr::NoSuchName);

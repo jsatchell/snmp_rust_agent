@@ -178,7 +178,7 @@ impl Agent {
                 Err(insert_point) => {
                     println!("Get miss case {insert_point}");
                     let okeep = &oid_map.idx(insert_point - 1);
-                    if okeep.is_scalar() {
+                    if okeep.is_scalar(roid.clone()) {
                         println!("Scalar get ");
                         error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
                         vb.push(VarBind {
@@ -248,7 +248,7 @@ impl Agent {
                         // Off the front of our range - give the first thing
                         let oid1 = oid_map.oid(0).clone();
                         let okeep = &oid_map.idx(0);
-                        if okeep.is_scalar() {
+                        if okeep.is_scalar(oid1.clone()) {
                             let value = okeep.get(oid1.clone()).unwrap();
                             vb.push(VarBind {
                                 name: oid1.clone(),
@@ -272,7 +272,7 @@ impl Agent {
                         let oid1 = &oid_map.oid(insert_point).clone();
                         let last_keep = &oid_map.idx(insert_point);
 
-                        if last_keep.is_scalar() {
+                        if last_keep.is_scalar(oid1.clone()) {
                             match last_keep.get(oid1.clone()) {
                                 Ok(value) => vb.push(VarBind {
                                     name: oid1.clone(),
@@ -302,7 +302,7 @@ impl Agent {
                                             println!("handle case following table end");
                                             let next_oid = oid_map.oid(insert_point).clone();
                                             let next_keep = &oid_map.idx(insert_point);
-                                            if next_keep.is_scalar() {
+                                            if next_keep.is_scalar(next_oid.clone()) {
                                                 let value =
                                                     next_keep.get(next_oid.clone()).unwrap();
                                                 vb.push(VarBind {
@@ -350,10 +350,10 @@ impl Agent {
                             name: roid.clone(),
                             value: VarBindValue::EndOfMibView,
                         });
-                    } else if oid_map.idx(which).is_scalar() {
+                    } else if oid_map.idx(which).is_scalar(roid.clone()) {
                         let next_oid: ObjectIdentifier = oid_map.oid(which + 1).clone();
                         let okeep = &oid_map.idx(which + 1);
-                        if okeep.is_scalar() {
+                        if okeep.is_scalar(next_oid.clone()) {
                             let value_res = okeep.get(next_oid.clone());
                             match value_res {
                                 Err(_) => vb.push(VarBind {
@@ -400,7 +400,7 @@ impl Agent {
                 Err(insert_point) => {
                     println!("Set miss case {insert_point}");
                     let okeep = &mut oid_map.idx(insert_point - 1);
-                    if okeep.is_scalar() {
+                    if okeep.is_scalar(roid.clone()) {
                         println!("Scalar set miss"); // This should error and generate a report?
                         error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
                         error_index = vb_cnt;
@@ -458,10 +458,9 @@ impl Agent {
         r: GetBulkRequest,
         vb: &mut Vec<VarBind>,
     ) -> (u32, u32, i32) {
-        let mut error_status = Pdu::ERROR_STATUS_NO_ERROR;
-        let mut error_index = 0;
+        let error_status = Pdu::ERROR_STATUS_NO_ERROR;
+        let error_index = 0;
         let request_id = r.0.request_id;
-        let mut vb_cnt = 0;
         let non_repeaters: usize = r.0.non_repeaters.try_into().unwrap();
         let _max_repeats = r.0.max_repetitions;
         for (n, vbind) in r.0.variable_bindings.iter().enumerate() {
@@ -484,7 +483,6 @@ impl Agent {
             } else {
                 println!("Repeat {vbind:?}");
             }
-            vb_cnt += 1;
         }
         (error_status, error_index, request_id)
     }
