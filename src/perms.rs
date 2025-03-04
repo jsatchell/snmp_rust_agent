@@ -1,8 +1,9 @@
 // Minimal interim permissions model
 // 
 // Radically simpler than the full VACM model!
-use crate::keeper::oid_keep::OidKeeper;
+use crate::keeper::oid_keep::{Access, OidKeeper, TableMemOid};
 use rasn_snmp::v2::Pdu;
+use rasn_snmp::v3::{HeaderData, Message, Pdus, ScopedPdu, USMSecurityParameters};
 use rasn::types::ObjectIdentifier;
 use crate::usm;
 

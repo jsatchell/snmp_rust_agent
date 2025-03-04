@@ -25,10 +25,11 @@ def gen_stub(object_types, resolve, tcs, entries,
    
     out = open("src/stubs/" + stub_name + ".rs", "w")
     
-    stub_start = r"""use rasn::types::{Integer, ObjectIdentifier, OctetString};
-use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
-use crate::keeper::oid_keep::{Access, OidKeeper, ScalarMemOid, TableMemOid};
+    stub_start = r"""use crate::keeper::oid_keep::{Access, OidKeeper, ScalarMemOid, TableMemOid};
 use crate::oidmap::OidMap;
+use rasn::types::{Integer, ObjectIdentifier, OctetString};
+use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
+
 
 """
     
@@ -38,7 +39,7 @@ use crate::oidmap::OidMap;
         if data["col"] or "index" in data:
             continue
         arc = resolve[name]
-        out.write(f"const ARC_{usnake(name)}: [u32; {len(arc)}] = {arc} ;\n")
+        out.write(f"const ARC_{usnake(name)}: [u32; {len(arc)}] = {arc};\n")
 
     ot = r"""
 fn simple_from_int(value: i32) -> ObjectSyntax {
@@ -85,7 +86,7 @@ pub fn load_stub(oid_map: &mut OidMap) {
         vec!{cols},
         vec![{acols}],
         vec!{icols},
-        {"true" if implied else "false"}
+        {"true" if implied else "false"},
     ));\n""")
         else:
             acc = ACCESS[data["access"]]
@@ -109,4 +110,4 @@ def loader(mibfiles):
         src.write("\n\npub fn load_stubs(oid_map: &mut OidMap) {\n")
         for stub in stubs:
             src.write(f"    {stub}::load_stub(oid_map);\n")
-        src.write("}")
+        src.write("}\n")
