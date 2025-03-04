@@ -1,3 +1,4 @@
+use crate::keeper::oid_keep::OidKeeper;
 use rasn::types::ObjectIdentifier;
 /// Type used to hold mapping between ObjectIdentifiers and instances
 /// that support OidKeep
@@ -10,34 +11,35 @@ use rasn::types::ObjectIdentifier;
 /// Trie might be worth trying in the future, as lookups are O(1), but as most MIBs are small,
 /// logN is about 5 or 6 typically, so the speed up is modest, and real back end operations
 ///  like system calls are vastly slower.
-pub struct OidMap<'a, T> {
-    store: Vec<(&'a ObjectIdentifier, &'a mut T)>,
+pub struct OidMap {
+    store: Vec<(ObjectIdentifier, Box<dyn OidKeeper>)>,
 }
 
-impl<'a, T> OidMap<'a, T> {
+impl OidMap {
     pub fn new() -> Self {
-        let store: Vec<(&ObjectIdentifier, &mut T)> = vec![];
+        let store: Vec<(ObjectIdentifier, Box<dyn OidKeeper>)> = vec![];
         OidMap { store }
     }
 
-    pub fn push(&mut self, arg: (&'a ObjectIdentifier, &'a mut T)) {
-        self.store.push(arg);
+    pub fn push(&mut self, oid: ObjectIdentifier, arg: Box<dyn OidKeeper>) {
+        self.store.push((oid, arg));
     }
 
     pub fn sort(&mut self) {
-        self.store.sort_by(|a, b| a.0.cmp(b.0));
+        self.store.sort_by(|a, b| a.0.cmp(&b.0));
+        println!("Sorted");
     }
 
     pub fn search(&self, oid: &ObjectIdentifier) -> Result<usize, usize> {
         self.store.binary_search_by(|a| a.0.cmp(oid))
     }
 
-    pub fn idx(&mut self, i: usize) -> &mut T {
-        self.store[i].1
+    pub fn idx(&mut self, i: usize) -> &mut Box<dyn OidKeeper> {
+        &mut self.store[i].1
     }
 
     pub fn oid(&self, i: usize) -> &ObjectIdentifier {
-        self.store[i].0
+        &self.store[i].0
     }
 
     pub fn len(&self) -> usize {
@@ -45,11 +47,11 @@ impl<'a, T> OidMap<'a, T> {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.store.len() == 0
+        self.store.is_empty()
     }
 }
 
-impl<T> Default for OidMap<'_, T> {
+impl Default for OidMap {
     fn default() -> Self {
         Self::new()
     }

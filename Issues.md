@@ -15,8 +15,8 @@
   * Keeper - OK
   * Usm - 1
   * Privacy
-  * Lib  Hardest, needs mocks etc.
-* Debug /Fix snmpwalk  - done.
+  * Agent  Hardest, needs mocks etc.
+* Debug /Fix snmpwalk  - done?
 * Table model
   * Integer indices in column 1 - Done
     * Get - Done
@@ -29,11 +29,13 @@
     * Create and Wait
     * Create and Go
   * Extra errors - done except for permissions / read-only
+* Change from trait enum to trait objects.
 * Rough outline of MiB compiler / code generator - Started
 * Simplistic permissions model
 * Get-bulk - only interesting in table case
 * Remote user support as example of table model
 * Refactor into library plus example(s) - Done
+* Refactor compiler using classes
 
 ## After MVP
 
@@ -41,6 +43,7 @@
 * View model and user mapping to views
 * Multiple contexts - separate Oid maps?
 * Traps
+* Augments support in compiler
 
 ## Blue Sky
 

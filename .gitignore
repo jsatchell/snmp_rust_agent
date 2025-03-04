@@ -1,4 +1,5 @@
 /target
+.vscode
 users.txt
 boot-cnt.txt
 Cargo.lock

@@ -17,6 +17,17 @@ pub mod oid_keep {
         WrongType,
         NoSuchInstance,
         NoSuchName,
+        NoAccess,
+        NotWritable,
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+    pub enum Access {
+        NoAccess,
+        NotificationOnly,
+        ReadOnly,
+        ReadWrite,
+        ReadCreate,
     }
 
     fn check_type(otype: char, val: &ObjectSyntax) -> bool {
@@ -53,6 +64,7 @@ pub mod oid_keep {
     pub struct ScalarMemOid {
         value: ObjectSyntax,
         otype: char,
+        access: Access,
     }
 
     impl ScalarMemOid {
@@ -72,14 +84,18 @@ pub mod oid_keep {
         /// * ApplicationWide(ApplicationSyntax::Counter(_)) => 'c',
         /// * ApplicationWide(ApplicationSyntax::BigCounter(_)) => 'b',
         /// * ApplicationWide(ApplicationSyntax::Ticks(_)) => 't',
-        pub fn new(value: ObjectSyntax, otype: char) -> Self {
+        pub fn new(value: ObjectSyntax, otype: char, access: Access) -> Self {
             if !check_otype(otype) {
                 panic!("Unrecognised type char {otype}");
             }
             if !check_type(otype, &value) {
                 panic!("Initial value is unexpected type {otype} {value:?}");
             }
-            ScalarMemOid { value, otype }
+            ScalarMemOid {
+                value,
+                otype,
+                access,
+            }
         }
     }
     impl OidKeeper for ScalarMemOid {
@@ -88,7 +104,11 @@ pub mod oid_keep {
         }
 
         fn get(&self, _oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {
-            Ok(VarBindValue::Value(self.value.clone()))
+            if self.access == Access::NoAccess || self.access == Access::NotificationOnly {
+                Err(OidErr::NoAccess)
+            } else {
+                Ok(VarBindValue::Value(self.value.clone()))
+            }
         }
 
         // Scalar, so next item always lies outside
@@ -101,14 +121,18 @@ pub mod oid_keep {
             _oid: ObjectIdentifier,
             value: VarBindValue,
         ) -> Result<VarBindValue, OidErr> {
-            if let VarBindValue::Value(new_value) = value.clone() {
-                if check_type(self.otype, &new_value) {
-                    self.value = new_value;
-                } else {
-                    return Err(OidErr::WrongType);
+            if self.access == Access::ReadCreate || self.access == Access::ReadWrite {
+                if let VarBindValue::Value(new_value) = value.clone() {
+                    if check_type(self.otype, &new_value) {
+                        self.value = new_value;
+                    } else {
+                        return Err(OidErr::WrongType);
+                    }
                 }
+                Ok(value)
+            } else {
+                Err(OidErr::NotWritable)
             }
-            Ok(value)
         }
     }
 
@@ -117,8 +141,9 @@ pub mod oid_keep {
         cols: usize,
         base: Vec<u32>,
         otypes: Vec<char>,
+        access: Vec<Access>,
         index_cols: Vec<usize>,
-        implicit_last: bool,
+        implied_last: bool,
     }
 
     impl TableMemOid {
@@ -127,17 +152,19 @@ pub mod oid_keep {
             cols: usize,
             base: &ObjectIdentifier,
             otypes: Vec<char>,
+            access: Vec<Access>,
             index_cols: Vec<usize>,
-            implicit_last: bool,
+            implied_last: bool,
         ) -> Self {
             assert_eq!(cols, otypes.len());
+            assert_eq!(cols, access.len());
             for ot in &otypes {
                 assert!(check_otype(*ot));
             }
-            assert!(index_cols.len() < cols);
+            assert!(index_cols.len() <= cols);
             let mut row_data = Vec::new();
             for row in data {
-                let idx = TableMemOid::index_imp(&index_cols, &row, implicit_last);
+                let idx = TableMemOid::index_imp(&index_cols, &row, implied_last);
                 row_data.push((idx, row));
             }
             row_data.sort_by(|a, b| a.0.cmp(&b.0));
@@ -146,12 +173,13 @@ pub mod oid_keep {
                 cols,
                 base: base.to_vec(),
                 otypes,
+                access,
                 index_cols,
-                implicit_last,
+                implied_last,
             }
         }
 
-        fn index_imp(icols: &[usize], row: &[ObjectSyntax], implicit_last: bool) -> Vec<u32> {
+        fn index_imp(icols: &[usize], row: &[ObjectSyntax], implied_last: bool) -> Vec<u32> {
             let mut ret: Vec<u32> = Vec::new();
             for (n, index_column_number) in icols.iter().enumerate() {
                 let col = &row[*index_column_number - 1];
@@ -161,7 +189,7 @@ pub mod oid_keep {
                         ret.push(iu32);
                     }
                     ObjectSyntax::Simple(SimpleSyntax::String(s)) => {
-                        if !implicit_last || n < icols.len() - 1 {
+                        if !implied_last || n < icols.len() - 1 {
                             let sl: u32 = s.len().try_into().unwrap();
                             ret.push(sl);
                         }
@@ -172,7 +200,7 @@ pub mod oid_keep {
                         }
                     }
                     ObjectSyntax::Simple(SimpleSyntax::ObjectId(o)) => {
-                        if !implicit_last || n < icols.len() - 1 {
+                        if !implied_last || n < icols.len() - 1 {
                             let ol: u32 = o.len().try_into().unwrap();
                             ret.push(ol);
                         }
@@ -202,7 +230,7 @@ pub mod oid_keep {
         }
 
         pub fn add_row(&mut self, row: &[ObjectSyntax]) {
-            let idx = TableMemOid::index_imp(&self.index_cols, row, self.implicit_last);
+            let idx = TableMemOid::index_imp(&self.index_cols, row, self.implied_last);
             // FIXME, replace push / sort by find and insert
             self.rows.push((idx, row.to_owned()));
             self.rows.sort_by(|a, b| a.0.cmp(&b.0));
@@ -242,7 +270,12 @@ pub mod oid_keep {
             if suffix[0] != 1u32 {
                 return Err(OidErr::NoSuchName);
             }
-            // This is OK on 32bit and larger machines. Might fail on a microcontroller,
+            if suffix[1] > 8192 {
+                // Some sort of denial of service attack?
+                // This would only allow 8 bytes per column
+                return Err(OidErr::NoSuchName);
+            }
+            // This is OK on 16 bit and larger machines. Might fail on a microcontroller,
             // but you probably don't want more than 255 columns on such a machine anyway
             let col: usize = suffix[1].try_into().unwrap();
             if col == 0 || col > self.cols {
@@ -265,12 +298,23 @@ pub mod oid_keep {
         fn get_next(&self, oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
             let suffix = self.suffix(oid);
             let mut col: usize = if suffix.len() < 3 {
-                1
+                1 + self
+                    .access
+                    .iter()
+                    .position(|p| {
+                        *p == Access::ReadOnly
+                            || *p == Access::ReadWrite
+                            || *p == Access::ReadCreate
+                    })
+                    .unwrap()
             } else {
                 suffix[1].try_into().unwrap()
             };
             if col == 0 || col > self.cols {
                 return Err(OidErr::NoSuchName);
+            }
+            if self.rows.is_empty() {
+                return Err(OidErr::OutOfRange);
             }
             if suffix.len() >= 3 {
                 let index = &suffix[2..];
@@ -308,16 +352,32 @@ pub mod oid_keep {
             let suffix = self.suffix(oid);
             println!("Suffix is {suffix:?}");
             // Complex indices (not integer and/or multicolumn need longer than 2)
-            if suffix.len() < 2 {
+            if suffix.len() < 3 {
                 return Err(OidErr::NoSuchInstance);
             }
-            // This is OK on 32bit and larger machines. Might fail on a microcontroller,
+            if suffix[0] != 1u32 {
+                return Err(OidErr::NoSuchName);
+            }
+            if suffix[1] > 8192 {
+                // Some sort of denial of service attack?
+                // This would only allow 8 bytes per column
+                return Err(OidErr::NoSuchName);
+            }
+            // This is OK on 16bit and larger machines. Might fail on a microcontroller,
             // but you probably don't want more than 255 columns on such a machine anyway
-            let col: usize = suffix[0].try_into().unwrap();
+            let col: usize = suffix[1].try_into().unwrap();
+            // col is 1 based, so 0 is wrong
             if col == 0 || col > self.cols {
                 return Err(OidErr::NoSuchName);
             }
-            let index = &suffix[1..];
+
+            match self.access[col - 1] {
+                Access::NoAccess | Access::NotificationOnly | Access::ReadOnly => {
+                    return Err(OidErr::NotWritable);
+                }
+                _ => {}
+            }
+            let index = &suffix[2..];
             for row in &mut self.rows {
                 if index == row.0 {
                     if let VarBindValue::Value(new_value) = value.clone() {
@@ -338,7 +398,7 @@ pub mod oid_keep {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oid_keep::{OidErr, OidKeeper as _, TableMemOid};
+    use oid_keep::{Access, OidErr, OidKeeper as _, TableMemOid};
     use rasn::types::{Integer, ObjectIdentifier};
     use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
     use rasn_snmp::v3::VarBindValue;
@@ -369,6 +429,7 @@ mod tests {
             2,
             &oid2,
             vec!['i', 'i'],
+            vec![Access::ReadOnly, Access::ReadWrite],
             vec![1usize],
             false,
         )
