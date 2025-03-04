@@ -278,10 +278,11 @@ impl Agent {
                                     name: oid1.clone(),
                                     value,
                                 }),
-                                Err(_) => vb.push(VarBind {
+                                Err(e) => {println!("Error on scalar get {e:?}");
+                                     vb.push(VarBind {
                                     name: oid1.clone(),
-                                    value: VarBindValue::EndOfMibView,
-                                }),
+                                    value: VarBindValue::Unspecified,
+                                })},
                             }
                         } else {
                             // Table
@@ -353,10 +354,17 @@ impl Agent {
                         let next_oid: ObjectIdentifier = oid_map.oid(which + 1).clone();
                         let okeep = &oid_map.idx(which + 1);
                         if okeep.is_scalar() {
-                            vb.push(VarBind {
-                                name: next_oid.clone(),
-                                value: okeep.get(next_oid.clone()).unwrap(),
-                            });
+                            let value_res = okeep.get(next_oid.clone());
+                            match value_res {
+                                Err(_) => vb.push(VarBind {
+                                    name: next_oid.clone(),
+                                    value: VarBindValue::Unspecified,
+                                }),
+                                Ok(value) => vb.push(VarBind {
+                                    name: next_oid.clone(),
+                                    value,
+                                })
+                            }       
                         } else {
                             vb.push(okeep.get_next(roid.clone()).unwrap());
                         };
