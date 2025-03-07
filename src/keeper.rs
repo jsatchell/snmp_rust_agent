@@ -352,17 +352,17 @@ pub mod oid_keep {
         fn access(&self, oid: ObjectIdentifier) -> Access {
             let suffix = self.suffix(oid);
             if suffix.len() < 2 {
-                return Access::NoAccess
+                return Access::NoAccess;
             }
             if suffix[0] != 1u32 {
-                return Access::NoAccess
+                return Access::NoAccess;
             }
             if suffix[1] > 16384 {
-                return Access::NoAccess
+                return Access::NoAccess;
             }
             let col: usize = suffix[1].try_into().unwrap();
             if col == 0 || col > self.cols {
-                return Access::NoAccess
+                return Access::NoAccess;
             }
             self.access[col - 1]
         }

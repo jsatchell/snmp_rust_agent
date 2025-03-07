@@ -278,11 +278,13 @@ impl Agent {
                                     name: oid1.clone(),
                                     value,
                                 }),
-                                Err(e) => {println!("Error on scalar get {e:?}");
-                                     vb.push(VarBind {
-                                    name: oid1.clone(),
-                                    value: VarBindValue::Unspecified,
-                                })},
+                                Err(e) => {
+                                    println!("Error on scalar get {e:?}");
+                                    vb.push(VarBind {
+                                        name: oid1.clone(),
+                                        value: VarBindValue::Unspecified,
+                                    })
+                                }
                             }
                         } else {
                             // Table
@@ -363,8 +365,8 @@ impl Agent {
                                 Ok(value) => vb.push(VarBind {
                                     name: next_oid.clone(),
                                     value,
-                                })
-                            }       
+                                }),
+                            }
                         } else {
                             vb.push(okeep.get_next(roid.clone()).unwrap());
                         };
@@ -472,9 +474,9 @@ impl Agent {
                     Ok(which) => {
                         let okeep = oid_map.idx(which);
                         let value = okeep.get(roid.clone());
-                        vb.push(VarBind{
+                        vb.push(VarBind {
                             name: roid.clone(),
-                            value: value.unwrap()
+                            value: value.unwrap(),
                         });
                         println!("Found non repbulk {which}");
                     }

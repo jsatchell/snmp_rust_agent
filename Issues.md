@@ -29,10 +29,10 @@
     * Create and Wait
     * Create and Go
   * Extra errors - done except for permissions / read-only
-* Change from trait enum to trait objects.
+* Change from trait enum to trait objects. Done.
 * Rough outline of MiB compiler / code generator - Started
 * Simplistic permissions model
-* Get-bulk - only interesting in table case
+* Get-bulk - only interesting in table case - Started
 * Remote user support as example of table model
 * Refactor into library plus example(s) - Done
 * Refactor compiler using classes
