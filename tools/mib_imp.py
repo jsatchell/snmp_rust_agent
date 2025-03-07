@@ -30,7 +30,7 @@ def find_mib_file(name: str) -> str:
 
 def dedent_description(raw: str) -> str:
     """Convert descxripto into Rust comment"""
-    lines = ["    // " + _.strip() for _ in raw.split("\n")]
+    lines = ["// " + _.strip() for _ in raw.split("\n")]
     return "\n".join(lines) + "\n"
 
 
@@ -157,6 +157,9 @@ def parse_object_types(text: str) -> dict:
         if "INDEX" in part:
             itext = part.split("INDEX", 1)[1].split("}", 1)[0].strip() + "}"
             data["index"] = [_.strip() for _ in itext[1:-1].split(",")]
+        if "AUGMENTS" in part:
+            atext = part.split("AUGMENTS", 1)[1].split("}", 1)[0].strip() + "}"
+            data["augments"] = atext
         if "DESCRIPTION" in part:
             raw_desc = part.split("DESCRIPTION")[1].split('"')[1]
             data["description"] = dedent_description(raw_desc)
@@ -174,6 +177,9 @@ def parse_object_types(text: str) -> dict:
         if data["table"]:
             entry = data["syntax"].split("OF")[1].strip()
             data["entry"] = entry
+        if parent in object_types and object_types[parent]["table"]:
+            if "index" not in data and "augments" not in data:
+                LOGGER.warning("Table %s with neither INDEX nor AUGMENTS", oname)
         object_types[oname.strip()] = data
     return object_types
 
@@ -190,8 +196,6 @@ def mib_import(imp_mib: str, name_set: set, oids: dict, tcs: dict,
     imp_path = find_mib_file(imp_mib)
     if imp_path:
         with open(imp_path, "r", encoding="ascii") as nest:
-            extras = set()
-            cache = {}
             itext = strip_comments(nest.read())
             inner_oids = {}
             inner_types = {}
@@ -201,10 +205,9 @@ def mib_import(imp_mib: str, name_set: set, oids: dict, tcs: dict,
                 if key in name_set:
                     oids[key] = value
                     name_set.discard(key)
-                    if value[0] not in resolve:
-                        if value[0] in inner_oids:
-                            cache[value[0]] = inner_oids[value[0]]
-                        extras.add(value[0])
+                parent, num = value
+                if parent in resolve:
+                    resolve[key] = resolve[parent].copy() + [num]
             for key, value in inner_tcs.items():
                 if key in name_set:
                     tcs[key] = value
@@ -219,17 +222,6 @@ def mib_import(imp_mib: str, name_set: set, oids: dict, tcs: dict,
                         object_types[key] = value
                         name_set.discard(key)
                         LOGGER.debug("Found object type %s", key)
-                        if value["def"][0] not in resolve:
-                            if value["def"][0] in inner_oids:
-                                cache[value["def"][0]] = inner_oids[value["def"][0]]
-                            elif value["def"][0] in inner_types:
-                                idef = inner_types[value["def"][0]]["def"]
-                                cache[value["def"][0]] = idef
-                            else:
-                                extras.add(value["def"][0])
-                    if key in extras:
-                        cache[key] = value
-                        extras.discard(key)
             if name_set:
                 inner_mod_id = parse_module_id(itext)
                 for key, value in inner_mod_id.items():
@@ -246,9 +238,9 @@ def mib_import(imp_mib: str, name_set: set, oids: dict, tcs: dict,
                     if key in name_set:
                         name_set.discard(key)
                         oids[key] = value
-                        parent, num = value
-                        if parent in resolve:
-                            resolve[key] = resolve[parent].copy() + [num]
+                    parent, num = value
+                    if parent in resolve:
+                        resolve[key] = resolve[parent].copy() + [num]
             if name_set:
                 LOGGER.info("Unresolved import(s) %s for %s, recursing",
                             name_set, imp_mib)
@@ -282,10 +274,3 @@ def mib_import(imp_mib: str, name_set: set, oids: dict, tcs: dict,
             if name_set:
                 LOGGER.warning("Unresolved import(s) %s for %s",
                                name_set, imp_mib)
-            if cache:
-                LOGGER.info("cache %s for %s", cache, imp_mib)
-            if extras:
-                for extra in extras:
-                    if extra not in resolve:
-                        LOGGER.warning("Unresolved oid %s for %s",
-                                       extra, imp_mib)

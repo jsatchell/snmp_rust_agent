@@ -1,5 +1,6 @@
 
-use crate::keeper::oid_keep::{Access, OidErr, OidKeeper, ScalarMemOid, TableMemOid};
+use crate::keeper::oid_keep::{Access, OidErr, OidKeeper,
+                              ScalarMemOid, TableMemOid};
 use crate::oidmap::OidMap;
 use rasn::types::{Integer, ObjectIdentifier, OctetString};
 use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
@@ -21,7 +22,7 @@ const ARC_USM_STATS_DECRYPTION_ERRORS: [u32; 10] = [1, 3, 6, 1, 6, 3, 15, 1, 1, 
 const ARC_USM_USER_SPIN_LOCK: [u32; 10] = [1, 3, 6, 1, 6, 3, 15, 1, 2, 1];
 const ARC_USM_USER_TABLE: [u32; 10] = [1, 3, 6, 1, 6, 3, 15, 1, 2, 2];
 
-// The next group of OID definitions are for OBJECT-IDENTITIES
+// OID definitions for OBJECT-IDENTITY
 
 const ARC_USM_NO_AUTH_PROTOCOL: [u32; 10] = [1, 3, 6, 1, 6, 3, 10, 1, 1, 1];
 const ARC_USM_H_M_A_C_M_D5_AUTH_PROTOCOL: [u32; 10] = [1, 3, 6, 1, 6, 3, 10, 1, 1, 2];
@@ -31,11 +32,11 @@ const ARC_USM_D_E_S_PRIV_PROTOCOL: [u32; 10] = [1, 3, 6, 1, 6, 3, 10, 1, 2, 2];
 
    // Now the OBJECT-TYPES. These need actual code
 
-    // The total number of packets received by the SNMP
-    // engine which were dropped because they requested a
-    // securityLevel that was unknown to the SNMP engine
-    // or otherwise unavailable.
-    // 
+// The total number of packets received by the SNMP
+// engine which were dropped because they requested a
+// securityLevel that was unknown to the SNMP engine
+// or otherwise unavailable.
+// 
 
 struct KeepUsmstatsunsupportedseclevels {
     scalar: ScalarMemOid,
@@ -64,10 +65,10 @@ impl OidKeeper for KeepUsmstatsunsupportedseclevels {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of packets received by the SNMP
-    // engine which were dropped because they appeared
-    // outside of the authoritative SNMP engine's window.
-    // 
+// The total number of packets received by the SNMP
+// engine which were dropped because they appeared
+// outside of the authoritative SNMP engine's window.
+// 
 
 struct KeepUsmstatsnotintimewindows {
     scalar: ScalarMemOid,
@@ -96,10 +97,10 @@ impl OidKeeper for KeepUsmstatsnotintimewindows {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of packets received by the SNMP
-    // engine which were dropped because they referenced a
-    // user that was not known to the SNMP engine.
-    // 
+// The total number of packets received by the SNMP
+// engine which were dropped because they referenced a
+// user that was not known to the SNMP engine.
+// 
 
 struct KeepUsmstatsunknownusernames {
     scalar: ScalarMemOid,
@@ -128,10 +129,10 @@ impl OidKeeper for KeepUsmstatsunknownusernames {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of packets received by the SNMP
-    // engine which were dropped because they referenced an
-    // snmpEngineID that was not known to the SNMP engine.
-    // 
+// The total number of packets received by the SNMP
+// engine which were dropped because they referenced an
+// snmpEngineID that was not known to the SNMP engine.
+// 
 
 struct KeepUsmstatsunknownengineids {
     scalar: ScalarMemOid,
@@ -160,10 +161,10 @@ impl OidKeeper for KeepUsmstatsunknownengineids {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of packets received by the SNMP
-    // engine which were dropped because they didn't
-    // contain the expected digest value.
-    // 
+// The total number of packets received by the SNMP
+// engine which were dropped because they didn't
+// contain the expected digest value.
+// 
 
 struct KeepUsmstatswrongdigests {
     scalar: ScalarMemOid,
@@ -192,10 +193,10 @@ impl OidKeeper for KeepUsmstatswrongdigests {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of packets received by the SNMP
-    // engine which were dropped because they could not be
-    // decrypted.
-    // 
+// The total number of packets received by the SNMP
+// engine which were dropped because they could not be
+// decrypted.
+// 
 
 struct KeepUsmstatsdecryptionerrors {
     scalar: ScalarMemOid,
@@ -224,11 +225,11 @@ impl OidKeeper for KeepUsmstatsdecryptionerrors {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // An advisory lock used to allow several cooperating
-    // Command Generator Applications to coordinate their
-    // use of facilities to alter secrets in the
-    // usmUserTable.
-    // 
+// An advisory lock used to allow several cooperating
+// Command Generator Applications to coordinate their
+// use of facilities to alter secrets in the
+// usmUserTable.
+// 
 
 struct KeepUsmuserspinlock {
     scalar: ScalarMemOid,
@@ -257,10 +258,10 @@ impl OidKeeper for KeepUsmuserspinlock {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // A user configured in the SNMP engine's Local
-    // Configuration Datastore (LCD) for the User-based
-    // Security Model.
-    // 
+// A user configured in the SNMP engine's Local
+// Configuration Datastore (LCD) for the User-based
+// Security Model.
+// 
 
 struct KeepUsmusertable {
     table: TableMemOid,
@@ -268,7 +269,7 @@ struct KeepUsmusertable {
 
 impl KeepUsmusertable {
     fn new() -> Self {
-       let base_oid: ObjectIdentifier = 
+       let base_oid: ObjectIdentifier =
            ObjectIdentifier::new(&ARC_USM_USER_TABLE).unwrap();
 
        KeepUsmusertable {
@@ -303,10 +304,8 @@ impl OidKeeper for KeepUsmusertable {
 
 
 pub fn load_stub(oid_map: &mut OidMap) {
-    let s42 = simple_from_int(42);
-    let sval = simple_from_str();
-
-   // The next group is for OBJECT-IDENTITIES
+    
+   // The next group is for OBJECT-IDENTITY
 
     let oid_usm_no_auth_protocol: ObjectIdentifier =
         ObjectIdentifier::new(&ARC_USM_NO_AUTH_PROTOCOL).unwrap();

@@ -78,6 +78,8 @@ def write_object_ids(out, object_ids: dict):
 def write_table_struct(out, name, object_types, child, entry):
     """Write struct for single table"""
     index_list = child["index"]
+    if "augments" in child:
+        LOGGER.info("Augments, processing %s", child["augments"])
     struct_name = f"Keep{name.title()}"
     entry = [(a, " ( ".join(b.split("("))) for (a, b) in entry]
     LOGGER.debug("entry %s", entry)
@@ -187,7 +189,20 @@ def write_ot_structs(out, object_types, tcs, entries):
             child_name = ename[0].lower() + ename[1:]
             if child_name in object_types:
                 child = object_types[child_name]
-                write_table_struct(out, name, object_types, child, entry)
+                if "augments" in child:
+                    master_name = child["augments"].strip()[1:-1].strip()
+                    master = object_types[master_name]
+                    master_raw = entries[master_name[0].upper() + master_name[1:]]
+                    master_e = [(e[0], tcs.get(e[1], {"syntax": e[1]})["syntax"])
+                                for e in master_raw]
+                    master_e += entry
+                    new_child = master.copy()
+                    new_child.update(child)
+                    # print("New child", new_child, master_entry)
+                    write_table_struct(out, name, object_types,
+                                       new_child, master_e)
+                else:
+                    write_table_struct(out, name, object_types, child, entry)
             else:
                 LOGGER.error("Table definition not found %s", ename)
         else:
@@ -200,8 +215,9 @@ def write_object_types(out, object_types):
     for name, data in object_types.items():
         if data["col"] or "index" in data:
             continue
+        uname = usnake(name)
         out.write(f"    let oid_{lsnake(name)}: ObjectIdentifier =\n")
-        out.write(f"        ObjectIdentifier::new(&ARC_{usnake(name)}).unwrap();\n")
+        out.write(f"        ObjectIdentifier::new(&ARC_{uname}).unwrap();\n")
         out.write(f"    let k_{lsnake(name)}: Box<dyn OidKeeper> = \n")
         out.write(f"       Box::new(Keep{name.title()}::new());\n")
         out.write(f"    oid_map.push(oid_{lsnake(name)}, k_{lsnake(name)});\n")
@@ -219,7 +235,8 @@ def gen_stub(object_types, resolve, tcs, entries, object_ids,
     with open("src/stubs/" + stub_name + ".rs", "w", encoding="ascii") as out:
 
         stub_start = r"""
-use crate::keeper::oid_keep::{Access, OidErr, OidKeeper, ScalarMemOid, TableMemOid};
+use crate::keeper::oid_keep::{Access, OidErr, OidKeeper,
+                              ScalarMemOid, TableMemOid};
 use crate::oidmap::OidMap;
 use rasn::types::{Integer, ObjectIdentifier, OctetString};
 use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
@@ -239,9 +256,7 @@ fn simple_from_str() -> ObjectSyntax {
         ot = r"""
 
 pub fn load_stub(oid_map: &mut OidMap) {
-    let s42 = simple_from_int(42);
-    let sval = simple_from_str();
-"""
+    """
         out.write(ot)
         write_object_ids(out, object_ids)
         write_object_types(out, object_types)

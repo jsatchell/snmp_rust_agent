@@ -1,5 +1,6 @@
 
-use crate::keeper::oid_keep::{Access, OidErr, OidKeeper, ScalarMemOid, TableMemOid};
+use crate::keeper::oid_keep::{Access, OidErr, OidKeeper,
+                              ScalarMemOid, TableMemOid};
 use crate::oidmap::OidMap;
 use rasn::types::{Integer, ObjectIdentifier, OctetString};
 use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
@@ -20,7 +21,7 @@ const ARC_VACM_VIEW_TREE_FAMILY_TABLE: [u32; 10] = [1, 3, 6, 1, 6, 3, 16, 1, 5, 
 
    // Now the OBJECT-TYPES. These need actual code
 
-    // Information about a particular context.
+// Information about a particular context.
 
 struct KeepVacmcontexttable {
     table: TableMemOid,
@@ -28,7 +29,7 @@ struct KeepVacmcontexttable {
 
 impl KeepVacmcontexttable {
     fn new() -> Self {
-       let base_oid: ObjectIdentifier = 
+       let base_oid: ObjectIdentifier =
            ObjectIdentifier::new(&ARC_VACM_CONTEXT_TABLE).unwrap();
 
        KeepVacmcontexttable {
@@ -60,9 +61,9 @@ impl OidKeeper for KeepVacmcontexttable {
         ) -> Result<VarBindValue, OidErr> {
         self.table.set(oid, value) }
 }
-    // An entry in this table maps the combination of a
-    // securityModel and securityName into a groupName.
-    // 
+// An entry in this table maps the combination of a
+// securityModel and securityName into a groupName.
+// 
 
 struct KeepVacmsecuritytogrouptable {
     table: TableMemOid,
@@ -70,7 +71,7 @@ struct KeepVacmsecuritytogrouptable {
 
 impl KeepVacmsecuritytogrouptable {
     fn new() -> Self {
-       let base_oid: ObjectIdentifier = 
+       let base_oid: ObjectIdentifier =
            ObjectIdentifier::new(&ARC_VACM_SECURITY_TO_GROUP_TABLE).unwrap();
 
        KeepVacmsecuritytogrouptable {
@@ -102,14 +103,14 @@ impl OidKeeper for KeepVacmsecuritytogrouptable {
         ) -> Result<VarBindValue, OidErr> {
         self.table.set(oid, value) }
 }
-    // An access right configured in the Local Configuration
-    // Datastore (LCD) authorizing access to an SNMP context.
-    // 
-    // Entries in this table can use an instance value for
-    // object vacmGroupName even if no entry in table
-    // vacmAccessSecurityToGroupTable has a corresponding
-    // value for object vacmGroupName.
-    // 
+// An access right configured in the Local Configuration
+// Datastore (LCD) authorizing access to an SNMP context.
+// 
+// Entries in this table can use an instance value for
+// object vacmGroupName even if no entry in table
+// vacmAccessSecurityToGroupTable has a corresponding
+// value for object vacmGroupName.
+// 
 
 struct KeepVacmaccesstable {
     table: TableMemOid,
@@ -117,7 +118,7 @@ struct KeepVacmaccesstable {
 
 impl KeepVacmaccesstable {
     fn new() -> Self {
-       let base_oid: ObjectIdentifier = 
+       let base_oid: ObjectIdentifier =
            ObjectIdentifier::new(&ARC_VACM_ACCESS_TABLE).unwrap();
 
        KeepVacmaccesstable {
@@ -149,29 +150,29 @@ impl OidKeeper for KeepVacmaccesstable {
         ) -> Result<VarBindValue, OidErr> {
         self.table.set(oid, value) }
 }
-    // An advisory lock used to allow cooperating SNMP
-    // Command Generator applications to coordinate their
-    // use of the Set operation in creating or modifying
-    // views.
-    // 
-    // When creating a new view or altering an existing
-    // view, it is important to understand the potential
-    // interactions with other uses of the view.  The
-    // vacmViewSpinLock should be retrieved.  The name of
-    // the view to be created should be determined to be
-    // unique by the SNMP Command Generator application by
-    // consulting the vacmViewTreeFamilyTable.  Finally,
-    // the named view may be created (Set), including the
-    // advisory lock.
-    // If another SNMP Command Generator application has
-    // altered the views in the meantime, then the spin
-    // lock's value will have changed, and so this creation
-    // will fail because it will specify the wrong value for
-    // the spin lock.
-    // 
-    // Since this is an advisory lock, the use of this lock
-    // is not enforced.
-    // 
+// An advisory lock used to allow cooperating SNMP
+// Command Generator applications to coordinate their
+// use of the Set operation in creating or modifying
+// views.
+// 
+// When creating a new view or altering an existing
+// view, it is important to understand the potential
+// interactions with other uses of the view.  The
+// vacmViewSpinLock should be retrieved.  The name of
+// the view to be created should be determined to be
+// unique by the SNMP Command Generator application by
+// consulting the vacmViewTreeFamilyTable.  Finally,
+// the named view may be created (Set), including the
+// advisory lock.
+// If another SNMP Command Generator application has
+// altered the views in the meantime, then the spin
+// lock's value will have changed, and so this creation
+// will fail because it will specify the wrong value for
+// the spin lock.
+// 
+// Since this is an advisory lock, the use of this lock
+// is not enforced.
+// 
 
 struct KeepVacmviewspinlock {
     scalar: ScalarMemOid,
@@ -200,20 +201,20 @@ impl OidKeeper for KeepVacmviewspinlock {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // Information on a particular family of view subtrees
-    // included in or excluded from a particular SNMP
-    // context's MIB view.
-    // 
-    // Implementations must not restrict the number of
-    // families of view subtrees for a given MIB view,
-    // except as dictated by resource constraints on the
-    // overall number of entries in the
-    // vacmViewTreeFamilyTable.
-    // 
-    // If no conceptual rows exist in this table for a given
-    // MIB view (viewName), that view may be thought of as
-    // consisting of the empty set of view subtrees.
-    // 
+// Information on a particular family of view subtrees
+// included in or excluded from a particular SNMP
+// context's MIB view.
+// 
+// Implementations must not restrict the number of
+// families of view subtrees for a given MIB view,
+// except as dictated by resource constraints on the
+// overall number of entries in the
+// vacmViewTreeFamilyTable.
+// 
+// If no conceptual rows exist in this table for a given
+// MIB view (viewName), that view may be thought of as
+// consisting of the empty set of view subtrees.
+// 
 
 struct KeepVacmviewtreefamilytable {
     table: TableMemOid,
@@ -221,7 +222,7 @@ struct KeepVacmviewtreefamilytable {
 
 impl KeepVacmviewtreefamilytable {
     fn new() -> Self {
-       let base_oid: ObjectIdentifier = 
+       let base_oid: ObjectIdentifier =
            ObjectIdentifier::new(&ARC_VACM_VIEW_TREE_FAMILY_TABLE).unwrap();
 
        KeepVacmviewtreefamilytable {
@@ -256,9 +257,7 @@ impl OidKeeper for KeepVacmviewtreefamilytable {
 
 
 pub fn load_stub(oid_map: &mut OidMap) {
-    let s42 = simple_from_int(42);
-    let sval = simple_from_str();
-    let oid_vacm_context_table: ObjectIdentifier =
+        let oid_vacm_context_table: ObjectIdentifier =
         ObjectIdentifier::new(&ARC_VACM_CONTEXT_TABLE).unwrap();
     let k_vacm_context_table: Box<dyn OidKeeper> = 
        Box::new(KeepVacmcontexttable::new());

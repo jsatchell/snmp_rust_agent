@@ -1,5 +1,6 @@
 
-use crate::keeper::oid_keep::{Access, OidErr, OidKeeper, ScalarMemOid, TableMemOid};
+use crate::keeper::oid_keep::{Access, OidErr, OidKeeper,
+                              ScalarMemOid, TableMemOid};
 use crate::oidmap::OidMap;
 use rasn::types::{Integer, ObjectIdentifier, OctetString};
 use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
@@ -57,10 +58,10 @@ const ARC_SNMP_OUT_TRAPS: [u32; 8] = [1, 3, 6, 1, 2, 1, 11, 29];
 
    // Now the OBJECT-TYPES. These need actual code
 
-    // A textual description of the entity.  This value should
-    // include the full name and version identification of
-    // the system's hardware type, software operating-system,
-    // and networking software.
+// A textual description of the entity.  This value should
+// include the full name and version identification of
+// the system's hardware type, software operating-system,
+// and networking software.
 
 struct KeepSysdescr {
     scalar: ScalarMemOid,
@@ -89,15 +90,15 @@ impl OidKeeper for KeepSysdescr {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The vendor's authoritative identification of the
-    // network management subsystem contained in the entity.
-    // This value is allocated within the SMI enterprises
-    // subtree (1.3.6.1.4.1) and provides an easy and
-    // unambiguous means for determining `what kind of box' is
-    // being managed.  For example, if vendor `Flintstones,
-    // Inc.' was assigned the subtree 1.3.6.1.4.1.424242,
-    // it could assign the identifier 1.3.6.1.4.1.424242.1.1
-    // to its `Fred Router'.
+// The vendor's authoritative identification of the
+// network management subsystem contained in the entity.
+// This value is allocated within the SMI enterprises
+// subtree (1.3.6.1.4.1) and provides an easy and
+// unambiguous means for determining `what kind of box' is
+// being managed.  For example, if vendor `Flintstones,
+// Inc.' was assigned the subtree 1.3.6.1.4.1.424242,
+// it could assign the identifier 1.3.6.1.4.1.424242.1.1
+// to its `Fred Router'.
 
 struct KeepSysobjectid {
     scalar: ScalarMemOid,
@@ -126,9 +127,9 @@ impl OidKeeper for KeepSysobjectid {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The time (in hundredths of a second) since the
-    // network management portion of the system was last
-    // re-initialized.
+// The time (in hundredths of a second) since the
+// network management portion of the system was last
+// re-initialized.
 
 struct KeepSysuptime {
     scalar: ScalarMemOid,
@@ -157,10 +158,10 @@ impl OidKeeper for KeepSysuptime {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The textual identification of the contact person for
-    // this managed node, together with information on how
-    // to contact this person.  If no contact information is
-    // known, the value is the zero-length string.
+// The textual identification of the contact person for
+// this managed node, together with information on how
+// to contact this person.  If no contact information is
+// known, the value is the zero-length string.
 
 struct KeepSyscontact {
     scalar: ScalarMemOid,
@@ -189,10 +190,10 @@ impl OidKeeper for KeepSyscontact {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // An administratively-assigned name for this managed
-    // node.  By convention, this is the node's fully-qualified
-    // domain name.  If the name is unknown, the value is
-    // the zero-length string.
+// An administratively-assigned name for this managed
+// node.  By convention, this is the node's fully-qualified
+// domain name.  If the name is unknown, the value is
+// the zero-length string.
 
 struct KeepSysname {
     scalar: ScalarMemOid,
@@ -221,9 +222,9 @@ impl OidKeeper for KeepSysname {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The physical location of this node (e.g., 'telephone
-    // closet, 3rd floor').  If the location is unknown, the
-    // value is the zero-length string.
+// The physical location of this node (e.g., 'telephone
+// closet, 3rd floor').  If the location is unknown, the
+// value is the zero-length string.
 
 struct KeepSyslocation {
     scalar: ScalarMemOid,
@@ -252,28 +253,28 @@ impl OidKeeper for KeepSyslocation {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // A value which indicates the set of services that this
-    // entity may potentially offer.  The value is a sum.
-    // 
-    // This sum initially takes the value zero. Then, for
-    // each layer, L, in the range 1 through 7, that this node
-    // performs transactions for, 2 raised to (L - 1) is added
-    // to the sum.  For example, a node which performs only
-    // routing functions would have a value of 4 (2^(3-1)).
-    // In contrast, a node which is a host offering application
-    // services would have a value of 72 (2^(4-1) + 2^(7-1)).
-    // Note that in the context of the Internet suite of
-    // protocols, values should be calculated accordingly:
-    // 
-    // layer      functionality
-    // 1        physical (e.g., repeaters)
-    // 2        datalink/subnetwork (e.g., bridges)
-    // 3        internet (e.g., supports the IP)
-    // 4        end-to-end  (e.g., supports the TCP)
-    // 7        applications (e.g., supports the SMTP)
-    // 
-    // For systems including OSI protocols, layers 5 and 6
-    // may also be counted.
+// A value which indicates the set of services that this
+// entity may potentially offer.  The value is a sum.
+// 
+// This sum initially takes the value zero. Then, for
+// each layer, L, in the range 1 through 7, that this node
+// performs transactions for, 2 raised to (L - 1) is added
+// to the sum.  For example, a node which performs only
+// routing functions would have a value of 4 (2^(3-1)).
+// In contrast, a node which is a host offering application
+// services would have a value of 72 (2^(4-1) + 2^(7-1)).
+// Note that in the context of the Internet suite of
+// protocols, values should be calculated accordingly:
+// 
+// layer      functionality
+// 1        physical (e.g., repeaters)
+// 2        datalink/subnetwork (e.g., bridges)
+// 3        internet (e.g., supports the IP)
+// 4        end-to-end  (e.g., supports the TCP)
+// 7        applications (e.g., supports the SMTP)
+// 
+// For systems including OSI protocols, layers 5 and 6
+// may also be counted.
 
 struct KeepSysservices {
     scalar: ScalarMemOid,
@@ -302,8 +303,8 @@ impl OidKeeper for KeepSysservices {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The value of sysUpTime at the time of the most recent
-    // change in state or value of any instance of sysORID.
+// The value of sysUpTime at the time of the most recent
+// change in state or value of any instance of sysORID.
 
 struct KeepSysorlastchange {
     scalar: ScalarMemOid,
@@ -332,7 +333,7 @@ impl OidKeeper for KeepSysorlastchange {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // An entry (conceptual row) in the sysORTable.
+// An entry (conceptual row) in the sysORTable.
 
 struct KeepSysortable {
     table: TableMemOid,
@@ -340,7 +341,7 @@ struct KeepSysortable {
 
 impl KeepSysortable {
     fn new() -> Self {
-       let base_oid: ObjectIdentifier = 
+       let base_oid: ObjectIdentifier =
            ObjectIdentifier::new(&ARC_SYS_O_R_TABLE).unwrap();
 
        KeepSysortable {
@@ -372,8 +373,8 @@ impl OidKeeper for KeepSysortable {
         ) -> Result<VarBindValue, OidErr> {
         self.table.set(oid, value) }
 }
-    // The total number of messages delivered to the SNMP
-    // entity from the transport service.
+// The total number of messages delivered to the SNMP
+// entity from the transport service.
 
 struct KeepSnmpinpkts {
     scalar: ScalarMemOid,
@@ -402,9 +403,9 @@ impl OidKeeper for KeepSnmpinpkts {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of SNMP messages which were delivered
-    // to the SNMP entity and were for an unsupported SNMP
-    // version.
+// The total number of SNMP messages which were delivered
+// to the SNMP entity and were for an unsupported SNMP
+// version.
 
 struct KeepSnmpinbadversions {
     scalar: ScalarMemOid,
@@ -433,20 +434,20 @@ impl OidKeeper for KeepSnmpinbadversions {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of community-based SNMP messages (for
-    // example,  SNMPv1) delivered to the SNMP entity which
-    // used an SNMP community name not known to said entity.
-    // Also, implementations which authenticate community-based
-    // SNMP messages using check(s) in addition to matching
-    // the community name (for example, by also checking
-    // whether the message originated from a transport address
-    // allowed to use a specified community name) MAY include
-    // in this value the number of messages which failed the
-    // additional check(s).  It is strongly RECOMMENDED that
-    // 
-    // the documentation for any security model which is used
-    // to authenticate community-based SNMP messages specify
-    // the precise conditions that contribute to this value.
+// The total number of community-based SNMP messages (for
+// example,  SNMPv1) delivered to the SNMP entity which
+// used an SNMP community name not known to said entity.
+// Also, implementations which authenticate community-based
+// SNMP messages using check(s) in addition to matching
+// the community name (for example, by also checking
+// whether the message originated from a transport address
+// allowed to use a specified community name) MAY include
+// in this value the number of messages which failed the
+// additional check(s).  It is strongly RECOMMENDED that
+// 
+// the documentation for any security model which is used
+// to authenticate community-based SNMP messages specify
+// the precise conditions that contribute to this value.
 
 struct KeepSnmpinbadcommunitynames {
     scalar: ScalarMemOid,
@@ -475,18 +476,18 @@ impl OidKeeper for KeepSnmpinbadcommunitynames {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of community-based SNMP messages (for
-    // example, SNMPv1) delivered to the SNMP entity which
-    // represented an SNMP operation that was not allowed for
-    // the SNMP community named in the message.  The precise
-    // conditions under which this counter is incremented
-    // (if at all) depend on how the SNMP entity implements
-    // its access control mechanism and how its applications
-    // interact with that access control mechanism.  It is
-    // strongly RECOMMENDED that the documentation for any
-    // access control mechanism which is used to control access
-    // to and visibility of MIB instrumentation specify the
-    // precise conditions that contribute to this value.
+// The total number of community-based SNMP messages (for
+// example, SNMPv1) delivered to the SNMP entity which
+// represented an SNMP operation that was not allowed for
+// the SNMP community named in the message.  The precise
+// conditions under which this counter is incremented
+// (if at all) depend on how the SNMP entity implements
+// its access control mechanism and how its applications
+// interact with that access control mechanism.  It is
+// strongly RECOMMENDED that the documentation for any
+// access control mechanism which is used to control access
+// to and visibility of MIB instrumentation specify the
+// precise conditions that contribute to this value.
 
 struct KeepSnmpinbadcommunityuses {
     scalar: ScalarMemOid,
@@ -515,8 +516,8 @@ impl OidKeeper for KeepSnmpinbadcommunityuses {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of ASN.1 or BER errors encountered by
-    // the SNMP entity when decoding received SNMP messages.
+// The total number of ASN.1 or BER errors encountered by
+// the SNMP entity when decoding received SNMP messages.
 
 struct KeepSnmpinasnparseerrs {
     scalar: ScalarMemOid,
@@ -545,16 +546,16 @@ impl OidKeeper for KeepSnmpinasnparseerrs {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // Indicates whether the SNMP entity is permitted to
-    // generate authenticationFailure traps.  The value of this
-    // object overrides any configuration information; as such,
-    // it provides a means whereby all authenticationFailure
-    // traps may be disabled.
-    // 
-    // Note that it is strongly recommended that this object
-    // be stored in non-volatile memory so that it remains
-    // constant across re-initializations of the network
-    // management system.
+// Indicates whether the SNMP entity is permitted to
+// generate authenticationFailure traps.  The value of this
+// object overrides any configuration information; as such,
+// it provides a means whereby all authenticationFailure
+// traps may be disabled.
+// 
+// Note that it is strongly recommended that this object
+// be stored in non-volatile memory so that it remains
+// constant across re-initializations of the network
+// management system.
 
 struct KeepSnmpenableauthentraps {
     scalar: ScalarMemOid,
@@ -583,16 +584,16 @@ impl OidKeeper for KeepSnmpenableauthentraps {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of Confirmed Class PDUs (such as
-    // GetRequest-PDUs, GetNextRequest-PDUs,
-    // GetBulkRequest-PDUs, SetRequest-PDUs, and
-    // InformRequest-PDUs) delivered to the SNMP entity which
-    // were silently dropped because the size of a reply
-    // containing an alternate Response Class PDU (such as a
-    // Response-PDU) with an empty variable-bindings field
-    // was greater than either a local constraint or the
-    // maximum message size associated with the originator of
-    // the request.
+// The total number of Confirmed Class PDUs (such as
+// GetRequest-PDUs, GetNextRequest-PDUs,
+// GetBulkRequest-PDUs, SetRequest-PDUs, and
+// InformRequest-PDUs) delivered to the SNMP entity which
+// were silently dropped because the size of a reply
+// containing an alternate Response Class PDU (such as a
+// Response-PDU) with an empty variable-bindings field
+// was greater than either a local constraint or the
+// maximum message size associated with the originator of
+// the request.
 
 struct KeepSnmpsilentdrops {
     scalar: ScalarMemOid,
@@ -621,15 +622,15 @@ impl OidKeeper for KeepSnmpsilentdrops {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of Confirmed Class PDUs
-    // (such as GetRequest-PDUs, GetNextRequest-PDUs,
-    // GetBulkRequest-PDUs, SetRequest-PDUs, and
-    // InformRequest-PDUs) delivered to the SNMP entity which
-    // were silently dropped because the transmission of
-    // the (possibly translated) message to a proxy target
-    // failed in a manner (other than a time-out) such that
-    // no Response Class PDU (such as a Response-PDU) could
-    // be returned.
+// The total number of Confirmed Class PDUs
+// (such as GetRequest-PDUs, GetNextRequest-PDUs,
+// GetBulkRequest-PDUs, SetRequest-PDUs, and
+// InformRequest-PDUs) delivered to the SNMP entity which
+// were silently dropped because the transmission of
+// the (possibly translated) message to a proxy target
+// failed in a manner (other than a time-out) such that
+// no Response Class PDU (such as a Response-PDU) could
+// be returned.
 
 struct KeepSnmpproxydrops {
     scalar: ScalarMemOid,
@@ -658,10 +659,10 @@ impl OidKeeper for KeepSnmpproxydrops {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The authoritative identification of the notification
-    // currently being sent.  This variable occurs as
-    // the second varbind in every SNMPv2-Trap-PDU and
-    // InformRequest-PDU.
+// The authoritative identification of the notification
+// currently being sent.  This variable occurs as
+// the second varbind in every SNMPv2-Trap-PDU and
+// InformRequest-PDU.
 
 struct KeepSnmptrapoid {
     scalar: ScalarMemOid,
@@ -690,11 +691,11 @@ impl OidKeeper for KeepSnmptrapoid {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The authoritative identification of the enterprise
-    // associated with the trap currently being sent.  When an
-    // SNMP proxy agent is mapping an RFC1157 Trap-PDU
-    // into a SNMPv2-Trap-PDU, this variable occurs as the
-    // last varbind.
+// The authoritative identification of the enterprise
+// associated with the trap currently being sent.  When an
+// SNMP proxy agent is mapping an RFC1157 Trap-PDU
+// into a SNMPv2-Trap-PDU, this variable occurs as the
+// last varbind.
 
 struct KeepSnmptrapenterprise {
     scalar: ScalarMemOid,
@@ -723,14 +724,14 @@ impl OidKeeper for KeepSnmptrapenterprise {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // An advisory lock used to allow several cooperating
-    // command generator applications to coordinate their
-    // use of the SNMP set operation.
-    // 
-    // This object is used for coarse-grain coordination.
-    // To achieve fine-grain coordination, one or more similar
-    // objects might be defined within each MIB group, as
-    // appropriate.
+// An advisory lock used to allow several cooperating
+// command generator applications to coordinate their
+// use of the SNMP set operation.
+// 
+// This object is used for coarse-grain coordination.
+// To achieve fine-grain coordination, one or more similar
+// objects might be defined within each MIB group, as
+// appropriate.
 
 struct KeepSnmpsetserialno {
     scalar: ScalarMemOid,
@@ -759,9 +760,9 @@ impl OidKeeper for KeepSnmpsetserialno {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of SNMP Messages which were
-    // passed from the SNMP protocol entity to the
-    // transport service.
+// The total number of SNMP Messages which were
+// passed from the SNMP protocol entity to the
+// transport service.
 
 struct KeepSnmpoutpkts {
     scalar: ScalarMemOid,
@@ -790,10 +791,10 @@ impl OidKeeper for KeepSnmpoutpkts {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of SNMP PDUs which were
-    // delivered to the SNMP protocol entity and for
-    // which the value of the error-status field was
-    // `tooBig'.
+// The total number of SNMP PDUs which were
+// delivered to the SNMP protocol entity and for
+// which the value of the error-status field was
+// `tooBig'.
 
 struct KeepSnmpintoobigs {
     scalar: ScalarMemOid,
@@ -822,10 +823,10 @@ impl OidKeeper for KeepSnmpintoobigs {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of SNMP PDUs which were
-    // delivered to the SNMP protocol entity and for
-    // which the value of the error-status field was
-    // `noSuchName'.
+// The total number of SNMP PDUs which were
+// delivered to the SNMP protocol entity and for
+// which the value of the error-status field was
+// `noSuchName'.
 
 struct KeepSnmpinnosuchnames {
     scalar: ScalarMemOid,
@@ -854,10 +855,10 @@ impl OidKeeper for KeepSnmpinnosuchnames {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of SNMP PDUs which were
-    // delivered to the SNMP protocol entity and for
-    // which the value of the error-status field was
-    // `badValue'.
+// The total number of SNMP PDUs which were
+// delivered to the SNMP protocol entity and for
+// which the value of the error-status field was
+// `badValue'.
 
 struct KeepSnmpinbadvalues {
     scalar: ScalarMemOid,
@@ -886,14 +887,14 @@ impl OidKeeper for KeepSnmpinbadvalues {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number valid SNMP PDUs which were delivered
-    // to the SNMP protocol entity and for which the value
-    // of the error-status field was `readOnly'.  It should
-    // be noted that it is a protocol error to generate an
-    // SNMP PDU which contains the value `readOnly' in the
-    // error-status field, as such this object is provided
-    // as a means of detecting incorrect implementations of
-    // the SNMP.
+// The total number valid SNMP PDUs which were delivered
+// to the SNMP protocol entity and for which the value
+// of the error-status field was `readOnly'.  It should
+// be noted that it is a protocol error to generate an
+// SNMP PDU which contains the value `readOnly' in the
+// error-status field, as such this object is provided
+// as a means of detecting incorrect implementations of
+// the SNMP.
 
 struct KeepSnmpinreadonlys {
     scalar: ScalarMemOid,
@@ -922,9 +923,9 @@ impl OidKeeper for KeepSnmpinreadonlys {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of SNMP PDUs which were delivered
-    // to the SNMP protocol entity and for which the value
-    // of the error-status field was `genErr'.
+// The total number of SNMP PDUs which were delivered
+// to the SNMP protocol entity and for which the value
+// of the error-status field was `genErr'.
 
 struct KeepSnmpingenerrs {
     scalar: ScalarMemOid,
@@ -953,10 +954,10 @@ impl OidKeeper for KeepSnmpingenerrs {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of MIB objects which have been
-    // retrieved successfully by the SNMP protocol entity
-    // as the result of receiving valid SNMP Get-Request
-    // and Get-Next PDUs.
+// The total number of MIB objects which have been
+// retrieved successfully by the SNMP protocol entity
+// as the result of receiving valid SNMP Get-Request
+// and Get-Next PDUs.
 
 struct KeepSnmpintotalreqvars {
     scalar: ScalarMemOid,
@@ -985,9 +986,9 @@ impl OidKeeper for KeepSnmpintotalreqvars {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of MIB objects which have been
-    // altered successfully by the SNMP protocol entity as
-    // the result of receiving valid SNMP Set-Request PDUs.
+// The total number of MIB objects which have been
+// altered successfully by the SNMP protocol entity as
+// the result of receiving valid SNMP Set-Request PDUs.
 
 struct KeepSnmpintotalsetvars {
     scalar: ScalarMemOid,
@@ -1016,9 +1017,9 @@ impl OidKeeper for KeepSnmpintotalsetvars {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of SNMP Get-Request PDUs which
-    // have been accepted and processed by the SNMP
-    // protocol entity.
+// The total number of SNMP Get-Request PDUs which
+// have been accepted and processed by the SNMP
+// protocol entity.
 
 struct KeepSnmpingetrequests {
     scalar: ScalarMemOid,
@@ -1047,8 +1048,8 @@ impl OidKeeper for KeepSnmpingetrequests {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of SNMP Get-Next PDUs which have been
-    // accepted and processed by the SNMP protocol entity.
+// The total number of SNMP Get-Next PDUs which have been
+// accepted and processed by the SNMP protocol entity.
 
 struct KeepSnmpingetnexts {
     scalar: ScalarMemOid,
@@ -1077,9 +1078,9 @@ impl OidKeeper for KeepSnmpingetnexts {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of SNMP Set-Request PDUs which
-    // have been accepted and processed by the SNMP protocol
-    // entity.
+// The total number of SNMP Set-Request PDUs which
+// have been accepted and processed by the SNMP protocol
+// entity.
 
 struct KeepSnmpinsetrequests {
     scalar: ScalarMemOid,
@@ -1108,9 +1109,9 @@ impl OidKeeper for KeepSnmpinsetrequests {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of SNMP Get-Response PDUs which
-    // have been accepted and processed by the SNMP protocol
-    // entity.
+// The total number of SNMP Get-Response PDUs which
+// have been accepted and processed by the SNMP protocol
+// entity.
 
 struct KeepSnmpingetresponses {
     scalar: ScalarMemOid,
@@ -1139,8 +1140,8 @@ impl OidKeeper for KeepSnmpingetresponses {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of SNMP Trap PDUs which have been
-    // accepted and processed by the SNMP protocol entity.
+// The total number of SNMP Trap PDUs which have been
+// accepted and processed by the SNMP protocol entity.
 
 struct KeepSnmpintraps {
     scalar: ScalarMemOid,
@@ -1169,9 +1170,9 @@ impl OidKeeper for KeepSnmpintraps {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of SNMP PDUs which were generated
-    // by the SNMP protocol entity and for which the value
-    // of the error-status field was `tooBig.'
+// The total number of SNMP PDUs which were generated
+// by the SNMP protocol entity and for which the value
+// of the error-status field was `tooBig.'
 
 struct KeepSnmpouttoobigs {
     scalar: ScalarMemOid,
@@ -1200,9 +1201,9 @@ impl OidKeeper for KeepSnmpouttoobigs {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of SNMP PDUs which were generated
-    // by the SNMP protocol entity and for which the value
-    // of the error-status was `noSuchName'.
+// The total number of SNMP PDUs which were generated
+// by the SNMP protocol entity and for which the value
+// of the error-status was `noSuchName'.
 
 struct KeepSnmpoutnosuchnames {
     scalar: ScalarMemOid,
@@ -1231,9 +1232,9 @@ impl OidKeeper for KeepSnmpoutnosuchnames {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of SNMP PDUs which were generated
-    // by the SNMP protocol entity and for which the value
-    // of the error-status field was `badValue'.
+// The total number of SNMP PDUs which were generated
+// by the SNMP protocol entity and for which the value
+// of the error-status field was `badValue'.
 
 struct KeepSnmpoutbadvalues {
     scalar: ScalarMemOid,
@@ -1262,9 +1263,9 @@ impl OidKeeper for KeepSnmpoutbadvalues {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of SNMP PDUs which were generated
-    // by the SNMP protocol entity and for which the value
-    // of the error-status field was `genErr'.
+// The total number of SNMP PDUs which were generated
+// by the SNMP protocol entity and for which the value
+// of the error-status field was `genErr'.
 
 struct KeepSnmpoutgenerrs {
     scalar: ScalarMemOid,
@@ -1293,8 +1294,8 @@ impl OidKeeper for KeepSnmpoutgenerrs {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of SNMP Get-Request PDUs which
-    // have been generated by the SNMP protocol entity.
+// The total number of SNMP Get-Request PDUs which
+// have been generated by the SNMP protocol entity.
 
 struct KeepSnmpoutgetrequests {
     scalar: ScalarMemOid,
@@ -1323,8 +1324,8 @@ impl OidKeeper for KeepSnmpoutgetrequests {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of SNMP Get-Next PDUs which have
-    // been generated by the SNMP protocol entity.
+// The total number of SNMP Get-Next PDUs which have
+// been generated by the SNMP protocol entity.
 
 struct KeepSnmpoutgetnexts {
     scalar: ScalarMemOid,
@@ -1353,8 +1354,8 @@ impl OidKeeper for KeepSnmpoutgetnexts {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of SNMP Set-Request PDUs which
-    // have been generated by the SNMP protocol entity.
+// The total number of SNMP Set-Request PDUs which
+// have been generated by the SNMP protocol entity.
 
 struct KeepSnmpoutsetrequests {
     scalar: ScalarMemOid,
@@ -1383,8 +1384,8 @@ impl OidKeeper for KeepSnmpoutsetrequests {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of SNMP Get-Response PDUs which
-    // have been generated by the SNMP protocol entity.
+// The total number of SNMP Get-Response PDUs which
+// have been generated by the SNMP protocol entity.
 
 struct KeepSnmpoutgetresponses {
     scalar: ScalarMemOid,
@@ -1413,8 +1414,8 @@ impl OidKeeper for KeepSnmpoutgetresponses {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-    // The total number of SNMP Trap PDUs which have
-    // been generated by the SNMP protocol entity.
+// The total number of SNMP Trap PDUs which have
+// been generated by the SNMP protocol entity.
 
 struct KeepSnmpouttraps {
     scalar: ScalarMemOid,
@@ -1446,9 +1447,7 @@ impl OidKeeper for KeepSnmpouttraps {
 
 
 pub fn load_stub(oid_map: &mut OidMap) {
-    let s42 = simple_from_int(42);
-    let sval = simple_from_str();
-    let oid_sys_descr: ObjectIdentifier =
+        let oid_sys_descr: ObjectIdentifier =
         ObjectIdentifier::new(&ARC_SYS_DESCR).unwrap();
     let k_sys_descr: Box<dyn OidKeeper> = 
        Box::new(KeepSysdescr::new());

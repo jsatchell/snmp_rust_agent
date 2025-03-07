@@ -1,9 +1,9 @@
 """Comedy MIB compiler
 
 Usage:
-  mib-play.py [-d] <mibfile> ...
-  mib-play.py -h
-  mib-play.py -b
+  mib_play.py [-d] <mibfile> ...
+  mib_play.py -h
+  mib_play.py -b
 
 Options:
   -h --help      Show this screen.
@@ -15,14 +15,13 @@ Options:
 looking it up in a built-in search path. The search path is set by the constant
 MIB_PATH in mib_imp.py.
 
-In the stub case, two files are generated, with names based on the lower case
-version of the mib name, with the MIB suffix removed (and .txt if it has that
-too)
+For each MIB name on the command line, a stub is generated and placed in
+src/stubs/. The stub name is based on the lower case version of the MIB name,
+with the MIB suffix removed (and .txt if it has that too).
 
-One contains the stub code, and one a simplistic main that invokes it, and
-pulls in a loader from the stub. You will need to edit the stub.
-If you want to include multiple MIBs, which is needed for many applications,
-modify a single main to pull in all the loaders.
+In addition to a stub per MIB file, a loader is written in src/stubs.rs. This
+imports all the stubs, and loads the definitions from each one. The main agent
+code is unaltered.
 
 Copyright Julian Satchell 2025
 """
@@ -157,7 +156,6 @@ def write_bugs():
     """Write bugs and exit"""
     print("""
           MODULE-COMPLIANCE is ignored, but maybe hand coded stubs are OK
-          AUGMENTS is ignored
           DEFVAL is ignored
           constraints in SYNTAX are ignored
            - at least should appear in a comment
@@ -166,13 +164,13 @@ def write_bugs():
           imports code only lightly tested. Sometimes
              you will need to add bootstrap definitions to resolve.
           OIDs are defined in the code that are never referenced.
-          Should use classes, rather than dict of dicts.
+          Should use classes, rather than dicts of dicts.
         """)
     sys.exit()
 
 
 if __name__ == '__main__':
-    arguments = docopt.docopt(__doc__, version='mib-play 0.0.2',
+    arguments = docopt.docopt(__doc__, version='mib_play 0.0.2',
                               options_first=True)
 
     if arguments["--bugs"]:
