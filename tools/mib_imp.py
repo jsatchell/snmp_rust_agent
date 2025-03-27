@@ -29,9 +29,9 @@ def find_mib_file(name: str) -> str:
 
 
 def dedent_description(raw: str) -> str:
-    """Convert descxripto into Rust comment"""
-    lines = ["// " + _.strip() for _ in raw.split("\n")]
-    return "\n".join(lines) + "\n"
+    """Convert description into Rust comment"""
+    lines = [""] + ["// " + _.strip() for _ in raw.split("\n")]
+    return "\n".join(lines)
 
 
 def parse_table_entries(text: str) -> dict:
@@ -189,10 +189,14 @@ def mib_import(imp_mib: str, name_set: set, oids: dict, tcs: dict,
     """Process import"""
     builtins = {'TimeTicks', 'OBJECT-TYPE', 'Counter32', 'Gauge32',
                 'NOTIFICATION-TYPE', 'Unsigned32', 'Counter64',
-                'IpAddress', 'OBJECT-IDENTITY',
+                'IpAddress', 'OBJECT-IDENTITY', "internet", "Counter",
                 'Integer32', 'MODULE-IDENTITY', 'TEXTUAL-CONVENTION',
-                'NOTIFICATION-GROUP', 'OBJECT-GROUP', 'MODULE-COMPLIANCE'
+                'NOTIFICATION-GROUP', 'OBJECT-GROUP', 'MODULE-COMPLIANCE',
+                'EntryStatus', 'OwnerString'
                 }
+    name_set = name_set.difference(builtins)
+    if not  name_set: # Don't bother if we already know all the imports
+        return
     imp_path = find_mib_file(imp_mib)
     if imp_path:
         with open(imp_path, "r", encoding="ascii") as nest:
@@ -212,7 +216,6 @@ def mib_import(imp_mib: str, name_set: set, oids: dict, tcs: dict,
                 if key in name_set:
                     tcs[key] = value
                     name_set.discard(key)
-            name_set = name_set.difference(builtins)
             if name_set:
                 LOGGER.debug("Unresolved import(s) %s", name_set)
                 LOGGER.debug("Try importing object types ")
@@ -222,15 +225,14 @@ def mib_import(imp_mib: str, name_set: set, oids: dict, tcs: dict,
                         object_types[key] = value
                         name_set.discard(key)
                         LOGGER.debug("Found object type %s", key)
-            if name_set:
-                inner_mod_id = parse_module_id(itext)
-                for key, value in inner_mod_id.items():
-                    if key in name_set:
-                        name_set.discard(key)
-                        oids.update(inner_mod_id)
-                        mod_parent, num = value
-                        if mod_parent in resolve:
-                            resolve[key] = resolve[mod_parent].copy() + [num]
+            inner_mod_id = parse_module_id(itext)
+            for key, value in inner_mod_id.items():
+                if key in name_set:
+                    name_set.discard(key)
+                    oids.update(inner_mod_id)
+                    mod_parent, num = value
+                    if mod_parent in resolve:
+                        resolve[key] = resolve[mod_parent].copy() + [num]
             if name_set:
                 iobjs = {}
                 parse_obj_ident(itext, iobjs)
@@ -271,6 +273,10 @@ def mib_import(imp_mib: str, name_set: set, oids: dict, tcs: dict,
                 if parent in resolve:
                     pval = resolve[parent].copy() + [num]
                     resolve[name] = pval
+            for key, value in inner_mod_id.items():
+                mod_parent, num = value
+                if mod_parent in resolve:
+                    resolve[key] = resolve[mod_parent].copy() + [num]
             if name_set:
                 LOGGER.warning("Unresolved import(s) %s for %s",
                                name_set, imp_mib)

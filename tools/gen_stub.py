@@ -1,15 +1,18 @@
 """Code generation"""
 import logging
 import re
+import os
 LOGGER = logging.getLogger(__file__)
 
 SNAKE_PATTERN = re.compile(r'(?<!^)(?=[A-Z])')
 
 NAME_CHAR = {"INTEGER": 'i',
+             "TruthValue": 'i',
              "TimeStamp": 't',
              "DateAndTime": 's',
              "TimeTicks": 't',
              "TimeInterval": 'i',
+             "TestAndIncr": 'i',
              "UUIDorZero": 's',
              "Counter64": 'b',
              "Counter": 'c',
@@ -17,6 +20,8 @@ NAME_CHAR = {"INTEGER": 'i',
              "IANAStorageMediaType": "i",
              "SnmpAdminString": 's',
              "DisplayString": 's',
+             "OwnerString": 's',
+             "EntryStatus": 'i',
              "InterfaceIndexOrZero": 'i',
              "PhysAddress": 'a',
              "Integer32": 'i',
@@ -67,12 +72,27 @@ def write_arcs(out, object_types: dict, object_ids: dict, resolve: dict):
 def write_object_ids(out, object_ids: dict):
     """Write OBJECT-IDENTITY constants"""
     if object_ids:
-        out.write("\n   // The next group is for OBJECT-IDENTITY\n\n")
+        out.write("\n// The next group is for OBJECT-IDENTITY. This may be used as values rather than MIB addresses\n\n")
         for name in object_ids:
             uname = usnake(name)
             out.write(f"    let oid_{lsnake(name)}: ObjectIdentifier =\n")
             out.write(f"        ObjectIdentifier::new(&ARC_{uname}).unwrap();\n")
         out.write("\n")
+
+
+def value_from_syntax(syntax):
+    """Use syntax char to choose an appropriate initial value"""
+    if syntax == 's':
+        val = 'simple_from_str(b"b")'
+    elif syntax == 'o':
+        val = "simple_from_vec(&[1, 3, 6, 1])"
+    elif syntax == 'c':
+        val = "counter_from_int(0)"
+    elif syntax == 't':
+        val = "ticks_from_int(0)"
+    else:
+        val = "simple_from_int(4)"
+    return val
 
 
 def write_table_struct(out, name, object_types, child, entry):
@@ -90,8 +110,7 @@ def write_table_struct(out, name, object_types, child, entry):
     acols = ", ".join([ACCESS[object_types[name]["access"]]
                        for name, _ in entry])
     cols = [NAME_CHAR[_[1].split()[0]] for _ in entry]
-    idat = ", ".join(["simple_from_str()"if _ == 's'
-                      else 'simple_from_int(42)' for _ in cols])
+    idat = ", ".join([value_from_syntax(_) for _ in cols])
     icols = [i + 1 for i, e in enumerate(entry)
              for _ in index_list if e[0] == _]
 
@@ -139,9 +158,14 @@ impl OidKeeper for {struct_name} {"{"}
 """)
 
 
-def write_scalar_struct(out, name, data):
+def write_scalar_struct(out, name, data, tcs):
     """Write struct for scalar"""
     acc = ACCESS[data["access"]]
+    syntax = data["syntax"]
+    if syntax in tcs:
+        syntax = tcs[syntax]["syntax"]
+    syntax_char = NAME_CHAR[syntax.split()[0]]
+    val = value_from_syntax(syntax_char)
     struct_name = f"Keep{name.title()}"
     if "description" in data:
         out.write(data["description"])
@@ -153,7 +177,7 @@ struct {struct_name} {"{"}
 impl {struct_name} {"{"}
     fn new() -> Self {"{"}
        {struct_name} {"{"}
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', {acc}),
+           scalar: ScalarMemOid::new({val}, '{syntax_char}', {acc}),
        {"}"}
     {"}"}
 {"}"}
@@ -178,7 +202,7 @@ impl OidKeeper for {struct_name} {"{"}
 
 def write_ot_structs(out, object_types, tcs, entries):
     """Heavy lifting"""
-    out.write("\n   // Now the OBJECT-TYPES. These need actual code\n\n")
+    out.write("\n// Now the OBJECT-TYPES. These need actual code added to the stubs\n\n")
     for name, data in object_types.items():
         if data["col"] or "index" in data:
             continue
@@ -190,6 +214,9 @@ def write_ot_structs(out, object_types, tcs, entries):
             if child_name in object_types:
                 child = object_types[child_name]
                 if "augments" in child:
+                    # FIXME - this is wrong - we should
+                    # somehow tie just the added columns back to a row in
+                    # the master table
                     master_name = child["augments"].strip()[1:-1].strip()
                     master = object_types[master_name]
                     master_raw = entries[master_name[0].upper() + master_name[1:]]
@@ -198,7 +225,6 @@ def write_ot_structs(out, object_types, tcs, entries):
                     master_e += entry
                     new_child = master.copy()
                     new_child.update(child)
-                    # print("New child", new_child, master_entry)
                     write_table_struct(out, name, object_types,
                                        new_child, master_e)
                 else:
@@ -206,7 +232,7 @@ def write_ot_structs(out, object_types, tcs, entries):
             else:
                 LOGGER.error("Table definition not found %s", ename)
         else:
-            write_scalar_struct(out, name, data)
+            write_scalar_struct(out, name, data, tcs)
 
 
 def write_object_types(out, object_types):
@@ -224,31 +250,51 @@ def write_object_types(out, object_types):
 
 
 def gen_stub(object_types, resolve, tcs, entries, object_ids,
-             mibname=None):
+             mibname=None, force=False):
     """Actual code generation"""
     base_name = mibname.split("-MIB")[0].lower()
     base_name = "_".join(base_name.split("-"))
-    stub_name = base_name + "_stub"
+    stub_name = base_name + "_stub.rs"
 
-    LOGGER.info("Writing stub to %s", stub_name + ".rs")
-
-    with open("src/stubs/" + stub_name + ".rs", "w", encoding="ascii") as out:
+    if os.access("src/stubs/" + stub_name, os.R_OK):
+        if force:
+            LOGGER.info("Overwriting stub %s")
+        else:
+            LOGGER.info("Not overwriting stub %s")
+            return
+    else:
+        LOGGER.info("Writing new stub to %s", stub_name)
+    with open("src/stubs/" + stub_name, "w", encoding="ascii") as out:
 
         stub_start = r"""
 use crate::keeper::oid_keep::{Access, OidErr, OidKeeper,
                               ScalarMemOid, TableMemOid};
 use crate::oidmap::OidMap;
 use rasn::types::{Integer, ObjectIdentifier, OctetString};
-use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
+use rasn_smi::v2::{ObjectSyntax, SimpleSyntax, ApplicationSyntax,
+                   Counter32, TimeTicks};
 use rasn_snmp::v3::{VarBind, VarBindValue};
 
 fn simple_from_int(value: i32) -> ObjectSyntax {
     ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(value)))
 }
 
-fn simple_from_str() -> ObjectSyntax {
-    ObjectSyntax::Simple(SimpleSyntax::String(OctetString::from_static(b"value")))
+fn simple_from_str(value: &'static [u8]) -> ObjectSyntax {
+    ObjectSyntax::Simple(SimpleSyntax::String(OctetString::from_static(value)))
 }
+
+fn simple_from_vec(value: &'static [u32]) -> ObjectSyntax {
+  ObjectSyntax::Simple(SimpleSyntax::ObjectId(ObjectIdentifier::new(value).unwrap()))
+}
+
+fn counter_from_int(value:u32) -> ObjectSyntax {
+  ObjectSyntax::ApplicationWide(ApplicationSyntax::Counter(Counter32{0:value}))
+}
+
+fn ticks_from_int(value:u32) -> ObjectSyntax {
+  ObjectSyntax::ApplicationWide(ApplicationSyntax::Ticks(TimeTicks{0:value}))
+}
+
 """
         out.write(stub_start)
         write_arcs(out, object_types, object_ids, resolve)

@@ -3,16 +3,30 @@ use crate::keeper::oid_keep::{Access, OidErr, OidKeeper,
                               ScalarMemOid, TableMemOid};
 use crate::oidmap::OidMap;
 use rasn::types::{Integer, ObjectIdentifier, OctetString};
-use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
+use rasn_smi::v2::{ObjectSyntax, SimpleSyntax, ApplicationSyntax,
+                   Counter32, TimeTicks};
 use rasn_snmp::v3::{VarBind, VarBindValue};
 
 fn simple_from_int(value: i32) -> ObjectSyntax {
     ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(value)))
 }
 
-fn simple_from_str() -> ObjectSyntax {
-    ObjectSyntax::Simple(SimpleSyntax::String(OctetString::from_static(b"value")))
+fn simple_from_str(value: &'static [u8]) -> ObjectSyntax {
+    ObjectSyntax::Simple(SimpleSyntax::String(OctetString::from_static(value)))
 }
+
+fn simple_from_vec(value: &'static [u32]) -> ObjectSyntax {
+  ObjectSyntax::Simple(SimpleSyntax::ObjectId(ObjectIdentifier::new(value).unwrap()))
+}
+
+fn counter_from_int(value:u32) -> ObjectSyntax {
+  ObjectSyntax::ApplicationWide(ApplicationSyntax::Counter(Counter32{0:value}))
+}
+
+fn ticks_from_int(value:u32) -> ObjectSyntax {
+  ObjectSyntax::ApplicationWide(ApplicationSyntax::Ticks(TimeTicks{0:value}))
+}
+
 const ARC_USM_STATS_UNSUPPORTED_SEC_LEVELS: [u32; 10] = [1, 3, 6, 1, 6, 3, 15, 1, 1, 1];
 const ARC_USM_STATS_NOT_IN_TIME_WINDOWS: [u32; 10] = [1, 3, 6, 1, 6, 3, 15, 1, 1, 2];
 const ARC_USM_STATS_UNKNOWN_USER_NAMES: [u32; 10] = [1, 3, 6, 1, 6, 3, 15, 1, 1, 3];
@@ -30,14 +44,14 @@ const ARC_USM_H_M_A_C_S_H_A_AUTH_PROTOCOL: [u32; 10] = [1, 3, 6, 1, 6, 3, 10, 1,
 const ARC_USM_NO_PRIV_PROTOCOL: [u32; 10] = [1, 3, 6, 1, 6, 3, 10, 1, 2, 1];
 const ARC_USM_D_E_S_PRIV_PROTOCOL: [u32; 10] = [1, 3, 6, 1, 6, 3, 10, 1, 2, 2];
 
-   // Now the OBJECT-TYPES. These need actual code
+// Now the OBJECT-TYPES. These need actual code added to the stubs
+
 
 // The total number of packets received by the SNMP
 // engine which were dropped because they requested a
 // securityLevel that was unknown to the SNMP engine
 // or otherwise unavailable.
 // 
-
 struct KeepUsmstatsunsupportedseclevels {
     scalar: ScalarMemOid,
   }
@@ -45,7 +59,7 @@ struct KeepUsmstatsunsupportedseclevels {
 impl KeepUsmstatsunsupportedseclevels {
     fn new() -> Self {
        KeepUsmstatsunsupportedseclevels {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -65,11 +79,11 @@ impl OidKeeper for KeepUsmstatsunsupportedseclevels {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of packets received by the SNMP
 // engine which were dropped because they appeared
 // outside of the authoritative SNMP engine's window.
 // 
-
 struct KeepUsmstatsnotintimewindows {
     scalar: ScalarMemOid,
   }
@@ -77,7 +91,7 @@ struct KeepUsmstatsnotintimewindows {
 impl KeepUsmstatsnotintimewindows {
     fn new() -> Self {
        KeepUsmstatsnotintimewindows {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -97,11 +111,11 @@ impl OidKeeper for KeepUsmstatsnotintimewindows {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of packets received by the SNMP
 // engine which were dropped because they referenced a
 // user that was not known to the SNMP engine.
 // 
-
 struct KeepUsmstatsunknownusernames {
     scalar: ScalarMemOid,
   }
@@ -109,7 +123,7 @@ struct KeepUsmstatsunknownusernames {
 impl KeepUsmstatsunknownusernames {
     fn new() -> Self {
        KeepUsmstatsunknownusernames {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -129,11 +143,11 @@ impl OidKeeper for KeepUsmstatsunknownusernames {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of packets received by the SNMP
 // engine which were dropped because they referenced an
 // snmpEngineID that was not known to the SNMP engine.
 // 
-
 struct KeepUsmstatsunknownengineids {
     scalar: ScalarMemOid,
   }
@@ -141,7 +155,7 @@ struct KeepUsmstatsunknownengineids {
 impl KeepUsmstatsunknownengineids {
     fn new() -> Self {
        KeepUsmstatsunknownengineids {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -161,11 +175,11 @@ impl OidKeeper for KeepUsmstatsunknownengineids {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of packets received by the SNMP
 // engine which were dropped because they didn't
 // contain the expected digest value.
 // 
-
 struct KeepUsmstatswrongdigests {
     scalar: ScalarMemOid,
   }
@@ -173,7 +187,7 @@ struct KeepUsmstatswrongdigests {
 impl KeepUsmstatswrongdigests {
     fn new() -> Self {
        KeepUsmstatswrongdigests {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -193,11 +207,11 @@ impl OidKeeper for KeepUsmstatswrongdigests {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of packets received by the SNMP
 // engine which were dropped because they could not be
 // decrypted.
 // 
-
 struct KeepUsmstatsdecryptionerrors {
     scalar: ScalarMemOid,
   }
@@ -205,7 +219,7 @@ struct KeepUsmstatsdecryptionerrors {
 impl KeepUsmstatsdecryptionerrors {
     fn new() -> Self {
        KeepUsmstatsdecryptionerrors {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -225,12 +239,12 @@ impl OidKeeper for KeepUsmstatsdecryptionerrors {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // An advisory lock used to allow several cooperating
 // Command Generator Applications to coordinate their
 // use of facilities to alter secrets in the
 // usmUserTable.
 // 
-
 struct KeepUsmuserspinlock {
     scalar: ScalarMemOid,
   }
@@ -238,7 +252,7 @@ struct KeepUsmuserspinlock {
 impl KeepUsmuserspinlock {
     fn new() -> Self {
        KeepUsmuserspinlock {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadWrite),
+           scalar: ScalarMemOid::new(simple_from_int(4), 'i', Access::ReadWrite),
        }
     }
 }
@@ -258,11 +272,11 @@ impl OidKeeper for KeepUsmuserspinlock {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // A user configured in the SNMP engine's Local
 // Configuration Datastore (LCD) for the User-based
 // Security Model.
 // 
-
 struct KeepUsmusertable {
     table: TableMemOid,
   }
@@ -274,7 +288,7 @@ impl KeepUsmusertable {
 
        KeepUsmusertable {
            table: TableMemOid::new(
-             vec![vec![simple_from_str(), simple_from_str(), simple_from_str(), simple_from_int(42), simple_from_int(42), simple_from_str(), simple_from_str(), simple_from_int(42), simple_from_str(), simple_from_str(), simple_from_str(), simple_from_int(42), simple_from_int(42)]],
+             vec![vec![simple_from_str(b"b"), simple_from_str(b"b"), simple_from_str(b"b"), simple_from_vec(&[1, 3, 6, 1]), simple_from_vec(&[1, 3, 6, 1]), simple_from_str(b"b"), simple_from_str(b"b"), simple_from_vec(&[1, 3, 6, 1]), simple_from_str(b"b"), simple_from_str(b"b"), simple_from_str(b"b"), simple_from_int(4), simple_from_int(4)]],
         13,
         &base_oid,
         vec!['s', 's', 's', 'o', 'o', 's', 's', 'o', 's', 's', 's', 'i', 'i'],
@@ -305,7 +319,7 @@ impl OidKeeper for KeepUsmusertable {
 
 pub fn load_stub(oid_map: &mut OidMap) {
     
-   // The next group is for OBJECT-IDENTITY
+// The next group is for OBJECT-IDENTITY
 
     let oid_usm_no_auth_protocol: ObjectIdentifier =
         ObjectIdentifier::new(&ARC_USM_NO_AUTH_PROTOCOL).unwrap();

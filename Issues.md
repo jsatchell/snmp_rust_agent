@@ -9,7 +9,7 @@
 * Correct error response for simplest cases - Made a start. Missing below
   * Decode Error
   * Authentication Error
-  * Permission Errors
+  * Permission Errors (in some cases)
   * Wrong encoding / size
 * Tests - Started
   * Keeper - OK
@@ -31,6 +31,7 @@
   * Extra errors - done except for permissions / read-only
 * Change from trait enum to trait objects. Done.
 * Rough outline of MiB compiler / code generator - Started
+* Using logging rather than println! - Done
 * Simplistic permissions model
 * Get-bulk - only interesting in table case - Started
 * Remote user support as example of table model

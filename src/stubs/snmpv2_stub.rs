@@ -3,16 +3,30 @@ use crate::keeper::oid_keep::{Access, OidErr, OidKeeper,
                               ScalarMemOid, TableMemOid};
 use crate::oidmap::OidMap;
 use rasn::types::{Integer, ObjectIdentifier, OctetString};
-use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
+use rasn_smi::v2::{ObjectSyntax, SimpleSyntax, ApplicationSyntax,
+                   Counter32, TimeTicks};
 use rasn_snmp::v3::{VarBind, VarBindValue};
 
 fn simple_from_int(value: i32) -> ObjectSyntax {
     ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(value)))
 }
 
-fn simple_from_str() -> ObjectSyntax {
-    ObjectSyntax::Simple(SimpleSyntax::String(OctetString::from_static(b"value")))
+fn simple_from_str(value: &'static [u8]) -> ObjectSyntax {
+    ObjectSyntax::Simple(SimpleSyntax::String(OctetString::from_static(value)))
 }
+
+fn simple_from_vec(value: &'static [u32]) -> ObjectSyntax {
+  ObjectSyntax::Simple(SimpleSyntax::ObjectId(ObjectIdentifier::new(value).unwrap()))
+}
+
+fn counter_from_int(value:u32) -> ObjectSyntax {
+  ObjectSyntax::ApplicationWide(ApplicationSyntax::Counter(Counter32{0:value}))
+}
+
+fn ticks_from_int(value:u32) -> ObjectSyntax {
+  ObjectSyntax::ApplicationWide(ApplicationSyntax::Ticks(TimeTicks{0:value}))
+}
+
 const ARC_SYS_DESCR: [u32; 8] = [1, 3, 6, 1, 2, 1, 1, 1];
 const ARC_SYS_OBJECT_I_D: [u32; 8] = [1, 3, 6, 1, 2, 1, 1, 2];
 const ARC_SYS_UP_TIME: [u32; 8] = [1, 3, 6, 1, 2, 1, 1, 3];
@@ -56,13 +70,13 @@ const ARC_SNMP_OUT_SET_REQUESTS: [u32; 8] = [1, 3, 6, 1, 2, 1, 11, 27];
 const ARC_SNMP_OUT_GET_RESPONSES: [u32; 8] = [1, 3, 6, 1, 2, 1, 11, 28];
 const ARC_SNMP_OUT_TRAPS: [u32; 8] = [1, 3, 6, 1, 2, 1, 11, 29];
 
-   // Now the OBJECT-TYPES. These need actual code
+// Now the OBJECT-TYPES. These need actual code added to the stubs
+
 
 // A textual description of the entity.  This value should
 // include the full name and version identification of
 // the system's hardware type, software operating-system,
 // and networking software.
-
 struct KeepSysdescr {
     scalar: ScalarMemOid,
   }
@@ -70,7 +84,7 @@ struct KeepSysdescr {
 impl KeepSysdescr {
     fn new() -> Self {
        KeepSysdescr {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(simple_from_str(b"Snmp V3 Rust Agent on Ubuntu Noble"), 's', Access::ReadOnly),
        }
     }
 }
@@ -90,6 +104,7 @@ impl OidKeeper for KeepSysdescr {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The vendor's authoritative identification of the
 // network management subsystem contained in the entity.
 // This value is allocated within the SMI enterprises
@@ -99,7 +114,6 @@ impl OidKeeper for KeepSysdescr {
 // Inc.' was assigned the subtree 1.3.6.1.4.1.424242,
 // it could assign the identifier 1.3.6.1.4.1.424242.1.1
 // to its `Fred Router'.
-
 struct KeepSysobjectid {
     scalar: ScalarMemOid,
   }
@@ -107,7 +121,8 @@ struct KeepSysobjectid {
 impl KeepSysobjectid {
     fn new() -> Self {
        KeepSysobjectid {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(simple_from_vec(&[1, 3, 6, 1, 4, 1, 424242, 1, 1]),
+                 'o', Access::ReadOnly),
        }
     }
 }
@@ -127,10 +142,10 @@ impl OidKeeper for KeepSysobjectid {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The time (in hundredths of a second) since the
 // network management portion of the system was last
 // re-initialized.
-
 struct KeepSysuptime {
     scalar: ScalarMemOid,
   }
@@ -138,7 +153,7 @@ struct KeepSysuptime {
 impl KeepSysuptime {
     fn new() -> Self {
        KeepSysuptime {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(ticks_from_int(0), 't', Access::ReadOnly),
        }
     }
 }
@@ -158,11 +173,11 @@ impl OidKeeper for KeepSysuptime {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The textual identification of the contact person for
 // this managed node, together with information on how
 // to contact this person.  If no contact information is
 // known, the value is the zero-length string.
-
 struct KeepSyscontact {
     scalar: ScalarMemOid,
   }
@@ -170,7 +185,7 @@ struct KeepSyscontact {
 impl KeepSyscontact {
     fn new() -> Self {
        KeepSyscontact {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadWrite),
+           scalar: ScalarMemOid::new(simple_from_str(b"<admin@example.com>"), 's', Access::ReadWrite),
        }
     }
 }
@@ -190,11 +205,11 @@ impl OidKeeper for KeepSyscontact {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // An administratively-assigned name for this managed
 // node.  By convention, this is the node's fully-qualified
 // domain name.  If the name is unknown, the value is
 // the zero-length string.
-
 struct KeepSysname {
     scalar: ScalarMemOid,
   }
@@ -202,7 +217,7 @@ struct KeepSysname {
 impl KeepSysname {
     fn new() -> Self {
        KeepSysname {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadWrite),
+           scalar: ScalarMemOid::new(simple_from_str(b"b"), 's', Access::ReadWrite),
        }
     }
 }
@@ -222,10 +237,10 @@ impl OidKeeper for KeepSysname {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The physical location of this node (e.g., 'telephone
 // closet, 3rd floor').  If the location is unknown, the
 // value is the zero-length string.
-
 struct KeepSyslocation {
     scalar: ScalarMemOid,
   }
@@ -233,7 +248,7 @@ struct KeepSyslocation {
 impl KeepSyslocation {
     fn new() -> Self {
        KeepSyslocation {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadWrite),
+           scalar: ScalarMemOid::new(simple_from_str(b"Living room"), 's', Access::ReadWrite),
        }
     }
 }
@@ -253,6 +268,7 @@ impl OidKeeper for KeepSyslocation {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // A value which indicates the set of services that this
 // entity may potentially offer.  The value is a sum.
 // 
@@ -275,7 +291,6 @@ impl OidKeeper for KeepSyslocation {
 // 
 // For systems including OSI protocols, layers 5 and 6
 // may also be counted.
-
 struct KeepSysservices {
     scalar: ScalarMemOid,
   }
@@ -283,7 +298,7 @@ struct KeepSysservices {
 impl KeepSysservices {
     fn new() -> Self {
        KeepSysservices {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(simple_from_int(4), 'i', Access::ReadOnly),
        }
     }
 }
@@ -303,9 +318,9 @@ impl OidKeeper for KeepSysservices {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The value of sysUpTime at the time of the most recent
 // change in state or value of any instance of sysORID.
-
 struct KeepSysorlastchange {
     scalar: ScalarMemOid,
   }
@@ -313,7 +328,7 @@ struct KeepSysorlastchange {
 impl KeepSysorlastchange {
     fn new() -> Self {
        KeepSysorlastchange {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(ticks_from_int(0), 't', Access::ReadOnly),
        }
     }
 }
@@ -333,8 +348,8 @@ impl OidKeeper for KeepSysorlastchange {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
-// An entry (conceptual row) in the sysORTable.
 
+// An entry (conceptual row) in the sysORTable.
 struct KeepSysortable {
     table: TableMemOid,
   }
@@ -346,7 +361,7 @@ impl KeepSysortable {
 
        KeepSysortable {
            table: TableMemOid::new(
-             vec![vec![simple_from_int(42), simple_from_int(42), simple_from_str(), simple_from_int(42)]],
+             vec![vec![simple_from_int(4), simple_from_vec(&[1, 3, 6, 1]), simple_from_str(b"b"), ticks_from_int(0)]],
         4,
         &base_oid,
         vec!['i', 'o', 's', 't'],
@@ -373,9 +388,9 @@ impl OidKeeper for KeepSysortable {
         ) -> Result<VarBindValue, OidErr> {
         self.table.set(oid, value) }
 }
+
 // The total number of messages delivered to the SNMP
 // entity from the transport service.
-
 struct KeepSnmpinpkts {
     scalar: ScalarMemOid,
   }
@@ -383,7 +398,7 @@ struct KeepSnmpinpkts {
 impl KeepSnmpinpkts {
     fn new() -> Self {
        KeepSnmpinpkts {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -403,10 +418,10 @@ impl OidKeeper for KeepSnmpinpkts {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of SNMP messages which were delivered
 // to the SNMP entity and were for an unsupported SNMP
 // version.
-
 struct KeepSnmpinbadversions {
     scalar: ScalarMemOid,
   }
@@ -414,7 +429,7 @@ struct KeepSnmpinbadversions {
 impl KeepSnmpinbadversions {
     fn new() -> Self {
        KeepSnmpinbadversions {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -434,6 +449,7 @@ impl OidKeeper for KeepSnmpinbadversions {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of community-based SNMP messages (for
 // example,  SNMPv1) delivered to the SNMP entity which
 // used an SNMP community name not known to said entity.
@@ -448,7 +464,6 @@ impl OidKeeper for KeepSnmpinbadversions {
 // the documentation for any security model which is used
 // to authenticate community-based SNMP messages specify
 // the precise conditions that contribute to this value.
-
 struct KeepSnmpinbadcommunitynames {
     scalar: ScalarMemOid,
   }
@@ -456,7 +471,7 @@ struct KeepSnmpinbadcommunitynames {
 impl KeepSnmpinbadcommunitynames {
     fn new() -> Self {
        KeepSnmpinbadcommunitynames {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -476,6 +491,7 @@ impl OidKeeper for KeepSnmpinbadcommunitynames {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of community-based SNMP messages (for
 // example, SNMPv1) delivered to the SNMP entity which
 // represented an SNMP operation that was not allowed for
@@ -488,7 +504,6 @@ impl OidKeeper for KeepSnmpinbadcommunitynames {
 // access control mechanism which is used to control access
 // to and visibility of MIB instrumentation specify the
 // precise conditions that contribute to this value.
-
 struct KeepSnmpinbadcommunityuses {
     scalar: ScalarMemOid,
   }
@@ -496,7 +511,7 @@ struct KeepSnmpinbadcommunityuses {
 impl KeepSnmpinbadcommunityuses {
     fn new() -> Self {
        KeepSnmpinbadcommunityuses {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -516,9 +531,9 @@ impl OidKeeper for KeepSnmpinbadcommunityuses {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of ASN.1 or BER errors encountered by
 // the SNMP entity when decoding received SNMP messages.
-
 struct KeepSnmpinasnparseerrs {
     scalar: ScalarMemOid,
   }
@@ -526,7 +541,7 @@ struct KeepSnmpinasnparseerrs {
 impl KeepSnmpinasnparseerrs {
     fn new() -> Self {
        KeepSnmpinasnparseerrs {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -546,6 +561,7 @@ impl OidKeeper for KeepSnmpinasnparseerrs {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // Indicates whether the SNMP entity is permitted to
 // generate authenticationFailure traps.  The value of this
 // object overrides any configuration information; as such,
@@ -556,7 +572,6 @@ impl OidKeeper for KeepSnmpinasnparseerrs {
 // be stored in non-volatile memory so that it remains
 // constant across re-initializations of the network
 // management system.
-
 struct KeepSnmpenableauthentraps {
     scalar: ScalarMemOid,
   }
@@ -564,7 +579,7 @@ struct KeepSnmpenableauthentraps {
 impl KeepSnmpenableauthentraps {
     fn new() -> Self {
        KeepSnmpenableauthentraps {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadWrite),
+           scalar: ScalarMemOid::new(simple_from_int(4), 'i', Access::ReadWrite),
        }
     }
 }
@@ -584,6 +599,7 @@ impl OidKeeper for KeepSnmpenableauthentraps {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of Confirmed Class PDUs (such as
 // GetRequest-PDUs, GetNextRequest-PDUs,
 // GetBulkRequest-PDUs, SetRequest-PDUs, and
@@ -594,7 +610,6 @@ impl OidKeeper for KeepSnmpenableauthentraps {
 // was greater than either a local constraint or the
 // maximum message size associated with the originator of
 // the request.
-
 struct KeepSnmpsilentdrops {
     scalar: ScalarMemOid,
   }
@@ -602,7 +617,7 @@ struct KeepSnmpsilentdrops {
 impl KeepSnmpsilentdrops {
     fn new() -> Self {
        KeepSnmpsilentdrops {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -622,6 +637,7 @@ impl OidKeeper for KeepSnmpsilentdrops {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of Confirmed Class PDUs
 // (such as GetRequest-PDUs, GetNextRequest-PDUs,
 // GetBulkRequest-PDUs, SetRequest-PDUs, and
@@ -631,7 +647,6 @@ impl OidKeeper for KeepSnmpsilentdrops {
 // failed in a manner (other than a time-out) such that
 // no Response Class PDU (such as a Response-PDU) could
 // be returned.
-
 struct KeepSnmpproxydrops {
     scalar: ScalarMemOid,
   }
@@ -639,7 +654,7 @@ struct KeepSnmpproxydrops {
 impl KeepSnmpproxydrops {
     fn new() -> Self {
        KeepSnmpproxydrops {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -659,11 +674,11 @@ impl OidKeeper for KeepSnmpproxydrops {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The authoritative identification of the notification
 // currently being sent.  This variable occurs as
 // the second varbind in every SNMPv2-Trap-PDU and
 // InformRequest-PDU.
-
 struct KeepSnmptrapoid {
     scalar: ScalarMemOid,
   }
@@ -671,7 +686,7 @@ struct KeepSnmptrapoid {
 impl KeepSnmptrapoid {
     fn new() -> Self {
        KeepSnmptrapoid {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::NotificationOnly),
+           scalar: ScalarMemOid::new(simple_from_vec(&[1, 3, 6, 1]), 'o', Access::NotificationOnly),
        }
     }
 }
@@ -691,12 +706,12 @@ impl OidKeeper for KeepSnmptrapoid {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The authoritative identification of the enterprise
 // associated with the trap currently being sent.  When an
 // SNMP proxy agent is mapping an RFC1157 Trap-PDU
 // into a SNMPv2-Trap-PDU, this variable occurs as the
 // last varbind.
-
 struct KeepSnmptrapenterprise {
     scalar: ScalarMemOid,
   }
@@ -704,7 +719,7 @@ struct KeepSnmptrapenterprise {
 impl KeepSnmptrapenterprise {
     fn new() -> Self {
        KeepSnmptrapenterprise {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::NotificationOnly),
+           scalar: ScalarMemOid::new(simple_from_vec(&[1, 3, 6, 1]), 'o', Access::NotificationOnly),
        }
     }
 }
@@ -724,6 +739,7 @@ impl OidKeeper for KeepSnmptrapenterprise {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // An advisory lock used to allow several cooperating
 // command generator applications to coordinate their
 // use of the SNMP set operation.
@@ -732,7 +748,6 @@ impl OidKeeper for KeepSnmptrapenterprise {
 // To achieve fine-grain coordination, one or more similar
 // objects might be defined within each MIB group, as
 // appropriate.
-
 struct KeepSnmpsetserialno {
     scalar: ScalarMemOid,
   }
@@ -740,7 +755,7 @@ struct KeepSnmpsetserialno {
 impl KeepSnmpsetserialno {
     fn new() -> Self {
        KeepSnmpsetserialno {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadWrite),
+           scalar: ScalarMemOid::new(simple_from_int(4), 'i', Access::ReadWrite),
        }
     }
 }
@@ -760,10 +775,10 @@ impl OidKeeper for KeepSnmpsetserialno {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of SNMP Messages which were
 // passed from the SNMP protocol entity to the
 // transport service.
-
 struct KeepSnmpoutpkts {
     scalar: ScalarMemOid,
   }
@@ -771,7 +786,7 @@ struct KeepSnmpoutpkts {
 impl KeepSnmpoutpkts {
     fn new() -> Self {
        KeepSnmpoutpkts {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -791,11 +806,11 @@ impl OidKeeper for KeepSnmpoutpkts {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of SNMP PDUs which were
 // delivered to the SNMP protocol entity and for
 // which the value of the error-status field was
 // `tooBig'.
-
 struct KeepSnmpintoobigs {
     scalar: ScalarMemOid,
   }
@@ -803,7 +818,7 @@ struct KeepSnmpintoobigs {
 impl KeepSnmpintoobigs {
     fn new() -> Self {
        KeepSnmpintoobigs {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -823,11 +838,11 @@ impl OidKeeper for KeepSnmpintoobigs {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of SNMP PDUs which were
 // delivered to the SNMP protocol entity and for
 // which the value of the error-status field was
 // `noSuchName'.
-
 struct KeepSnmpinnosuchnames {
     scalar: ScalarMemOid,
   }
@@ -835,7 +850,7 @@ struct KeepSnmpinnosuchnames {
 impl KeepSnmpinnosuchnames {
     fn new() -> Self {
        KeepSnmpinnosuchnames {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -855,11 +870,11 @@ impl OidKeeper for KeepSnmpinnosuchnames {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of SNMP PDUs which were
 // delivered to the SNMP protocol entity and for
 // which the value of the error-status field was
 // `badValue'.
-
 struct KeepSnmpinbadvalues {
     scalar: ScalarMemOid,
   }
@@ -867,7 +882,7 @@ struct KeepSnmpinbadvalues {
 impl KeepSnmpinbadvalues {
     fn new() -> Self {
        KeepSnmpinbadvalues {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -887,6 +902,7 @@ impl OidKeeper for KeepSnmpinbadvalues {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number valid SNMP PDUs which were delivered
 // to the SNMP protocol entity and for which the value
 // of the error-status field was `readOnly'.  It should
@@ -895,7 +911,6 @@ impl OidKeeper for KeepSnmpinbadvalues {
 // error-status field, as such this object is provided
 // as a means of detecting incorrect implementations of
 // the SNMP.
-
 struct KeepSnmpinreadonlys {
     scalar: ScalarMemOid,
   }
@@ -903,7 +918,7 @@ struct KeepSnmpinreadonlys {
 impl KeepSnmpinreadonlys {
     fn new() -> Self {
        KeepSnmpinreadonlys {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -923,10 +938,10 @@ impl OidKeeper for KeepSnmpinreadonlys {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of SNMP PDUs which were delivered
 // to the SNMP protocol entity and for which the value
 // of the error-status field was `genErr'.
-
 struct KeepSnmpingenerrs {
     scalar: ScalarMemOid,
   }
@@ -934,7 +949,7 @@ struct KeepSnmpingenerrs {
 impl KeepSnmpingenerrs {
     fn new() -> Self {
        KeepSnmpingenerrs {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -954,11 +969,11 @@ impl OidKeeper for KeepSnmpingenerrs {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of MIB objects which have been
 // retrieved successfully by the SNMP protocol entity
 // as the result of receiving valid SNMP Get-Request
 // and Get-Next PDUs.
-
 struct KeepSnmpintotalreqvars {
     scalar: ScalarMemOid,
   }
@@ -966,7 +981,7 @@ struct KeepSnmpintotalreqvars {
 impl KeepSnmpintotalreqvars {
     fn new() -> Self {
        KeepSnmpintotalreqvars {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -986,10 +1001,10 @@ impl OidKeeper for KeepSnmpintotalreqvars {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of MIB objects which have been
 // altered successfully by the SNMP protocol entity as
 // the result of receiving valid SNMP Set-Request PDUs.
-
 struct KeepSnmpintotalsetvars {
     scalar: ScalarMemOid,
   }
@@ -997,7 +1012,7 @@ struct KeepSnmpintotalsetvars {
 impl KeepSnmpintotalsetvars {
     fn new() -> Self {
        KeepSnmpintotalsetvars {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -1017,10 +1032,10 @@ impl OidKeeper for KeepSnmpintotalsetvars {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of SNMP Get-Request PDUs which
 // have been accepted and processed by the SNMP
 // protocol entity.
-
 struct KeepSnmpingetrequests {
     scalar: ScalarMemOid,
   }
@@ -1028,7 +1043,7 @@ struct KeepSnmpingetrequests {
 impl KeepSnmpingetrequests {
     fn new() -> Self {
        KeepSnmpingetrequests {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -1048,9 +1063,9 @@ impl OidKeeper for KeepSnmpingetrequests {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of SNMP Get-Next PDUs which have been
 // accepted and processed by the SNMP protocol entity.
-
 struct KeepSnmpingetnexts {
     scalar: ScalarMemOid,
   }
@@ -1058,7 +1073,7 @@ struct KeepSnmpingetnexts {
 impl KeepSnmpingetnexts {
     fn new() -> Self {
        KeepSnmpingetnexts {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -1078,10 +1093,10 @@ impl OidKeeper for KeepSnmpingetnexts {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of SNMP Set-Request PDUs which
 // have been accepted and processed by the SNMP protocol
 // entity.
-
 struct KeepSnmpinsetrequests {
     scalar: ScalarMemOid,
   }
@@ -1089,7 +1104,7 @@ struct KeepSnmpinsetrequests {
 impl KeepSnmpinsetrequests {
     fn new() -> Self {
        KeepSnmpinsetrequests {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -1109,10 +1124,10 @@ impl OidKeeper for KeepSnmpinsetrequests {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of SNMP Get-Response PDUs which
 // have been accepted and processed by the SNMP protocol
 // entity.
-
 struct KeepSnmpingetresponses {
     scalar: ScalarMemOid,
   }
@@ -1120,7 +1135,7 @@ struct KeepSnmpingetresponses {
 impl KeepSnmpingetresponses {
     fn new() -> Self {
        KeepSnmpingetresponses {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -1140,9 +1155,9 @@ impl OidKeeper for KeepSnmpingetresponses {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of SNMP Trap PDUs which have been
 // accepted and processed by the SNMP protocol entity.
-
 struct KeepSnmpintraps {
     scalar: ScalarMemOid,
   }
@@ -1150,7 +1165,7 @@ struct KeepSnmpintraps {
 impl KeepSnmpintraps {
     fn new() -> Self {
        KeepSnmpintraps {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -1170,10 +1185,10 @@ impl OidKeeper for KeepSnmpintraps {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of SNMP PDUs which were generated
 // by the SNMP protocol entity and for which the value
 // of the error-status field was `tooBig.'
-
 struct KeepSnmpouttoobigs {
     scalar: ScalarMemOid,
   }
@@ -1181,7 +1196,7 @@ struct KeepSnmpouttoobigs {
 impl KeepSnmpouttoobigs {
     fn new() -> Self {
        KeepSnmpouttoobigs {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -1201,10 +1216,10 @@ impl OidKeeper for KeepSnmpouttoobigs {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of SNMP PDUs which were generated
 // by the SNMP protocol entity and for which the value
 // of the error-status was `noSuchName'.
-
 struct KeepSnmpoutnosuchnames {
     scalar: ScalarMemOid,
   }
@@ -1212,7 +1227,7 @@ struct KeepSnmpoutnosuchnames {
 impl KeepSnmpoutnosuchnames {
     fn new() -> Self {
        KeepSnmpoutnosuchnames {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -1232,10 +1247,10 @@ impl OidKeeper for KeepSnmpoutnosuchnames {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of SNMP PDUs which were generated
 // by the SNMP protocol entity and for which the value
 // of the error-status field was `badValue'.
-
 struct KeepSnmpoutbadvalues {
     scalar: ScalarMemOid,
   }
@@ -1243,7 +1258,7 @@ struct KeepSnmpoutbadvalues {
 impl KeepSnmpoutbadvalues {
     fn new() -> Self {
        KeepSnmpoutbadvalues {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -1263,10 +1278,10 @@ impl OidKeeper for KeepSnmpoutbadvalues {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of SNMP PDUs which were generated
 // by the SNMP protocol entity and for which the value
 // of the error-status field was `genErr'.
-
 struct KeepSnmpoutgenerrs {
     scalar: ScalarMemOid,
   }
@@ -1274,7 +1289,7 @@ struct KeepSnmpoutgenerrs {
 impl KeepSnmpoutgenerrs {
     fn new() -> Self {
        KeepSnmpoutgenerrs {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -1294,9 +1309,9 @@ impl OidKeeper for KeepSnmpoutgenerrs {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of SNMP Get-Request PDUs which
 // have been generated by the SNMP protocol entity.
-
 struct KeepSnmpoutgetrequests {
     scalar: ScalarMemOid,
   }
@@ -1304,7 +1319,7 @@ struct KeepSnmpoutgetrequests {
 impl KeepSnmpoutgetrequests {
     fn new() -> Self {
        KeepSnmpoutgetrequests {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -1324,9 +1339,9 @@ impl OidKeeper for KeepSnmpoutgetrequests {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of SNMP Get-Next PDUs which have
 // been generated by the SNMP protocol entity.
-
 struct KeepSnmpoutgetnexts {
     scalar: ScalarMemOid,
   }
@@ -1334,7 +1349,7 @@ struct KeepSnmpoutgetnexts {
 impl KeepSnmpoutgetnexts {
     fn new() -> Self {
        KeepSnmpoutgetnexts {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -1354,9 +1369,9 @@ impl OidKeeper for KeepSnmpoutgetnexts {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of SNMP Set-Request PDUs which
 // have been generated by the SNMP protocol entity.
-
 struct KeepSnmpoutsetrequests {
     scalar: ScalarMemOid,
   }
@@ -1364,7 +1379,7 @@ struct KeepSnmpoutsetrequests {
 impl KeepSnmpoutsetrequests {
     fn new() -> Self {
        KeepSnmpoutsetrequests {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -1384,9 +1399,9 @@ impl OidKeeper for KeepSnmpoutsetrequests {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of SNMP Get-Response PDUs which
 // have been generated by the SNMP protocol entity.
-
 struct KeepSnmpoutgetresponses {
     scalar: ScalarMemOid,
   }
@@ -1394,7 +1409,7 @@ struct KeepSnmpoutgetresponses {
 impl KeepSnmpoutgetresponses {
     fn new() -> Self {
        KeepSnmpoutgetresponses {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }
@@ -1414,9 +1429,9 @@ impl OidKeeper for KeepSnmpoutgetresponses {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // The total number of SNMP Trap PDUs which have
 // been generated by the SNMP protocol entity.
-
 struct KeepSnmpouttraps {
     scalar: ScalarMemOid,
   }
@@ -1424,7 +1439,7 @@ struct KeepSnmpouttraps {
 impl KeepSnmpouttraps {
     fn new() -> Self {
        KeepSnmpouttraps {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadOnly),
+           scalar: ScalarMemOid::new(counter_from_int(0), 'c', Access::ReadOnly),
        }
     }
 }

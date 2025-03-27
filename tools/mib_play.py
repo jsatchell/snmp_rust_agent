@@ -1,15 +1,16 @@
 """Comedy MIB compiler
 
 Usage:
-  mib_play.py [-d] <mibfile> ...
+  mib_play.py [-d] [-f] <mibfile> ...
   mib_play.py -h
   mib_play.py -b
 
 Options:
-  -h --help      Show this screen.
+  -h --help      Show this screen
   -v, --version  Show version
   -b, --bugs     Print list of known bugs and limitations
-  -d, --debug    Increase log spew.
+  -d, --debug    Increase log spew
+  -f, --force    Overwrite existing stub files
 
 <mibfile> can be an absolute path, or if it is a short name the code will try
 looking it up in a built-in search path. The search path is set by the constant
@@ -128,13 +129,14 @@ def parse_mib(mib_name: str):
         object_types.update(parse_object_types(text))
 
         # Make two passes resolving stuff
-        for _ in range(2):
+        for i in range(2):
             for name, data in oids.items():
                 parent, num = data
                 if parent in resolve:
                     resolve[name] = resolve[parent].copy() + [num]
                 else:
-                    LOGGER.warning("Unable to find oid parent %s", parent)
+                    if i > 0:
+                        LOGGER.warning("Unable to find oid parent %s", parent)
             for name, data in object_ids.items():
                 parent, num = data
                 if parent in resolve:
@@ -157,6 +159,7 @@ def write_bugs():
     print("""
           MODULE-COMPLIANCE is ignored, but maybe hand coded stubs are OK
           DEFVAL is ignored
+          BITS types cause trouble, and result in invalid RUST
           constraints in SYNTAX are ignored
            - at least should appear in a comment
           constraints in TEXTUAL-CONVENTIONS are ignored
@@ -165,6 +168,7 @@ def write_bugs():
              you will need to add bootstrap definitions to resolve.
           OIDs are defined in the code that are never referenced.
           Should use classes, rather than dicts of dicts.
+          Overwrites without warning.
         """)
     sys.exit()
 
@@ -182,5 +186,5 @@ if __name__ == '__main__':
         mobject_types, mresolve, mtcs, mentries, mobject_ids = parse_mib(mib_file)
 
         gen_stub(mobject_types, mresolve, mtcs, mentries, mobject_ids,
-                 mibname=mib_file)
+                 mibname=mib_file, force=arguments["--force"])
     loader(arguments["<mibfile>"])

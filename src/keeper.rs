@@ -1,4 +1,5 @@
 pub mod oid_keep {
+    use log::debug;
     use num_traits::cast::ToPrimitive;
     use rasn::types::ObjectIdentifier;
     use rasn_smi::v2::{ApplicationSyntax, ObjectSyntax, SimpleSyntax};
@@ -141,6 +142,55 @@ pub mod oid_keep {
         }
     }
 
+    pub struct PersistentScalar {
+        scalar: ScalarMemOid,
+        file_name: &'static [u8],
+    }
+
+    impl PersistentScalar {
+        pub fn new(value: ObjectSyntax, otype: char, access: Access, file_name: &'static [u8]) -> Self {
+            let scalar = ScalarMemOid::new(value, otype, access);
+            PersistentScalar {
+                scalar,
+                file_name: file_name,
+            }
+        }
+
+        pub fn load(self) {
+            
+        }
+     }
+
+     impl OidKeeper for PersistentScalar {
+        fn is_scalar(&self, _oid: ObjectIdentifier) -> bool {
+            true
+        }
+
+        fn get(&self, oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {
+            self.scalar.get(oid)
+        }
+
+        // Scalar, so next item always lies outside
+        fn get_next(&self, oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
+            self.scalar.get_next(oid)
+        }
+
+        fn access(&self, oid: ObjectIdentifier) -> Access {
+            self.scalar.access(oid)
+        }
+
+        fn set(
+            &mut self,
+            oid: ObjectIdentifier,
+            value: VarBindValue,
+        ) -> Result<VarBindValue, OidErr> {
+
+            self.scalar.set(oid, value)
+
+        }
+
+     }
+
     pub struct TableMemOid {
         rows: Vec<(Vec<u32>, Vec<ObjectSyntax>)>,
         cols: usize,
@@ -214,6 +264,7 @@ pub mod oid_keep {
                         }
                     }
                     _ => {
+                        // Could be address, which I haven't met yet
                         panic!("Unsupported type in index construction")
                     }
                 }
@@ -267,7 +318,7 @@ pub mod oid_keep {
         /// Get value, matching index_fn of row.
         fn get(&self, oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {
             let suffix = self.suffix(oid);
-            println!("Suffix is {suffix:?}");
+            debug!("Suffix is {suffix:?}");
             // Complex indices (not integer and/or multicolumn need longer than 3)
             if suffix.len() < 3 {
                 return Err(OidErr::NoSuchInstance);
@@ -288,12 +339,12 @@ pub mod oid_keep {
                 return Err(OidErr::NoSuchName);
             }
             let index = &suffix[2..];
-            println!("Col {col} Index is {index:?}");
+            debug!("Col {col} Index is {index:?}");
             // FIXME nice to do something faster than O(N) sequential search
             // Maybe argument for keeping rows sorted by index, then binary_search
             for row in &self.rows {
                 let r0 = &row.0;
-                println!("Index {index:?} r0 {r0:?}");
+                debug!("Index {index:?} r0 {r0:?}");
                 if index == row.0 {
                     return Ok(VarBindValue::Value(row.1[col - 1].clone()));
                 }
@@ -339,7 +390,7 @@ pub mod oid_keep {
                         }
                     }
                 }
-                println!("Off end of table");
+                debug!("Off end of table");
                 Err(OidErr::OutOfRange)
             } else {
                 let row = &self.rows[0];
@@ -374,7 +425,7 @@ pub mod oid_keep {
             value: VarBindValue,
         ) -> Result<VarBindValue, OidErr> {
             let suffix = self.suffix(oid);
-            println!("Suffix is {suffix:?}");
+            debug!("Suffix is {suffix:?}");
             // Complex indices (not integer and/or multicolumn need longer than 2)
             if suffix.len() < 3 {
                 return Err(OidErr::NoSuchInstance);
@@ -384,7 +435,7 @@ pub mod oid_keep {
             }
             if suffix[1] > 16384 {
                 // Some sort of denial of service attack?
-                // This would only allow 8 bytes per column
+                // This would only allow 4 bytes per column
                 return Err(OidErr::NoSuchName);
             }
             // This is OK on 16bit and larger machines. Might fail on a microcontroller,

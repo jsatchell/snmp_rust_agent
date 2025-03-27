@@ -4,13 +4,14 @@ pub mod oidmap;
 mod privacy;
 mod usm;*/
 
+use log::{debug, error, info, trace, warn};
 pub use crate::engine_id::snmp_engine_id;
-use crate::keeper::oid_keep::OidErr;
+use crate::keeper::oid_keep::{OidErr, OidKeeper};
 use crate::oidmap::OidMap;
 use crate::privacy;
 use crate::usm;
 use rasn;
-use rasn::types::{Integer, ObjectIdentifier, OctetString};
+use rasn::types::{Integer, ObjectIdentifier, OctetString, Oid};
 use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
 use rasn_snmp::v2::{Pdu, Report, VarBind};
 use rasn_snmp::v3::VarBindValue;
@@ -46,9 +47,11 @@ fn get_increment_boot_cnt() -> isize {
 pub struct Agent {
     socket: UdpSocket,
     engine_id: OctetString,
-    users: Vec<usm::User>,
     start_time: Instant,
     boots: isize,
+    in_pkts: u64,
+    unknown_engine_ids: u32,
+
 }
 
 impl Agent {
@@ -61,22 +64,24 @@ impl Agent {
     /// on an internal address.
     pub fn build(eid: OctetString, addr_str: &str) -> Self {
         let sock = UdpSocket::bind(addr_str).expect("Couldn't bind to address");
-        let users = usm::load_users();
+        //let users = usm::load_users();
         Agent {
             socket: sock,
             engine_id: eid,
-            users,
+          //  users,
             start_time: Instant::now(),
             boots: get_increment_boot_cnt(),
+            in_pkts: 0u64,
+            unknown_engine_ids: 032,
         }
     }
 
     /// Internal method for supporting engine ID discovery by managers
-    fn id_resp(&self, request_id: i32, message_id: Integer) -> Message {
+    fn id_response(&self, request_id: i32, message_id: Integer) -> Message {
         let vb: Vec<VarBind> = vec![VarBind {
             name: ObjectIdentifier::new_unchecked(vec![1, 3, 6, 1, 6, 3, 15, 1, 1, 4].into()),
             value: VarBindValue::Value(ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(
-                4,
+                self.unknown_engine_ids,
             )))),
         }];
 
@@ -137,13 +142,17 @@ impl Agent {
             name: ZB,
             data: Pdus::Response(resp),
         };
+        let user_name = match opt_usr {
+            Some(user) => OctetString::copy_from_slice(&user.name),
+            None => ZB,
+        };
         let mut spd: ScopedPduData = ScopedPduData::CleartextPdu(scpd);
         let run_time: isize = self.start_time.elapsed().as_secs().try_into().unwrap();
         let mut usm: USMSecurityParameters = USMSecurityParameters {
             authoritative_engine_boots: Integer::Primitive(self.boots),
             authoritative_engine_id: self.engine_id.clone(),
             authoritative_engine_time: Integer::Primitive(run_time),
-            user_name: OctetString::from_static(b"myv3user"),
+            user_name: user_name,
             authentication_parameters: ZB,
             privacy_parameters: ZB,
         };
@@ -176,10 +185,10 @@ impl Agent {
             let opt_get: Result<usize, usize> = oid_map.search(&roid);
             match opt_get {
                 Err(insert_point) => {
-                    println!("Get miss case {insert_point}");
+                    debug!("Get miss case {insert_point}");
                     let okeep = &oid_map.idx(insert_point - 1);
                     if okeep.is_scalar(roid.clone()) {
-                        println!("Scalar get ");
+                        debug!("Scalar get ");
                         error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
                         vb.push(VarBind {
                             name: roid,
@@ -187,9 +196,9 @@ impl Agent {
                         });
                         error_index = vb_cnt;
                     } else {
-                        println!("Table get ");
+                        debug!("Table get ");
                         let get_res = okeep.get(roid.clone());
-                        println!("Table get {get_res:?}");
+                        debug!("Table get {get_res:?}");
                         match get_res {
                             Ok(res) => vb.push(VarBind {
                                 name: roid.clone(),
@@ -243,7 +252,7 @@ impl Agent {
             let opt_get: Result<usize, usize> = oid_map.search(&roid);
             match opt_get {
                 Err(insert_point) => {
-                    println!("Get next miss case {insert_point}");
+                    debug!("Get next miss case {insert_point}");
                     if insert_point == 0 {
                         // Off the front of our range - give the first thing
                         let oid1 = oid_map.oid(0).clone();
@@ -279,7 +288,7 @@ impl Agent {
                                     value,
                                 }),
                                 Err(e) => {
-                                    println!("Error on scalar get {e:?}");
+                                    debug!("Error on scalar get {e:?}");
                                     vb.push(VarBind {
                                         name: oid1.clone(),
                                         value: VarBindValue::Unspecified,
@@ -288,20 +297,20 @@ impl Agent {
                             }
                         } else {
                             // Table
-                            println!("table case {insert_point}");
+                            debug!("table case {insert_point}");
                             let next_res = last_keep.get_next(roid.clone());
                             match next_res {
                                 Ok(next) => vb.push(next),
                                 Err(bad) => match bad {
                                     OidErr::OutOfRange => {
-                                        println!("Out of range {insert_point}");
+                                        debug!("Out of range {insert_point}");
                                         if insert_point == oid_map.len() {
                                             vb.push(VarBind {
                                                 name: roid.clone(),
                                                 value: VarBindValue::EndOfMibView,
                                             });
                                         } else {
-                                            println!("handle case following table end");
+                                            debug!("handle case following table end");
                                             let next_oid = oid_map.oid(insert_point).clone();
                                             let next_keep = &oid_map.idx(insert_point);
                                             if next_keep.is_scalar(next_oid.clone()) {
@@ -335,7 +344,7 @@ impl Agent {
                                         });
                                     }
                                     _ => {
-                                        println!("unexpected response from get_next {bad:?}")
+                                        warn!("unexpected response from get_next {bad:?}")
                                     }
                                 },
                             }
@@ -343,10 +352,10 @@ impl Agent {
                     }
                 }
                 Ok(which) => {
-                    println!("hit case {which}");
+                    debug!("hit case {which}");
                     vb_cnt += 1;
                     if which == oid_map.len() - 1 {
-                        println!("End of oids, ");
+                        debug!("End of oids, ");
                         // This should error and generate a report?
                         vb.push(VarBind {
                             name: roid.clone(),
@@ -372,7 +381,7 @@ impl Agent {
                         };
                     } else {
                         let okeep = &oid_map.idx(which);
-                        println!("Trying okeep");
+                        debug!("Trying okeep");
                         let gn_res = okeep.get_next(roid.clone());
                         match gn_res {
                             Ok(nvb) => vb.push(nvb),
@@ -400,10 +409,10 @@ impl Agent {
             let opt_set: Result<usize, usize> = oid_map.search(&roid);
             match opt_set {
                 Err(insert_point) => {
-                    println!("Set miss case {insert_point}");
+                    debug!("Set miss case {insert_point}");
                     let okeep = &mut oid_map.idx(insert_point - 1);
                     if okeep.is_scalar(roid.clone()) {
-                        println!("Scalar set miss"); // This should error and generate a report?
+                        debug!("Scalar set miss"); // This should error and generate a report?
                         error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
                         error_index = vb_cnt;
                         vb.push(VarBind {
@@ -412,9 +421,9 @@ impl Agent {
                         });
                         break;
                     } else {
-                        println!("Table set ");
+                        debug!("Table set ");
                         let set_res = okeep.set(roid.clone(), vbind.value);
-                        println!("Table set {set_res:?}");
+                        debug!("Table set {set_res:?}");
                         match set_res {
                             Ok(res) => vb.push(VarBind {
                                 name: roid.clone(),
@@ -464,27 +473,36 @@ impl Agent {
         let error_index = 0;
         let request_id = r.0.request_id;
         let non_repeaters: usize = r.0.non_repeaters.try_into().unwrap();
-        let _max_repeats = r.0.max_repetitions;
+        let max_repeats = r.0.max_repetitions;
+        let mut rep_oids: Vec<& Oid> = vec![];
+        let mut rep_keeps: Vec<Box <dyn OidKeeper>> = vec![];
         for (n, vbind) in r.0.variable_bindings.iter().enumerate() {
             let roid = vbind.name.clone();
             let opt_set: Result<usize, usize> = oid_map.search(&roid);
             if n < non_repeaters {
+                // Find lexicographic successor
                 match opt_set {
-                    Err(insert_point) => println!("Miss, try next {insert_point}"),
+                    Err(insert_point) => {
+                        debug!("Miss, try next {insert_point}");
+                },
                     Ok(which) => {
                         let okeep = oid_map.idx(which);
-                        let value = okeep.get(roid.clone());
-                        vb.push(VarBind {
-                            name: roid.clone(),
-                            value: value.unwrap(),
-                        });
-                        println!("Found non repbulk {which}");
+                        let varbind = okeep.get_next(roid.clone()).unwrap();
+                        vb.push(varbind);
+                        debug!("Found non rep bulk {which}");
                     }
                 }
-                println!("Non rep {vbind:?}");
+                debug!("Non rep {vbind:?}");
             } else {
-                println!("Repeat {vbind:?}");
+                // construct repeater row
+                debug!("Repeat {vbind:?}");
+              //  rep_oids.push(& vbind.name.clone());
+              //  let opt_rep = oid_map.search(&roid);
             }
+        }
+        // Now do do
+        for i in [1..max_repeats] {
+
         }
         (error_status, error_index, request_id)
     }
@@ -535,8 +553,11 @@ impl Agent {
 
     /// Send Message back to originator at addr
     fn send(&self, addr: SocketAddr, message: Message) {
-        let buf = rasn::ber::encode(&message).unwrap();
-        let _ = self.socket.send_to(&buf, addr);
+        let buf_res = rasn::ber::encode(&message);
+        match buf_res {
+            Ok(buf) => {let _ = self.socket.send_to(&buf, addr);},
+            Err(err) => error!("encodeError on returned Message{err:?}, dropping packet")
+        }
     }
     /// Main server loop entry point
     ///
@@ -544,7 +565,7 @@ impl Agent {
     ///
     /// This can be populated in any order, as it is sorted on the Oids before the loop starts.
     ///
-    pub fn loop_forever(&mut self, oid_map: &mut OidMap) {
+    pub fn loop_forever(&mut self, oid_map: &mut OidMap, users: Vec<usm::User>) {
         let mut buf = [0; 65100];
         let mut opt_user: Option<&usm::User> = None;
         // Sort by oid, the lookups use binary search.
@@ -555,6 +576,7 @@ impl Agent {
             if recv_res.is_err() {
                 continue;
             }
+            self.in_pkts += 1;
             let (amt, src) = recv_res.unwrap();
 
             // Redeclare `buf` as slice of the received data
@@ -578,17 +600,18 @@ impl Agent {
                 continue;
             }
             let usp: USMSecurityParameters = r_sp.ok().expect("Errors caught above");
+            // Check the authentication
             if flags & 1 == 1 {
                 // FIXME
                 // Both these cases should send Authentication Failure, rather
                 // than silently dropping the packet
                 if usp.authentication_parameters.len() != 12 {
-                    println!("Authentication parameters must be 12 bytes");
+                    warn!("Authentication parameters must be 12 bytes");
                     continue;
                 }
-                opt_user = self.lookup_user(usp.user_name.to_vec());
+                opt_user = Self::lookup_user(usp.user_name.to_vec(), &users);
                 if self.wrong_auth(&mut message, opt_user, usp.clone()) {
-                    println!("Wrong auth, dropping");
+                    warn!("Wrong auth, dropping");
                     continue;
                 }
             }
@@ -602,7 +625,8 @@ impl Agent {
                         // encryption.
                         if let Pdus::GetRequest(r) = scoped_pdu.data {
                             let request_id = r.0.request_id;
-                            self.send(src, self.id_resp(request_id, message_id));
+                            self.unknown_engine_ids += 1;
+                            self.send(src, self.id_response(request_id, message_id));
                         }
                         continue;
                     }
@@ -625,13 +649,13 @@ impl Agent {
                         rasn::ber::decode(&buf2);
                     if pdu_decode_res.is_err() {
                         // Should return decode error
-                        println!("Decode error {pdu_decode_res:?}");
+                        warn!("Decode error {pdu_decode_res:?}");
                         continue;
                     }
                     let scoped_pdu: ScopedPdu = pdu_decode_res.unwrap();
                     let resp_opt: Option<Response> = self.do_scoped_pdu(scoped_pdu, oid_map);
                     if resp_opt.is_none() {
-                        println!("No response, discarding");
+                        warn!("No response, discarding");
                         continue;
                     }
                     let resp = resp_opt.unwrap();
@@ -667,6 +691,7 @@ impl Agent {
         auth
     }
 
+    /// Return true if the auth is wrong
     fn wrong_auth(
         &self,
         message: &mut Message,
@@ -674,28 +699,28 @@ impl Agent {
         usp: USMSecurityParameters,
     ) -> bool {
         if opt_usr.is_none() {
-            println!("User is none");
+            warn!("User is none");
             return true;
         }
         let hmac = usp.authentication_parameters.clone().to_vec();
         let our_hmac = self.set_auth(message, opt_usr);
-        // Actually check the auth?
+        // Actually check the auth
         if hmac != our_hmac {
-            println!("Message hmac {hmac:?} ours {our_hmac:?} ");
+            debug!("Message hmac {hmac:?} ours {our_hmac:?} ");
             return true;
         }
         false
     }
 
     /// Lookup user by name.
-    fn lookup_user(&self, name: Vec<u8>) -> Option<&usm::User> {
-        for user in &self.users {
+    fn lookup_user(name: Vec<u8>, users:&Vec<usm::User>) -> Option<&usm::User> {
+        for user in users {
             let uname = user.name.clone();
             if uname == name {
                 return Some(user);
             }
         }
-        println!("Name doesn't match");
+        warn!("Name doesn't match");
         None
     }
 }

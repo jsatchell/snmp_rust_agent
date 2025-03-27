@@ -3,26 +3,40 @@ use crate::keeper::oid_keep::{Access, OidErr, OidKeeper,
                               ScalarMemOid, TableMemOid};
 use crate::oidmap::OidMap;
 use rasn::types::{Integer, ObjectIdentifier, OctetString};
-use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
+use rasn_smi::v2::{ObjectSyntax, SimpleSyntax, ApplicationSyntax,
+                   Counter32, TimeTicks};
 use rasn_snmp::v3::{VarBind, VarBindValue};
 
 fn simple_from_int(value: i32) -> ObjectSyntax {
     ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(value)))
 }
 
-fn simple_from_str() -> ObjectSyntax {
-    ObjectSyntax::Simple(SimpleSyntax::String(OctetString::from_static(b"value")))
+fn simple_from_str(value: &'static [u8]) -> ObjectSyntax {
+    ObjectSyntax::Simple(SimpleSyntax::String(OctetString::from_static(value)))
 }
+
+fn simple_from_vec(value: &'static [u32]) -> ObjectSyntax {
+  ObjectSyntax::Simple(SimpleSyntax::ObjectId(ObjectIdentifier::new(value).unwrap()))
+}
+
+fn counter_from_int(value:u32) -> ObjectSyntax {
+  ObjectSyntax::ApplicationWide(ApplicationSyntax::Counter(Counter32{0:value}))
+}
+
+fn ticks_from_int(value:u32) -> ObjectSyntax {
+  ObjectSyntax::ApplicationWide(ApplicationSyntax::Ticks(TimeTicks{0:value}))
+}
+
 const ARC_VACM_CONTEXT_TABLE: [u32; 9] = [1, 3, 6, 1, 6, 3, 16, 1, 1];
 const ARC_VACM_SECURITY_TO_GROUP_TABLE: [u32; 9] = [1, 3, 6, 1, 6, 3, 16, 1, 2];
 const ARC_VACM_ACCESS_TABLE: [u32; 9] = [1, 3, 6, 1, 6, 3, 16, 1, 4];
 const ARC_VACM_VIEW_SPIN_LOCK: [u32; 10] = [1, 3, 6, 1, 6, 3, 16, 1, 5, 1];
 const ARC_VACM_VIEW_TREE_FAMILY_TABLE: [u32; 10] = [1, 3, 6, 1, 6, 3, 16, 1, 5, 2];
 
-   // Now the OBJECT-TYPES. These need actual code
+// Now the OBJECT-TYPES. These need actual code added to the stubs
+
 
 // Information about a particular context.
-
 struct KeepVacmcontexttable {
     table: TableMemOid,
   }
@@ -34,7 +48,7 @@ impl KeepVacmcontexttable {
 
        KeepVacmcontexttable {
            table: TableMemOid::new(
-             vec![vec![simple_from_str()]],
+             vec![vec![simple_from_str(b"b")]],
         1,
         &base_oid,
         vec!['s'],
@@ -61,10 +75,10 @@ impl OidKeeper for KeepVacmcontexttable {
         ) -> Result<VarBindValue, OidErr> {
         self.table.set(oid, value) }
 }
+
 // An entry in this table maps the combination of a
 // securityModel and securityName into a groupName.
 // 
-
 struct KeepVacmsecuritytogrouptable {
     table: TableMemOid,
   }
@@ -76,7 +90,7 @@ impl KeepVacmsecuritytogrouptable {
 
        KeepVacmsecuritytogrouptable {
            table: TableMemOid::new(
-             vec![vec![simple_from_int(42), simple_from_str(), simple_from_str(), simple_from_int(42), simple_from_int(42)]],
+             vec![vec![simple_from_int(4), simple_from_str(b"b"), simple_from_str(b"b"), simple_from_int(4), simple_from_int(4)]],
         5,
         &base_oid,
         vec!['i', 's', 's', 'i', 'i'],
@@ -103,6 +117,7 @@ impl OidKeeper for KeepVacmsecuritytogrouptable {
         ) -> Result<VarBindValue, OidErr> {
         self.table.set(oid, value) }
 }
+
 // An access right configured in the Local Configuration
 // Datastore (LCD) authorizing access to an SNMP context.
 // 
@@ -111,7 +126,6 @@ impl OidKeeper for KeepVacmsecuritytogrouptable {
 // vacmAccessSecurityToGroupTable has a corresponding
 // value for object vacmGroupName.
 // 
-
 struct KeepVacmaccesstable {
     table: TableMemOid,
   }
@@ -123,7 +137,7 @@ impl KeepVacmaccesstable {
 
        KeepVacmaccesstable {
            table: TableMemOid::new(
-             vec![vec![simple_from_str(), simple_from_int(42), simple_from_int(42), simple_from_int(42), simple_from_str(), simple_from_str(), simple_from_str(), simple_from_int(42), simple_from_int(42)]],
+             vec![vec![simple_from_str(b"b"), simple_from_int(4), simple_from_int(4), simple_from_int(4), simple_from_str(b"b"), simple_from_str(b"b"), simple_from_str(b"b"), simple_from_int(4), simple_from_int(4)]],
         9,
         &base_oid,
         vec!['s', 'i', 'i', 'i', 's', 's', 's', 'i', 'i'],
@@ -150,6 +164,7 @@ impl OidKeeper for KeepVacmaccesstable {
         ) -> Result<VarBindValue, OidErr> {
         self.table.set(oid, value) }
 }
+
 // An advisory lock used to allow cooperating SNMP
 // Command Generator applications to coordinate their
 // use of the Set operation in creating or modifying
@@ -173,7 +188,6 @@ impl OidKeeper for KeepVacmaccesstable {
 // Since this is an advisory lock, the use of this lock
 // is not enforced.
 // 
-
 struct KeepVacmviewspinlock {
     scalar: ScalarMemOid,
   }
@@ -181,7 +195,7 @@ struct KeepVacmviewspinlock {
 impl KeepVacmviewspinlock {
     fn new() -> Self {
        KeepVacmviewspinlock {
-           scalar: ScalarMemOid::new(simple_from_int(42), 'i', Access::ReadWrite),
+           scalar: ScalarMemOid::new(simple_from_int(4), 'i', Access::ReadWrite),
        }
     }
 }
@@ -201,6 +215,7 @@ impl OidKeeper for KeepVacmviewspinlock {
         ) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value) }
 }
+
 // Information on a particular family of view subtrees
 // included in or excluded from a particular SNMP
 // context's MIB view.
@@ -215,7 +230,6 @@ impl OidKeeper for KeepVacmviewspinlock {
 // MIB view (viewName), that view may be thought of as
 // consisting of the empty set of view subtrees.
 // 
-
 struct KeepVacmviewtreefamilytable {
     table: TableMemOid,
   }
@@ -227,7 +241,7 @@ impl KeepVacmviewtreefamilytable {
 
        KeepVacmviewtreefamilytable {
            table: TableMemOid::new(
-             vec![vec![simple_from_str(), simple_from_int(42), simple_from_str(), simple_from_int(42), simple_from_int(42), simple_from_int(42)]],
+             vec![vec![simple_from_str(b"b"), simple_from_vec(&[1, 3, 6, 1]), simple_from_str(b"b"), simple_from_int(4), simple_from_int(4), simple_from_int(4)]],
         6,
         &base_oid,
         vec!['s', 'o', 's', 'i', 'i', 'i'],
