@@ -20,10 +20,15 @@ impl FromStr for User {
     type Err = ParseUserError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let re = Regex::new(r"^(?<name>[^ ]+) sha1 (?<ak>[^ ]+) aes (?<pk>[^ ]+)$").unwrap();
+        let re =
+            Regex::new(r"^(?<name>[^ ]+) (?<hash>[^ ]+) (?<ak>[^ ]+) (?<priv>[^ ]+) (?<pk>[^ ]+)$")
+                .unwrap();
 
         let captures = re.captures(s).ok_or(ParseUserError)?;
 
+        if captures["hash"] != *"sha1" {
+            return Err(ParseUserError);
+        }
         let akb = hex::decode(&captures["ak"]).unwrap();
         Ok(User {
             name: captures["name"].as_bytes().to_vec(),
@@ -93,7 +98,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rfc2021_test() {
+    fn rfc2202_case1_test() {
         let s ="test sha1 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
         let u = User::from_str(s).unwrap();
 
@@ -102,4 +107,17 @@ mod tests {
             b"\xb6\x17\x31\x86\x55\x05\x72\x64\xe2\x8b\xc0\xb6"
         );
     }
+
+    #[test]
+    fn rfc2202_case3_test() {
+        let s ="test sha1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
+        let u = User::from_str(s).unwrap();
+
+        assert_eq!(
+            u.auth_from_bytes(b"\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd"),
+            b"\x12\x5d\x73\x42\xb9\xac\x11\xcd\x91\xa3\x9a\xf4"
+        );
+    }
+
+    // When we do rfc7360, there are HMAC test cases in RFC 4231 for the other hashes
 }

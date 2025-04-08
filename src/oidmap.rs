@@ -1,6 +1,6 @@
 use crate::keeper::oid_keep::OidKeeper;
-use rasn::types::ObjectIdentifier;
 use log::info;
+use rasn::types::ObjectIdentifier;
 /// Type used to hold mapping between ObjectIdentifiers and instances
 /// that support OidKeep
 ///
@@ -40,10 +40,20 @@ impl OidMap {
     pub fn search_next(&mut self, oid: &ObjectIdentifier) -> Option<&mut Box<dyn OidKeeper>> {
         let bin_res = self.store.binary_search_by(|a| a.0.cmp(oid));
         match bin_res {
-            Ok(which) => if which < self.store.len() - 1 { Some(&mut self.store[which + 1].1) } else
-            {None} ,
-            Err(insert_point) => if insert_point < self.store.len() { Some(&mut self.store[insert_point].1) } else
-            {None}
+            Ok(which) => {
+                if which < self.store.len() - 1 {
+                    Some(&mut self.store[which + 1].1)
+                } else {
+                    None
+                }
+            }
+            Err(insert_point) => {
+                if insert_point < self.store.len() {
+                    Some(&mut self.store[insert_point].1)
+                } else {
+                    None
+                }
+            }
         }
     }
 

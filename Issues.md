@@ -13,8 +13,8 @@
   * Wrong encoding / size
 * Tests - Started
   * Keeper - OK
-  * Usm - 1
-  * Privacy
+  * Usm - 2
+  * Privacy - no test cases in RFCs.
   * Agent  Hardest, needs mocks etc.
 * Debug /Fix snmpwalk  - done?
 * Table model
@@ -22,7 +22,9 @@
     * Get - Done
     * Set existing cells - Done
   * Multicolumn indices: Integers, strings and addresses - done.
-  * Text-Convention range checking
+  * Text-Convention range checking (lookup done for DEFVAL)
+  * Default Values - mostly done
+  * Augment tables - FIXME - wrong implementation, needs Rust support to do right, do after MVP
   * Row management via row status column
     * Delete
     * Active / "not in service" switching
@@ -33,18 +35,19 @@
 * Rough outline of MiB compiler / code generator - Started
 * Using logging rather than println! - Done
 * Simplistic permissions model
-* Get-bulk - only interesting in table case - Started
+* Get-bulk - Done, but error handling is hope and wishful thinking
 * Remote user support as example of table model
 * Refactor into library plus example(s) - Done
 * Refactor compiler using classes
 
 ## After MVP
 
-* more hash / cipler choices (at least SHA-256, AES-256) - RFC 7360
+* no panics in run time loop
+* more hash / cipher choices (at least SHA-256, AES-256) - RFC 7630
 * View model and user mapping to views
 * Multiple contexts - separate Oid maps?
-* Traps
-* Augments support in compiler
+* Traps / Informs
+* Augments support in compiler and Rust code
 
 ## Blue Sky
 

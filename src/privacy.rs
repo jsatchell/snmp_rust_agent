@@ -30,8 +30,9 @@ fn make_iv(usp: USMSecurityParameters) -> [u8; 16] {
 pub fn decrypt(data: &mut [u8], usp: USMSecurityParameters, pkey: &[u8]) -> Vec<u8> {
     let iv = make_iv(usp);
     let key: &[u8] = &pkey[0..16];
-    let dec: cfb_mode::Decryptor<aes::Aes128> = Aes128CfbDec::new_from_slices(key, &iv).unwrap();
-    dec.decrypt(data);
+    Aes128CfbDec::new_from_slices(key, &iv)
+        .unwrap()
+        .decrypt(data);
     data.to_vec()
 }
 

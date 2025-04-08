@@ -165,6 +165,10 @@ def parse_object_types(text: str) -> dict:
             data["description"] = dedent_description(raw_desc)
         if "MAX-ACCESS" in part:
             data["access"] = part.split("MAX-ACCESS")[1].split("\n")[0].strip()
+        if "DEFVAL" in part:
+            defval = part.split("DEFVAL")[1].split("}", 1)[0].strip()
+            data["defval"] = defval[1:].strip()
+            LOGGER.debug("DEFVAL is %s",  defval[1:].strip())
         data["def"] = parse_brace(part.split("::=")[1].split("}", 1)[0] + "}")
         parent = data["def"][0]
         if parent in object_types and "index" in object_types[parent]:
@@ -172,7 +176,7 @@ def parse_object_types(text: str) -> dict:
         else:
             data["col"] = False
 
-        data["syntax"] = part.split("SYNTAX", 1)[1].split("\n")[0].strip()
+        data["syntax"] = part.split("SYNTAX", 1)[1].split("MAX-ACCESS")[0].strip()
         data["table"] = "SEQUENCE" in data["syntax"]
         if data["table"]:
             entry = data["syntax"].split("OF")[1].strip()

@@ -148,20 +148,22 @@ pub mod oid_keep {
     }
 
     impl PersistentScalar {
-        pub fn new(value: ObjectSyntax, otype: char, access: Access, file_name: &'static [u8]) -> Self {
+        pub fn new(
+            value: ObjectSyntax,
+            otype: char,
+            access: Access,
+            file_name: &'static [u8],
+        ) -> Self {
             let scalar = ScalarMemOid::new(value, otype, access);
-            PersistentScalar {
-                scalar,
-                file_name: file_name,
-            }
+            PersistentScalar { scalar, file_name }
         }
 
         pub fn load(self) {
-            
+            debug!["file name {0:?}", self.file_name];
         }
-     }
+    }
 
-     impl OidKeeper for PersistentScalar {
+    impl OidKeeper for PersistentScalar {
         fn is_scalar(&self, _oid: ObjectIdentifier) -> bool {
             true
         }
@@ -184,12 +186,9 @@ pub mod oid_keep {
             oid: ObjectIdentifier,
             value: VarBindValue,
         ) -> Result<VarBindValue, OidErr> {
-
             self.scalar.set(oid, value)
-
         }
-
-     }
+    }
 
     pub struct TableMemOid {
         rows: Vec<(Vec<u32>, Vec<ObjectSyntax>)>,

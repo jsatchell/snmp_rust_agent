@@ -75,7 +75,7 @@ def write_object_ids(out, object_ids: dict):
         out.write("\n// The next group is for OBJECT-IDENTITY. This may be used as values rather than MIB addresses\n\n")
         for name in object_ids:
             uname = usnake(name)
-            out.write(f"    let oid_{lsnake(name)}: ObjectIdentifier =\n")
+            out.write(f"    let _oid_{lsnake(name)}: ObjectIdentifier =\n")
             out.write(f"        ObjectIdentifier::new(&ARC_{uname}).unwrap();\n")
         out.write("\n")
 
@@ -94,8 +94,38 @@ def value_from_syntax(syntax):
         val = "simple_from_int(4)"
     return val
 
+def fix_def(arg: str, syntax, tcs) -> str:
+    if arg[-2:] == "'H":
+        txt = arg[1:-2]
+        return f'simple_from_str(b"{txt}")'
+    if syntax in tcs:
+        tc = tcs[syntax]
+        LOGGER.info("syntax %s tc %s", syntax, tc)
+        parts = tc["syntax"].split()
+        if parts[0] == "INTEGER":
+            body = tc["syntax"].split("{")[1].split("}")[0]
+            parts = body.split(",")
+            for part in parts:
+                name, val = part.split("(")
+                if arg == name.strip():
+                    val = val.split(")")[0]
+                    return f"simple_from_int({val})"
+        if tc["syntax"] == "OBJECT IDENTIFIER":
+            return f"simple_from_vec(&ARC_{usnake(arg)})"
+        LOGGER.error("Unsupported TC type for DEFVAL %s", tc)
+        exit()
+    if syntax.split()[0] == "INTEGER" and "{" in syntax:
+        body = syntax.split("{")[1].split("}")[0]
+        parts = body.split(",")
+        for part in parts:
+            name, val = part.split("(")
+            if arg == name.strip():
+                val = val.split(")")[0]
+                return f"simple_from_int({val})"
+    LOGGER.warning("Return DEFVAL as literal")
+    return arg
 
-def write_table_struct(out, name, object_types, child, entry):
+def write_table_struct(out, name, object_types, child, entry, tcs):
     """Write struct for single table"""
     index_list = child["index"]
     if "augments" in child:
@@ -110,7 +140,15 @@ def write_table_struct(out, name, object_types, child, entry):
     acols = ", ".join([ACCESS[object_types[name]["access"]]
                        for name, _ in entry])
     cols = [NAME_CHAR[_[1].split()[0]] for _ in entry]
-    idat = ", ".join([value_from_syntax(_) for _ in cols])
+    icol_data = []
+    for ent in entry:
+        if "defval" in object_types[ent[0]]:
+            defv = fix_def(object_types[ent[0]]["defval"], object_types[ent[0]]["syntax"], tcs)
+            LOGGER.info("%s has default %s", ent[0], defv)
+            icol_data.append(defv)
+        else:
+            icol_data.append(value_from_syntax(NAME_CHAR[ent[1].split()[0]]))
+    idat = ", ".join(icol_data) 
     icols = [i + 1 for i, e in enumerate(entry)
              for _ in index_list if e[0] == _]
 
@@ -214,6 +252,7 @@ def write_ot_structs(out, object_types, tcs, entries):
             if child_name in object_types:
                 child = object_types[child_name]
                 if "augments" in child:
+                    LOGGER.warning("Buggy AUGMENTS behaviour, needs fixing")
                     # FIXME - this is wrong - we should
                     # somehow tie just the added columns back to a row in
                     # the master table
@@ -226,9 +265,9 @@ def write_ot_structs(out, object_types, tcs, entries):
                     new_child = master.copy()
                     new_child.update(child)
                     write_table_struct(out, name, object_types,
-                                       new_child, master_e)
+                                       new_child, master_e, tcs)
                 else:
-                    write_table_struct(out, name, object_types, child, entry)
+                    write_table_struct(out, name, object_types, child, entry, tcs)
             else:
                 LOGGER.error("Table definition not found %s", ename)
         else:
@@ -249,6 +288,38 @@ def write_object_types(out, object_types):
         out.write(f"    oid_map.push(oid_{lsnake(name)}, k_{lsnake(name)});\n")
 
 
+
+def cnt_ticks(object_types, tcs, entries):
+    cnts = False
+    tcks = False
+    for data in object_types.values():
+        if data["col"] or "index" in data:
+            continue
+        if data["table"]:
+            syntaxes  = [tcs.get(e[1], {"syntax": e[1]})["syntax"]
+                         for e in entries[data["entry"]]]
+
+            syntaxes = [_.split("(")[0] for _ in syntaxes]
+            print(syntaxes)
+            chars = [NAME_CHAR[syntax.split()[0]] for syntax in syntaxes]
+            if "t" in chars:
+                tcks = True
+            if "c" in chars:
+                cnts = True
+        else:
+            syntax = data["syntax"]
+            if syntax in tcs:
+                syntax = tcs[syntax]["syntax"]
+            syntax_char = NAME_CHAR[syntax.split()[0]]
+            if syntax_char == 't':
+                tcks = True
+            if syntax_char == 'c':
+                cnts = True
+        if cnts and tcks:  # Early exit if both are true
+            break
+    return cnts, tcks
+
+
 def gen_stub(object_types, resolve, tcs, entries, object_ids,
              mibname=None, force=False):
     """Actual code generation"""
@@ -258,22 +329,42 @@ def gen_stub(object_types, resolve, tcs, entries, object_ids,
 
     if os.access("src/stubs/" + stub_name, os.R_OK):
         if force:
-            LOGGER.info("Overwriting stub %s")
+            LOGGER.info("Overwriting stub %s", stub_name)
         else:
-            LOGGER.info("Not overwriting stub %s")
+            LOGGER.info("Not overwriting stub %s", stub_name)
             return
     else:
         LOGGER.info("Writing new stub to %s", stub_name)
     with open("src/stubs/" + stub_name, "w", encoding="ascii") as out:
-
+        cnts, tcks = cnt_ticks(object_types, tcs, entries)
         stub_start = r"""
 use crate::keeper::oid_keep::{Access, OidErr, OidKeeper,
                               ScalarMemOid, TableMemOid};
 use crate::oidmap::OidMap;
 use rasn::types::{Integer, ObjectIdentifier, OctetString};
+"""
+        if cnts:
+            if tcks:
+                stub_1 = r"""
 use rasn_smi::v2::{ObjectSyntax, SimpleSyntax, ApplicationSyntax,
                    Counter32, TimeTicks};
-use rasn_snmp::v3::{VarBind, VarBindValue};
+"""
+            else:
+                stub_1 = r"""
+use rasn_smi::v2::{ObjectSyntax, SimpleSyntax, ApplicationSyntax,
+                   Counter32};
+"""
+        else:
+            if tcks:
+                stub_1 = r"""
+use rasn_smi::v2::{ObjectSyntax, SimpleSyntax, ApplicationSyntax,
+                   TimeTicks};
+"""
+            else:
+                stub_1 = r"""
+use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
+"""            
+        stub_2 = r"""use rasn_snmp::v3::{VarBind, VarBindValue};
 
 fn simple_from_int(value: i32) -> ObjectSyntax {
     ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(value)))
@@ -287,16 +378,26 @@ fn simple_from_vec(value: &'static [u32]) -> ObjectSyntax {
   ObjectSyntax::Simple(SimpleSyntax::ObjectId(ObjectIdentifier::new(value).unwrap()))
 }
 
+"""
+        out.write(stub_start)
+        out.write(stub_1)
+        out.write(stub_2)        
+        cnt_from_int = r"""
 fn counter_from_int(value:u32) -> ObjectSyntax {
   ObjectSyntax::ApplicationWide(ApplicationSyntax::Counter(Counter32{0:value}))
 }
 
+"""
+        tcks_frm_int = r"""
 fn ticks_from_int(value:u32) -> ObjectSyntax {
   ObjectSyntax::ApplicationWide(ApplicationSyntax::Ticks(TimeTicks{0:value}))
 }
 
 """
-        out.write(stub_start)
+        if cnts:
+            out.write(cnt_from_int)
+        if tcks:
+            out.write(tcks_frm_int)
         write_arcs(out, object_types, object_ids, resolve)
         write_ot_structs(out, object_types, tcs, entries)
         ot = r"""
