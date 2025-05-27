@@ -2,6 +2,8 @@
 import logging
 import re
 import os
+import sys
+
 LOGGER = logging.getLogger(__file__)
 
 SNAKE_PATTERN = re.compile(r'(?<!^)(?=[A-Z])')
@@ -72,7 +74,8 @@ def write_arcs(out, object_types: dict, object_ids: dict, resolve: dict):
 def write_object_ids(out, object_ids: dict):
     """Write OBJECT-IDENTITY constants"""
     if object_ids:
-        out.write("\n// The next group is for OBJECT-IDENTITY. This may be used as values rather than MIB addresses\n\n")
+        out.write("\n// The next group is for OBJECT-IDENTITY.\n")
+        out.write("\n// These may be used as values rather than MIB addresses\n\n")
         for name in object_ids:
             uname = usnake(name)
             out.write(f"    let _oid_{lsnake(name)}: ObjectIdentifier =\n")
@@ -94,7 +97,9 @@ def value_from_syntax(syntax):
         val = "simple_from_int(4)"
     return val
 
+
 def fix_def(arg: str, syntax, tcs) -> str:
+    """Generate default value"""
     if arg[-2:] == "'H":
         txt = arg[1:-2]
         return f'simple_from_str(b"{txt}")'
@@ -113,7 +118,7 @@ def fix_def(arg: str, syntax, tcs) -> str:
         if tc["syntax"] == "OBJECT IDENTIFIER":
             return f"simple_from_vec(&ARC_{usnake(arg)})"
         LOGGER.error("Unsupported TC type for DEFVAL %s", tc)
-        exit()
+        sys.exit(2)
     if syntax.split()[0] == "INTEGER" and "{" in syntax:
         body = syntax.split("{")[1].split("}")[0]
         parts = body.split(",")
@@ -124,6 +129,7 @@ def fix_def(arg: str, syntax, tcs) -> str:
                 return f"simple_from_int({val})"
     LOGGER.warning("Return DEFVAL as literal")
     return arg
+
 
 def write_table_struct(out, name, object_types, child, entry, tcs):
     """Write struct for single table"""
@@ -143,12 +149,12 @@ def write_table_struct(out, name, object_types, child, entry, tcs):
     icol_data = []
     for ent in entry:
         if "defval" in object_types[ent[0]]:
-            defv = fix_def(object_types[ent[0]]["defval"], object_types[ent[0]]["syntax"], tcs)
-            LOGGER.info("%s has default %s", ent[0], defv)
-            icol_data.append(defv)
+            icol_data.append(fix_def(object_types[ent[0]]["defval"],
+                                     object_types[ent[0]]["syntax"],
+                                     tcs))
         else:
             icol_data.append(value_from_syntax(NAME_CHAR[ent[1].split()[0]]))
-    idat = ", ".join(icol_data) 
+    idat = ", ".join(icol_data)
     icols = [i + 1 for i, e in enumerate(entry)
              for _ in index_list if e[0] == _]
 
@@ -240,7 +246,8 @@ impl OidKeeper for {struct_name} {"{"}
 
 def write_ot_structs(out, object_types, tcs, entries):
     """Heavy lifting"""
-    out.write("\n// Now the OBJECT-TYPES. These need actual code added to the stubs\n\n")
+    out.write("\n// Now the OBJECT-TYPES.")
+    out.write(" These need actual code added to the stubs\n\n")
     for name, data in object_types.items():
         if data["col"] or "index" in data:
             continue
@@ -288,16 +295,16 @@ def write_object_types(out, object_types):
         out.write(f"    oid_map.push(oid_{lsnake(name)}, k_{lsnake(name)});\n")
 
 
-
 def cnt_ticks(object_types, tcs, entries):
+    """See if Counter or TimeTicks data types are in use"""
     cnts = False
     tcks = False
     for data in object_types.values():
         if data["col"] or "index" in data:
             continue
         if data["table"]:
-            syntaxes  = [tcs.get(e[1], {"syntax": e[1]})["syntax"]
-                         for e in entries[data["entry"]]]
+            syntaxes = [tcs.get(e[1], {"syntax": e[1]})["syntax"]
+                        for e in entries[data["entry"]]]
 
             syntaxes = [_.split("(")[0] for _ in syntaxes]
             print(syntaxes)
@@ -338,9 +345,9 @@ def gen_stub(object_types, resolve, tcs, entries, object_ids,
     with open("src/stubs/" + stub_name, "w", encoding="ascii") as out:
         cnts, tcks = cnt_ticks(object_types, tcs, entries)
         stub_start = r"""
-use crate::keeper::oid_keep::{Access, OidErr, OidKeeper,
-                              ScalarMemOid, TableMemOid};
-use crate::oidmap::OidMap;
+use crate::keeper::oid_keep::{Access, OidErr, OidKeeper};
+use crate::scalar::ScalarMemOid;
+use crate::table::TableMemOid;use crate::oidmap::OidMap;
 use rasn::types::{Integer, ObjectIdentifier, OctetString};
 """
         if cnts:
@@ -363,7 +370,7 @@ use rasn_smi::v2::{ObjectSyntax, SimpleSyntax, ApplicationSyntax,
             else:
                 stub_1 = r"""
 use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
-"""            
+"""
         stub_2 = r"""use rasn_snmp::v3::{VarBind, VarBindValue};
 
 fn simple_from_int(value: i32) -> ObjectSyntax {
@@ -381,7 +388,7 @@ fn simple_from_vec(value: &'static [u32]) -> ObjectSyntax {
 """
         out.write(stub_start)
         out.write(stub_1)
-        out.write(stub_2)        
+        out.write(stub_2)
         cnt_from_int = r"""
 fn counter_from_int(value:u32) -> ObjectSyntax {
   ObjectSyntax::ApplicationWide(ApplicationSyntax::Counter(Counter32{0:value}))

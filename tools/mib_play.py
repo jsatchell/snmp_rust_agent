@@ -81,6 +81,31 @@ def process_imports(itext, ioids, itcs, iobject_types, iresolve):
         mib_import(imp_mib, name_set, ioids, itcs, iobject_types, iresolve)
 
 
+def resolve_stuff(resolve, oids, object_ids, object_types):
+    """Make two passes resolving stuff"""
+    for i in range(2):
+        for name, data in oids.items():
+            parent, num = data
+            if parent in resolve:
+                resolve[name] = resolve[parent].copy() + [num]
+            else:
+                if i > 0:
+                    LOGGER.warning("Unable to find oid parent %s", parent)
+        for name, data in object_ids.items():
+            parent, num = data
+            if parent in resolve:
+                resolve[name] = resolve[parent].copy() + [num]
+            else:
+                LOGGER.warning("Unable to find object id parent %s", parent)
+
+        for name, data_obj in object_types.items():
+            parent, num = data_obj["def"]
+            if parent in resolve:
+                resolve[name] = resolve[parent].copy() + [num]
+            else:
+                LOGGER.warning("Unable to find %s", parent)
+
+
 def parse_mib(mib_name: str):
     """Parse mib file"""
     # Bootstrap list of OIDs to get started
@@ -128,29 +153,7 @@ def parse_mib(mib_name: str):
 
         object_types.update(parse_object_types(text))
 
-        # Make two passes resolving stuff
-        for i in range(2):
-            for name, data in oids.items():
-                parent, num = data
-                if parent in resolve:
-                    resolve[name] = resolve[parent].copy() + [num]
-                else:
-                    if i > 0:
-                        LOGGER.warning("Unable to find oid parent %s", parent)
-            for name, data in object_ids.items():
-                parent, num = data
-                if parent in resolve:
-                    resolve[name] = resolve[parent].copy() + [num]
-                else:
-                    LOGGER.warning("Unable to find object id parent %s", parent)
-
-            for name, data_obj in object_types.items():
-                parent, num = data_obj["def"]
-                if parent in resolve:
-                    resolve[name] = resolve[parent].copy() + [num]
-                else:
-                    LOGGER.warning("Unable to find %s", parent)
-
+        resolve_stuff(resolve, oids, object_ids, object_types)
         return object_types, resolve, tcs, entries, object_ids
 
 

@@ -3,6 +3,8 @@ pub mod keeper;
 pub mod oidmap;
 mod privacy;
 pub mod stubs;
+mod scalar;
+mod table;
 pub mod usm;
-
+pub mod perms;
 pub mod snmp_agent;

@@ -199,7 +199,7 @@ def mib_import(imp_mib: str, name_set: set, oids: dict, tcs: dict,
                 'EntryStatus', 'OwnerString'
                 }
     name_set = name_set.difference(builtins)
-    if not  name_set: # Don't bother if we already know all the imports
+    if not name_set:  # Don't bother if we already know all the imports
         return
     imp_path = find_mib_file(imp_mib)
     if imp_path:

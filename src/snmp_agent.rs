@@ -9,6 +9,7 @@ use crate::keeper::oid_keep::OidErr;
 use crate::oidmap::OidMap;
 use crate::privacy;
 use crate::usm;
+use crate::perms::Perm;
 use log::{debug, error, warn};
 use rasn;
 use rasn::types::{Integer, ObjectIdentifier, OctetString};
@@ -51,6 +52,7 @@ pub struct Agent {
     boots: isize,
     in_pkts: u64,
     unknown_engine_ids: u32,
+    decode_error_cnt: u32,
 }
 
 impl Agent {
@@ -63,15 +65,16 @@ impl Agent {
     /// on an internal address.
     pub fn build(eid: OctetString, addr_str: &str) -> Self {
         let sock = UdpSocket::bind(addr_str).expect("Couldn't bind to address");
+
         //let users = usm::load_users();
         Agent {
             socket: sock,
             engine_id: eid,
-            //  users,
             start_time: Instant::now(),
             boots: get_increment_boot_cnt(),
             in_pkts: 0u64,
             unknown_engine_ids: 0u32,
+            decode_error_cnt: 0u32,
         }
     }
 
@@ -174,13 +177,18 @@ impl Agent {
         output
     }
 
-    fn get(&self, oid_map: &mut OidMap, r: GetRequest, vb: &mut Vec<VarBind>) -> (u32, u32, i32) {
+    fn get(&self, oid_map: &mut OidMap, r: GetRequest, vb: &mut Vec<VarBind>, perm: &Perm, flags: u8) -> (u32, u32, i32) {
         let mut error_status = Pdu::ERROR_STATUS_NO_ERROR;
         let mut error_index = 0;
         let request_id = r.0.request_id;
         let mut vb_cnt = 0;
         for vbind in r.0.variable_bindings {
             let roid = vbind.name.clone();
+            if !perm.check(flags, false, &roid) {
+                error_status = Pdu::ERROR_STATUS_NO_ACCESS;
+                error_index = vb_cnt;
+                return (error_status, error_index, request_id);
+            }
             let opt_get: Result<usize, usize> = oid_map.search(&roid);
             match opt_get {
                 Err(insert_point) => {
@@ -244,7 +252,14 @@ impl Agent {
         error_status: &mut u32,
         error_index: &mut u32,
         vb_cnt: u32,
+        perm: &Perm,
+        flags: u8,
     ) {
+        if !perm.check(flags, false, &roid) {
+                *error_status = Pdu::ERROR_STATUS_NO_ACCESS;
+                *error_index = vb_cnt;
+                return;
+        }
         let opt_get: Result<usize, usize> = oid_map.search(&roid);
         match opt_get {
             Err(insert_point) => {
@@ -395,6 +410,8 @@ impl Agent {
         oid_map: &mut OidMap,
         r: GetNextRequest,
         vb: &mut Vec<VarBind>,
+        perm: &Perm,
+        flags: u8,
     ) -> (u32, u32, i32) {
         let mut error_status = Pdu::ERROR_STATUS_NO_ERROR;
         let mut error_index = 0u32;
@@ -408,18 +425,26 @@ impl Agent {
                 &mut error_status,
                 &mut error_index,
                 vb_cnt.try_into().unwrap(),
+                perm,
+                flags,
             );
         }
         (error_status, error_index, request_id)
     }
 
-    fn set(&self, oid_map: &mut OidMap, r: SetRequest, vb: &mut Vec<VarBind>) -> (u32, u32, i32) {
+    fn set(&self, oid_map: &mut OidMap, r: SetRequest, vb: &mut Vec<VarBind>, perm: &Perm, flags: u8) -> (u32, u32, i32) {
         let mut error_status = Pdu::ERROR_STATUS_NO_ERROR;
         let mut error_index = 0;
         let request_id = r.0.request_id;
         let mut vb_cnt = 0;
         for vbind in r.0.variable_bindings {
             let roid = vbind.name.clone();
+
+            if !perm.check(flags, true, &roid) {
+                error_status = Pdu::ERROR_STATUS_NO_ACCESS;
+                error_index = vb_cnt;
+                return (error_status, error_index, request_id);
+            }
             let opt_set: Result<usize, usize> = oid_map.search(&roid);
             match opt_set {
                 Err(insert_point) => {
@@ -482,6 +507,8 @@ impl Agent {
         oid_map: &mut OidMap,
         r: GetBulkRequest,
         vb: &mut Vec<VarBind>,
+        perm: &Perm,
+        flags: u8,
     ) -> (u32, u32, i32) {
         let mut error_status = Pdu::ERROR_STATUS_NO_ERROR;
         let mut error_index = 0;
@@ -500,6 +527,8 @@ impl Agent {
                     &mut error_status,
                     &mut error_index,
                     vb_cnt,
+                    perm,
+                    flags,
                 );
                 vb_cnt += 1;
             } else {
@@ -519,6 +548,8 @@ impl Agent {
                     &mut error_status,
                     &mut error_index,
                     vb_cnt,
+                    perm,
+                    flags,
                 );
                 let last = vb.last().unwrap();
                 new_oids.push(last.name.clone());
@@ -537,7 +568,8 @@ impl Agent {
     /// Returns None on unsupported PDU types, like BulkRequest
     ///
     /// When everything is supported, remove Option
-    fn do_scoped_pdu(&self, scoped_pdu: ScopedPdu, oid_map: &mut OidMap) -> Option<Response> {
+    fn do_scoped_pdu(&self, flags: u8, opt_usr: Option<&usm::User>, scoped_pdu: ScopedPdu,
+                      oid_map: &mut OidMap) -> Option<Response> {
         //
         let mut skip_pdu = false;
         let mut vb: Vec<VarBind> = Vec::new();
@@ -545,19 +577,26 @@ impl Agent {
         let mut error_index = 0;
         let mut request_id = 0;
         let _context_name = scoped_pdu.name;
+        let perm;
+
+        if opt_usr.is_none() {
+            return None;
+        } else {
+            perm = opt_usr.unwrap().perm;
+        }
 
         match scoped_pdu.data {
             Pdus::GetRequest(r) => {
-                (error_status, error_index, request_id) = self.get(oid_map, r, &mut vb);
+                (error_status, error_index, request_id) = self.get(oid_map, r, &mut vb, perm, flags);
             }
             Pdus::GetNextRequest(r) => {
-                (error_status, error_index, request_id) = self.getnext(oid_map, r, &mut vb);
+                (error_status, error_index, request_id) = self.getnext(oid_map, r, &mut vb, perm, flags);
             }
             Pdus::SetRequest(r) => {
-                (error_status, error_index, request_id) = self.set(oid_map, r, &mut vb);
+                (error_status, error_index, request_id) = self.set(oid_map, r, &mut vb, perm, flags);
             }
             Pdus::GetBulkRequest(r) => {
-                (error_status, error_index, request_id) = self.bulk(oid_map, r, &mut vb);
+                (error_status, error_index, request_id) = self.bulk(oid_map, r, &mut vb, perm, flags);
                 // Do BulkRequest once tables work properly
             }
             _ => skip_pdu = true,
@@ -611,6 +650,7 @@ impl Agent {
             // Simply ignore packets that do not decode
             // In theory, should send decode error
             if decode_res.is_err() {
+                self.decode_error_cnt += 1;
                 continue;
             }
             let mut message: Message = decode_res.unwrap();
@@ -630,7 +670,10 @@ impl Agent {
             if flags & 1 == 1 {
                 // FIXME
                 // Both these cases should send Authentication Failure, rather
-                // than silently dropping the packet
+                // than silently dropping the packet. Maybe some 
+                // other auth types have different lengths, so logic 
+                // may be more complex. Probably have to look up user,
+                // and take authentication length from the required method.
                 if usp.authentication_parameters.len() != 12 {
                     warn!("Authentication parameters must be 12 bytes");
                     continue;
@@ -656,7 +699,7 @@ impl Agent {
                         }
                         continue;
                     }
-                    let resp_opt: Option<Response> = self.do_scoped_pdu(scoped_pdu, oid_map);
+                    let resp_opt: Option<Response> = self.do_scoped_pdu(flags, opt_user, scoped_pdu, oid_map);
                     if resp_opt.is_none() {
                         continue;
                     }
@@ -679,7 +722,8 @@ impl Agent {
                         continue;
                     }
                     let scoped_pdu: ScopedPdu = pdu_decode_res.unwrap();
-                    let resp_opt: Option<Response> = self.do_scoped_pdu(scoped_pdu, oid_map);
+                    let resp_opt: Option<Response> = self.do_scoped_pdu(flags, opt_user,
+                         scoped_pdu, oid_map);
                     if resp_opt.is_none() {
                         warn!("No response, discarding");
                         continue;
@@ -739,7 +783,7 @@ impl Agent {
     }
 
     /// Lookup user by name.
-    fn lookup_user(name: Vec<u8>, users: &Vec<usm::User>) -> Option<&usm::User> {
+    fn lookup_user<'a>(name: Vec<u8>, users: &'a Vec<usm::User>) -> Option<&'a usm::User<'a>> {
         for user in users {
             let uname = user.name.clone();
             if uname == name {
