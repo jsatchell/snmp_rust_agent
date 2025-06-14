@@ -1,16 +1,57 @@
-use crate::keeper::oid_keep::{OidKeeper, OidErr, Access, check_otype, check_type};
-use rasn::types::ObjectIdentifier;
-use rasn_smi::v2::{SimpleSyntax, ObjectSyntax};
-use rasn_snmp::v3::{VarBind, VarBindValue};
-use log::debug;
+use crate::keeper::oid_keep::{check_type, Access, OType, OidErr, OidKeeper};
+use log::{debug, warn};
 use num_traits::cast::ToPrimitive;
+use rasn::types::{FixedOctetString, Integer, ObjectIdentifier, OctetString};
+use rasn_smi::v2::{
+    ApplicationSyntax, Counter32, Counter64, IpAddress, ObjectSyntax, SimpleSyntax, TimeTicks,
+    Unsigned32,
+};
+use rasn_snmp::v3::{VarBind, VarBindValue};
+use sha1::digest::InvalidOutputSize;
 
+pub const ROW_STATUS_ACTIVE: u32 = 1u32;
+pub const ROW_STATUS_NOT_IN_SERVICE: u32 = 2u32;
+pub const ROW_STATUS_NOT_READY: u32 = 3u32;
+pub const ROW_STATUS_CREATE_AND_GO: u32 = 4u32;
+pub const ROW_STATUS_CREATE_AND_WAIT: u32 = 5u32;
+pub const ROW_STATUS_DESTROY: u32 = 6u32;
+
+fn defval(otype: OType) -> ObjectSyntax {
+    match otype {
+        OType::Integer | OType::TestAndIncr => {
+            ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(0)))
+        }
+        OType::RowStatus => {
+            ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(ROW_STATUS_NOT_READY)))
+        }
+        OType::ObjectId => ObjectSyntax::Simple(SimpleSyntax::ObjectId(
+            ObjectIdentifier::new(&[0, 0]).unwrap(),
+        )),
+        OType::String | OType::Arbitrary => {
+            ObjectSyntax::Simple(SimpleSyntax::String(OctetString::from_static(b"")))
+        }
+        OType::Counter => {
+            ObjectSyntax::ApplicationWide(ApplicationSyntax::Counter(Counter32 { 0: 0 }))
+        }
+        OType::BigCounter => {
+            ObjectSyntax::ApplicationWide(ApplicationSyntax::BigCounter(Counter64(0)))
+        }
+        OType::Ticks => ObjectSyntax::ApplicationWide(ApplicationSyntax::Ticks(TimeTicks { 0: 0 })),
+        OType::Address => ObjectSyntax::ApplicationWide(ApplicationSyntax::Address(IpAddress {
+            0: FixedOctetString::<4>::new([0, 0, 0, 0]),
+        })),
+        OType::Unsigned => {
+            ObjectSyntax::ApplicationWide(ApplicationSyntax::Unsigned(Unsigned32 { 0: 0 }))
+        }
+    }
+}
 
 pub struct TableMemOid {
     rows: Vec<(Vec<u32>, Vec<ObjectSyntax>)>,
+    default_row: Vec<ObjectSyntax>,
     cols: usize,
     base: Vec<u32>,
-    otypes: Vec<char>,
+    otypes: Vec<OType>,
     access: Vec<Access>,
     index_cols: Vec<usize>,
     implied_last: bool,
@@ -19,18 +60,17 @@ pub struct TableMemOid {
 impl TableMemOid {
     pub fn new(
         data: Vec<Vec<ObjectSyntax>>,
+        default_row: Vec<ObjectSyntax>,
         cols: usize,
         base: &ObjectIdentifier,
-        otypes: Vec<char>,
+        otypes: Vec<OType>,
         access: Vec<Access>,
         index_cols: Vec<usize>,
         implied_last: bool,
     ) -> Self {
         assert_eq!(cols, otypes.len());
         assert_eq!(cols, access.len());
-        for ot in &otypes {
-            assert!(check_otype(*ot));
-        }
+        assert_eq!(cols, default_row.len());
         assert!(index_cols.len() <= cols);
         let mut row_data = Vec::new();
         for row in data {
@@ -40,6 +80,7 @@ impl TableMemOid {
         row_data.sort_by(|a, b| a.0.cmp(&b.0));
         TableMemOid {
             rows: row_data,
+            default_row,
             cols,
             base: base.to_vec(),
             otypes,
@@ -54,11 +95,14 @@ impl TableMemOid {
         for (n, index_column_number) in icols.iter().enumerate() {
             let col = &row[*index_column_number - 1];
             match col {
-                ObjectSyntax::Simple(SimpleSyntax::Integer(i)) => {
-                    let iu32: u32 = i.to_u32().unwrap();
+                ObjectSyntax::Simple(os) => {
+                    match os { 
+                        SimpleSyntax::Integer(i) => {
+                    let iopt = i.to_i64().unwrap();
+                    let iu32: u32 = iopt.try_into().unwrap();
                     ret.push(iu32);
-                }
-                ObjectSyntax::Simple(SimpleSyntax::String(s)) => {
+                 },
+                SimpleSyntax::String(s) => {
                     if !implied_last || n < icols.len() - 1 {
                         let sl: u32 = s.len().try_into().unwrap();
                         ret.push(sl);
@@ -68,8 +112,8 @@ impl TableMemOid {
                         let ui32: u32 = ir.into();
                         ret.push(ui32);
                     }
-                }
-                ObjectSyntax::Simple(SimpleSyntax::ObjectId(o)) => {
+                },
+                SimpleSyntax::ObjectId(o) => {
                     if !implied_last || n < icols.len() - 1 {
                         let ol: u32 = o.len().try_into().unwrap();
                         ret.push(ol);
@@ -77,7 +121,7 @@ impl TableMemOid {
                     for ui32 in o.iter().copied() {
                         ret.push(ui32);
                     }
-                }
+                }}},
                 _ => {
                     // Could be address, which I haven't met yet
                     panic!("Unsupported type in index construction")
@@ -98,6 +142,90 @@ impl TableMemOid {
 
     pub fn row_count(&self) -> usize {
         self.rows.len()
+    }
+
+    fn row_from_index(&self, idx: &[u32]) -> Vec<ObjectSyntax> {
+        let mut row: Vec<ObjectSyntax> = vec![];
+        let mut idx_idx = 0;
+        let num_idx_cols = self.index_cols.len();
+        for otype in &self.otypes {
+            row.push(defval(*otype));
+        }
+        for (n, index_column_number) in self.index_cols.iter().enumerate() {
+            let col = self.otypes[*index_column_number - 1];
+            match col {
+                OType::Integer => {
+                    row[*index_column_number - 1] =
+                        ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(idx[idx_idx])));
+                    idx_idx += 1;
+                }
+                OType::String => {
+                    let mut text: Vec<u8> = vec![];
+                    if self.implied_last && n == num_idx_cols - 1 {
+                        // Then we just use all the remaining entries
+                        for itemp in &idx[idx_idx..] {
+                            let item = *itemp;
+                            text.push(item.try_into().unwrap());
+                        }
+                    } else {
+                        let slen: usize = idx[idx_idx].try_into().unwrap();
+                        idx_idx += 1;
+                        for itemp in &idx[idx_idx..(idx_idx + slen)] {
+                            let item = *itemp;
+                            text.push(item.try_into().unwrap());
+                        }
+                    }
+                    row[*index_column_number - 1] = ObjectSyntax::Simple(SimpleSyntax::String(
+                        OctetString::copy_from_slice(&text),
+                    ));
+                }
+                OType::ObjectId => {
+                    let mut arc: Vec<u32> = vec![];
+                    if self.implied_last && n == num_idx_cols - 1 {
+                        // Then we just use all the remaining entries
+                        for itemp in &idx[idx_idx..] {
+                            let item = *itemp;
+                            arc.push(item);
+                        }
+                    } else {
+                        let slen: usize = idx[idx_idx].try_into().unwrap();
+                        idx_idx += 1;
+                        for itemp in &idx[idx_idx..(idx_idx + slen)] {
+                            let item = *itemp;
+                            arc.push(item);
+                        }
+                    }
+                    row[*index_column_number - 1] = ObjectSyntax::Simple(SimpleSyntax::ObjectId(
+                        ObjectIdentifier::new(arc).unwrap().to_owned(),
+                    ));
+                }
+                /*      ObjectSyntax::Simple(SimpleSyntax::String(s)) => {
+                    if !implied_last || n < icols.len() - 1 {
+                        let sl: u32 = s.len().try_into().unwrap();
+                        ret.push(sl);
+                    }
+                    for i in s {
+                        let ir: u8 = *i;
+                        let ui32: u32 = ir.into();
+                        ret.push(ui32);
+                    }
+                }
+                ObjectSyntax::Simple(SimpleSyntax::ObjectId(o)) => {
+                    if !implied_last || n < icols.len() - 1 {
+                        let ol: u32 = o.len().try_into().unwrap();
+                        ret.push(ol);
+                    }
+                    for ui32 in o.iter().copied() {
+                        ret.push(ui32);
+                    }
+                }*/
+                _ => {
+                    // Could be address, which I haven't met yet
+                    panic!("Unsupported type in row construction from index")
+                }
+            }
+        }
+        row
     }
 
     pub fn add_row(&mut self, row: &[ObjectSyntax]) {
@@ -174,9 +302,7 @@ impl OidKeeper for TableMemOid {
                 .access
                 .iter()
                 .position(|p| {
-                    *p == Access::ReadOnly
-                        || *p == Access::ReadWrite
-                        || *p == Access::ReadCreate
+                    *p == Access::ReadOnly || *p == Access::ReadWrite || *p == Access::ReadCreate
                 })
                 .unwrap()
         } else {
@@ -234,11 +360,7 @@ impl OidKeeper for TableMemOid {
     }
 
     /// Supports updating existing cells, NOT YET new row creation via RowStatus column
-    fn set(
-        &mut self,
-        oid: ObjectIdentifier,
-        value: VarBindValue,
-    ) -> Result<VarBindValue, OidErr> {
+    fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
         let suffix = self.suffix(oid);
         debug!("Suffix is {suffix:?}");
         // Complex indices (not integer and/or multicolumn need longer than 2)
@@ -268,15 +390,52 @@ impl OidKeeper for TableMemOid {
             _ => {}
         }
         let index = &suffix[2..];
+        let mut delete_me = false;
+        let mut delete_idx: usize = 0;
         for row in &mut self.rows {
-            if index == row.0 {
+            if index == row.0 {            
                 if let VarBindValue::Value(new_value) = value.clone() {
                     if check_type(self.otypes[col - 1], &new_value) {
+                        if self.otypes[col - 1] == OType::RowStatus &&
+                        new_value == ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(
+                        ROW_STATUS_DESTROY,
+                    ))) {
+                        delete_me = true;
+                        break;
+                    } else {
                         row.1[col - 1] = new_value;
                         return Ok(value);
-                    } else {
+                    }} else {
                         return Err(OidErr::WrongType);
                     }
+                }
+            }
+            delete_idx += 1;
+        }
+        if delete_me {
+            self.rows.remove(delete_idx);
+            return Ok(value);
+        }
+        // No existing row matches. So either it is a row creation request
+        // or an error.
+        if let VarBindValue::Value(new_value) = value.clone() {
+            if self.otypes[col - 1] == OType::RowStatus {
+                if new_value
+                    == ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(
+                        ROW_STATUS_CREATE_AND_WAIT,
+                    )))
+                {
+                    let row = self.row_from_index(index);
+                    self.add_row(&row);
+                    return Ok(value);
+                }
+                if new_value
+                    == ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(
+                        ROW_STATUS_CREATE_AND_GO,
+                    )))
+                {
+                    warn!["CreateAndGo not supported"];
+                    return Err(OidErr::WrongType);
                 }
             }
         }
@@ -287,7 +446,7 @@ impl OidKeeper for TableMemOid {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::{Access, OidErr, OidKeeper as _, TableMemOid};
+    use super::{Access, OidErr, TableMemOid};
     use rasn::types::{Integer, ObjectIdentifier};
     use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
     use rasn_snmp::v3::VarBindValue;
@@ -297,6 +456,7 @@ mod tests {
     }
 
     const ARC2: [u32; 2] = [1, 6];
+    const ARC3: [u32; 5] = [1, 6, 1, 2, 1];
 
     #[test]
     fn test_simple_from_int() {
@@ -309,15 +469,17 @@ mod tests {
 
     fn tab_fixture() -> TableMemOid {
         let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap();
+        let s0 = simple_from_int(0);
         let s42 = simple_from_int(42);
         let s41 = simple_from_int(41);
         let s4 = simple_from_int(4);
         let s5 = simple_from_int(5);
         TableMemOid::new(
             vec![vec![s4.clone(), s41.clone()], vec![s5.clone(), s42.clone()]],
+            vec![s0.clone(), s0.clone()],
             2,
             &oid2,
-            vec!['i', 'i'],
+            vec![OType::Integer, OType::Integer],
             vec![Access::ReadOnly, Access::ReadWrite],
             vec![1usize],
             false,
@@ -379,5 +541,33 @@ mod tests {
         let row = vec![s6, s37];
         tab.add_row(&row);
         assert_eq!(tab.row_count(), 3);
+    }
+
+    #[test]
+    fn test_create_and_wait() {
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap();
+        let oid3: ObjectIdentifier = ObjectIdentifier::new(&ARC3).unwrap();
+        let s0 = simple_from_int(0);
+        let nr = simple_from_int(4);
+        let s41 = simple_from_int(41);
+        let s4 = simple_from_int(4);
+        let s5 = simple_from_int(5);
+        let mut tab = TableMemOid::new(
+            vec![],
+            vec![s0.clone(), nr.clone()],
+            2,
+            &oid2,
+            vec![OType::Integer, OType::RowStatus],
+            vec![Access::ReadOnly, Access::ReadWrite],
+            vec![1usize],
+            false,
+        );
+        assert_eq!(tab.row_count(), 0);
+        let set_res = tab.set(oid3.clone(), VarBindValue::Value(s5.clone()));
+        assert!(set_res.is_ok());
+        assert_eq!(tab.row_count(), 1);
+        let set_res = tab.set(oid3.clone(), VarBindValue::Value(s0.clone()));
+        assert!(set_res.is_ok());
+        assert_eq!(tab.row_count(), 1);
     }
 }

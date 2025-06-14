@@ -30,22 +30,41 @@ pub mod oid_keep {
         ReadCreate,
     }
 
-    pub fn check_type(otype: char, val: &ObjectSyntax) -> bool {
-        match val {
-            ObjectSyntax::Simple(SimpleSyntax::Integer(_)) => otype == 'i' || otype == 'r',
-            ObjectSyntax::Simple(SimpleSyntax::String(_)) => otype == 's',
-            ObjectSyntax::Simple(SimpleSyntax::ObjectId(_)) => otype == 'o',
-            ObjectSyntax::ApplicationWide(ApplicationSyntax::Address(_)) => otype == 'a',
-            ObjectSyntax::ApplicationWide(ApplicationSyntax::Unsigned(_)) => otype == 'u',
-            ObjectSyntax::ApplicationWide(ApplicationSyntax::Arbitrary(_)) => otype == '?',
-            ObjectSyntax::ApplicationWide(ApplicationSyntax::Counter(_)) => otype == 'c',
-            ObjectSyntax::ApplicationWide(ApplicationSyntax::BigCounter(_)) => otype == 'b',
-            ObjectSyntax::ApplicationWide(ApplicationSyntax::Ticks(_)) => otype == 't',
-        }
+    #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+    pub enum OType {
+        Integer,
+        RowStatus,
+        TestAndIncr,
+        String,
+        ObjectId,
+        Address,
+        Unsigned,
+        Arbitrary,
+        Counter,
+        BigCounter,
+        Ticks,
     }
 
-    pub fn check_otype(otype: char) -> bool {
-        ['a', 'b', 'c', 'i', 'o', 's', 't', 'u', '?', 'r'].contains(&otype)
+    pub fn check_type(otype: OType, val: &ObjectSyntax) -> bool {
+        match val {
+            ObjectSyntax::Simple(SimpleSyntax::Integer(_)) => {
+                otype == OType::Integer || otype == OType::RowStatus || otype == OType::TestAndIncr
+            }
+            ObjectSyntax::Simple(SimpleSyntax::String(_)) => otype == OType::String,
+            ObjectSyntax::Simple(SimpleSyntax::ObjectId(_)) => otype == OType::ObjectId,
+            ObjectSyntax::ApplicationWide(ApplicationSyntax::Address(_)) => otype == OType::Address,
+            ObjectSyntax::ApplicationWide(ApplicationSyntax::Unsigned(_)) => {
+                otype == OType::Unsigned
+            }
+            ObjectSyntax::ApplicationWide(ApplicationSyntax::Arbitrary(_)) => {
+                otype == OType::Arbitrary
+            }
+            ObjectSyntax::ApplicationWide(ApplicationSyntax::Counter(_)) => otype == OType::Counter,
+            ObjectSyntax::ApplicationWide(ApplicationSyntax::BigCounter(_)) => {
+                otype == OType::BigCounter
+            }
+            ObjectSyntax::ApplicationWide(ApplicationSyntax::Ticks(_)) => otype == OType::Ticks,
+        }
     }
 
     pub trait OidKeeper {
@@ -59,7 +78,4 @@ pub mod oid_keep {
             value: VarBindValue,
         ) -> Result<VarBindValue, OidErr>;
     }
-
-    
 }
-

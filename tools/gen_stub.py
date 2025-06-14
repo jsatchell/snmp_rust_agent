@@ -8,33 +8,33 @@ LOGGER = logging.getLogger(__file__)
 
 SNAKE_PATTERN = re.compile(r'(?<!^)(?=[A-Z])')
 
-NAME_CHAR = {"INTEGER": 'i',
-             "TruthValue": 'i',
-             "TimeStamp": 't',
-             "DateAndTime": 's',
-             "TimeTicks": 't',
-             "TimeInterval": 'i',
-             "TestAndIncr": 'i',
-             "UUIDorZero": 's',
-             "Counter64": 'b',
-             "Counter": 'c',
-             "AutonomousType": "o",
-             "IANAStorageMediaType": "i",
-             "SnmpAdminString": 's',
-             "DisplayString": 's',
-             "OwnerString": 's',
-             "EntryStatus": 'i',
-             "InterfaceIndexOrZero": 'i',
-             "PhysAddress": 'a',
-             "Integer32": 'i',
-             "Unsigned32": 'i',
-             "Gauge32": 'c',
-             "OCTET": 's',
-             "BITS": 's',
-             "Opaque": 's',
-             "OBJECT": 'o',
-             "Counter32": 'c',
-             "IpAddress": 'a',
+NAME_OTYPE = {"INTEGER": 'OType::Integer',
+             "TruthValue": 'OType::Integer',
+             "TimeStamp": 'OType::Ticks',
+             "DateAndTime": 'OType::String',
+             "TimeTicks": 'OType::Ticks',
+             "TimeInterval": 'OType::Integer',
+             "TestAndIncr": 'OType::Integer',
+             "UUIDorZero": 'OType::String',
+             "Counter64": 'OType::BigCounter',
+             "Counter": 'OType::Counter',
+             "AutonomousType": "OType::ObjectId",
+             "IANAStorageMediaType": 'OType::Integer',
+             "SnmpAdminString": 'OType::String',
+             "DisplayString": 'OType::String',
+             "OwnerString": 'OType::String',
+             "EntryStatus": 'OType::Integer',
+             "InterfaceIndexOrZero": 'OType::Integer',
+             "PhysAddress": 'OType::Address',
+             "Integer32": 'OType::Integer',
+             "Unsigned32": 'OType::Integer',
+             "Gauge32": 'OType::Counter',
+             "OCTET": 'OType::String',
+             "BITS": 'OType::String',
+             "Opaque": 'OType::String',
+             "OBJECT": "OType::ObjectId",
+             "Counter32": 'OType::Counter',
+             "IpAddress": 'OType::Address',
              }
 
 ACCESS = {
@@ -84,14 +84,14 @@ def write_object_ids(out, object_ids: dict):
 
 
 def value_from_syntax(syntax):
-    """Use syntax char to choose an appropriate initial value"""
-    if syntax == 's':
+    """Use syntax enum to choose an appropriate initial value"""
+    if syntax == 'OType::String':
         val = 'simple_from_str(b"b")'
-    elif syntax == 'o':
+    elif syntax == 'OType::ObjectId':
         val = "simple_from_vec(&[1, 3, 6, 1])"
-    elif syntax == 'c':
+    elif syntax == 'OType::Counter':
         val = "counter_from_int(0)"
-    elif syntax == 't':
+    elif syntax == 'OType::Ticks':
         val = "ticks_from_int(0)"
     else:
         val = "simple_from_int(4)"
@@ -145,7 +145,7 @@ def write_table_struct(out, name, object_types, child, entry, tcs):
         index_list[-1] = index_list[-1].split()[-1]
     acols = ", ".join([ACCESS[object_types[name]["access"]]
                        for name, _ in entry])
-    cols = [NAME_CHAR[_[1].split()[0]] for _ in entry]
+    cols = [NAME_OTYPE[_[1].split()[0]] for _ in entry]
     icol_data = []
     for ent in entry:
         if "defval" in object_types[ent[0]]:
@@ -153,7 +153,7 @@ def write_table_struct(out, name, object_types, child, entry, tcs):
                                      object_types[ent[0]]["syntax"],
                                      tcs))
         else:
-            icol_data.append(value_from_syntax(NAME_CHAR[ent[1].split()[0]]))
+            icol_data.append(value_from_syntax(NAME_OTYPE[ent[1].split()[0]]))
     idat = ", ".join(icol_data)
     icols = [i + 1 for i, e in enumerate(entry)
              for _ in index_list if e[0] == _]
@@ -173,9 +173,10 @@ impl {struct_name} {"{"}
        {struct_name} {"{"}
            table: TableMemOid::new(
              vec![vec![{idat}]],
+        vec![{idat}],
         {len(cols)},
         &base_oid,
-        vec!{cols},
+        vec![{", ".join(cols)}],
         vec![{acols}],
         vec!{icols},
         {"true" if implied else "false"},
@@ -208,8 +209,8 @@ def write_scalar_struct(out, name, data, tcs):
     syntax = data["syntax"]
     if syntax in tcs:
         syntax = tcs[syntax]["syntax"]
-    syntax_char = NAME_CHAR[syntax.split()[0]]
-    val = value_from_syntax(syntax_char)
+    syntax_otype = NAME_OTYPE[syntax.split()[0]]
+    val = value_from_syntax(syntax_otype)
     struct_name = f"Keep{name.title()}"
     if "description" in data:
         out.write(data["description"])
@@ -221,7 +222,7 @@ struct {struct_name} {"{"}
 impl {struct_name} {"{"}
     fn new() -> Self {"{"}
        {struct_name} {"{"}
-           scalar: ScalarMemOid::new({val}, '{syntax_char}', {acc}),
+           scalar: ScalarMemOid::new({val}, {syntax_otype}, {acc}),
        {"}"}
     {"}"}
 {"}"}
@@ -308,19 +309,19 @@ def cnt_ticks(object_types, tcs, entries):
 
             syntaxes = [_.split("(")[0] for _ in syntaxes]
             print(syntaxes)
-            chars = [NAME_CHAR[syntax.split()[0]] for syntax in syntaxes]
-            if "t" in chars:
+            chars = [NAME_OTYPE[syntax.split()[0]] for syntax in syntaxes]
+            if "OType::Ticks" in chars:
                 tcks = True
-            if "c" in chars:
+            if "OType:Counter" in chars:
                 cnts = True
         else:
             syntax = data["syntax"]
             if syntax in tcs:
                 syntax = tcs[syntax]["syntax"]
-            syntax_char = NAME_CHAR[syntax.split()[0]]
-            if syntax_char == 't':
+            syntax_otype = NAME_OTYPE[syntax.split()[0]]
+            if syntax_otype == "OType::Ticks":
                 tcks = True
-            if syntax_char == 'c':
+            if syntax_otype == 'OType::Counter':
                 cnts = True
         if cnts and tcks:  # Early exit if both are true
             break
@@ -345,7 +346,7 @@ def gen_stub(object_types, resolve, tcs, entries, object_ids,
     with open("src/stubs/" + stub_name, "w", encoding="ascii") as out:
         cnts, tcks = cnt_ticks(object_types, tcs, entries)
         stub_start = r"""
-use crate::keeper::oid_keep::{Access, OidErr, OidKeeper};
+use crate::keeper::oid_keep::{Access, OidErr, OidKeeper, OType};
 use crate::scalar::ScalarMemOid;
 use crate::table::TableMemOid;use crate::oidmap::OidMap;
 use rasn::types::{Integer, ObjectIdentifier, OctetString};

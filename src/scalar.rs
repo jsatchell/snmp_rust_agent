@@ -1,40 +1,34 @@
-use crate::keeper::oid_keep::{OidKeeper, OidErr, Access, check_otype, check_type};
-use rasn::types::ObjectIdentifier;
-use rasn_smi::v2::ObjectSyntax;
+use crate::keeper::oid_keep::{check_type, Access, OType, OidErr, OidKeeper};
+use num_traits::ToPrimitive;
+use rasn::ber::{decode, encode};
+use rasn::types::{Integer, ObjectIdentifier};
+use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
 use rasn_snmp::v3::{VarBind, VarBindValue};
-//use log::debug;
+
+use log::debug;
 
 /// Simplistic scalar stored in memory.
 /// Initialized in constructor.
 pub struct ScalarMemOid {
     value: ObjectSyntax,
-    otype: char,
+    otype: OType,
     access: Access,
 }
 
 impl ScalarMemOid {
-    /// Initialize with initial value, and char that selects type checking.
+    /// Initialize with initial value, and enum that selects type checking.
     /// Any variant of ObjectSyntax is OK
     ///
-    /// There is are self consistency checks that the char is a known one,
+    /// There is a self consistency check that the enum is a sane one,
     /// and that the initial value is consistent with that type.
     ///
-    /// The type mapping is:
-    /// * Simple(SimpleSyntax::Integer(_)) => 'i' (also 'r' for RowStatus in tables),
-    /// * Simple(SimpleSyntax::String(_)) => 's',
-    /// * Simple(SimpleSyntax::ObjectId(_)) => 'o',
-    /// * ApplicationWide(ApplicationSyntax::Address(_)) => 'a',
-    /// * ApplicationWide(ApplicationSyntax::Unsigned(_)) => 'u',
-    /// * ApplicationWide(ApplicationSyntax::Arbitrary(_)) => '?',
-    /// * ApplicationWide(ApplicationSyntax::Counter(_)) => 'c',
-    /// * ApplicationWide(ApplicationSyntax::BigCounter(_)) => 'b',
-    /// * ApplicationWide(ApplicationSyntax::Ticks(_)) => 't',
-    pub fn new(value: ObjectSyntax, otype: char, access: Access) -> Self {
-        if !check_otype(otype) {
-            panic!("Unrecognised type char {otype}");
+    /// The type mapping is in enum OType
+    pub fn new(value: ObjectSyntax, otype: OType, access: Access) -> Self {
+        if otype == OType::RowStatus {
+            panic!("RowStatus not possible type for Scalar object");
         }
         if !check_type(otype, &value) {
-            panic!("Initial value is unexpected type {otype} {value:?}");
+            panic!("Initial value is unexpected type {otype:?} {value:?}");
         }
         ScalarMemOid {
             value,
@@ -43,6 +37,7 @@ impl ScalarMemOid {
         }
     }
 }
+
 impl OidKeeper for ScalarMemOid {
     fn is_scalar(&self, _oid: ObjectIdentifier) -> bool {
         true
@@ -65,14 +60,21 @@ impl OidKeeper for ScalarMemOid {
         self.access
     }
 
-    fn set(
-        &mut self,
-        _oid: ObjectIdentifier,
-        value: VarBindValue,
-    ) -> Result<VarBindValue, OidErr> {
+    fn set(&mut self, _oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
         if self.access == Access::ReadCreate || self.access == Access::ReadWrite {
             if let VarBindValue::Value(new_value) = value.clone() {
                 if check_type(self.otype, &new_value) {
+                    if self.otype == OType::TestAndIncr {
+                        // Then return current value and increment
+                        if new_value == self.value {
+                            if let ObjectSyntax::Simple(SimpleSyntax::Integer(incr)) = &self.value {
+                                let incr1 = Integer::from(incr.to_u32().unwrap() + 1);
+                                self.value = ObjectSyntax::Simple(SimpleSyntax::Integer(incr1));
+                            }
+                        } else {
+                            return Err(OidErr::OutOfRange); // InconsistentValue
+                        }
+                    }
                     self.value = new_value;
                 } else {
                     return Err(OidErr::WrongType);
@@ -85,25 +87,29 @@ impl OidKeeper for ScalarMemOid {
     }
 }
 
-/*
 pub struct PersistentScalar {
     scalar: ScalarMemOid,
-    file_name: &'static [u8],
+    file_name: String,
 }
 
 impl PersistentScalar {
-    pub fn new(
-        value: ObjectSyntax,
-        otype: char,
-        access: Access,
-        file_name: &'static [u8],
-    ) -> Self {
+    pub fn new(value: ObjectSyntax, otype: OType, access: Access, file_name: String) -> Self {
         let scalar = ScalarMemOid::new(value, otype, access);
         PersistentScalar { scalar, file_name }
     }
 
-    pub fn load(self) {
+    pub fn load(&mut self) {
         debug!["file name {0:?}", self.file_name];
+        let bytes = std::fs::read(self.file_name.clone()).unwrap();
+        let value_res = decode::<ObjectSyntax>(&bytes);
+        match value_res {
+            Ok(value) => {
+                self.scalar.value = value;
+            }
+            Err(err) => {
+                panic!["Decode failure {err:?}"];
+            }
+        }
     }
 }
 
@@ -125,12 +131,84 @@ impl OidKeeper for PersistentScalar {
         self.scalar.access(oid)
     }
 
-    fn set(
-        &mut self,
-        oid: ObjectIdentifier,
-        value: VarBindValue,
-    ) -> Result<VarBindValue, OidErr> {
-        self.scalar.set(oid, value)
+    fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
+        let result = self.scalar.set(oid, value);
+        if result.is_ok() {
+            let bytes = encode::<ObjectSyntax>(&self.scalar.value).unwrap();
+            let outcome = std::fs::write(&self.file_name, bytes);
+            if outcome.is_err() {
+                debug!["Write failure saving to {0}", self.file_name]
+            }
+        }
+        result
     }
 }
-*/
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::{Access, PersistentScalar};
+    use rasn::types::{Integer, ObjectIdentifier};
+    use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
+    use rasn_snmp::v3::VarBindValue;
+
+    fn simple_from_int(value: i32) -> ObjectSyntax {
+        ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(value)))
+    }
+
+    const ARC2: [u32; 2] = [1, 6];
+
+    #[test]
+    fn test_simple_from_int() {
+        let x = simple_from_int(21);
+        assert_eq!(
+            x,
+            ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(21)))
+        );
+    }
+
+    fn pscl_fixture() -> PersistentScalar {
+        let s42 = simple_from_int(42);
+        PersistentScalar::new(
+            s42.clone(),
+            OType::Integer,
+            Access::ReadWrite,
+            "/tmp/snmp-rust-persist".to_string(),
+        )
+    }
+
+    #[test]
+    fn pscl_get_test() {
+        let pscl = pscl_fixture();
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap();
+        let res = pscl.get(oid2);
+        let s42 = simple_from_int(42);
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), VarBindValue::Value(s42));
+    }
+
+    #[test]
+    fn pscl_get_next() {
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap();
+        let pscl = pscl_fixture();
+        let res = pscl.get_next(oid2.clone());
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn pscl_persistence() {
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap();
+        let mut pscl = pscl_fixture();
+        let s17 = simple_from_int(17);
+        let vb = VarBindValue::Value(s17.clone());
+        let set_rs = pscl.set(oid2.clone(), vb);
+        assert!(set_rs.is_ok());
+        let res = pscl.get(oid2.clone());
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), VarBindValue::Value(s17.clone()));
+        pscl.load();
+        let res = pscl.get(oid2);
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), VarBindValue::Value(s17.clone()));
+    }
+}

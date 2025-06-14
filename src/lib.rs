@@ -1,10 +1,10 @@
 mod engine_id;
 pub mod keeper;
 pub mod oidmap;
+pub mod perms;
 mod privacy;
-pub mod stubs;
 mod scalar;
+pub mod snmp_agent;
+pub mod stubs;
 mod table;
 pub mod usm;
-pub mod perms;
-pub mod snmp_agent;

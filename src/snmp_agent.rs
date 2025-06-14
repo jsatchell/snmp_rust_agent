@@ -7,9 +7,9 @@ mod usm;*/
 pub use crate::engine_id::snmp_engine_id;
 use crate::keeper::oid_keep::OidErr;
 use crate::oidmap::OidMap;
+use crate::perms::Perm;
 use crate::privacy;
 use crate::usm;
-use crate::perms::Perm;
 use log::{debug, error, warn};
 use rasn;
 use rasn::types::{Integer, ObjectIdentifier, OctetString};
@@ -108,15 +108,15 @@ impl Agent {
         let spd: ScopedPduData = ScopedPduData::CleartextPdu(scpd);
         let run_time: isize = self.start_time.elapsed().as_secs().try_into().unwrap();
         let usm: USMSecurityParameters = USMSecurityParameters {
-            authoritative_engine_boots: Integer::Primitive(self.boots),
+            authoritative_engine_boots: Integer::from(self.boots),
             authoritative_engine_id: self.engine_id.clone(),
-            authoritative_engine_time: Integer::Primitive(run_time),
+            authoritative_engine_time: Integer::from(run_time),
             user_name: ZB,
             authentication_parameters: ZB,
             privacy_parameters: ZB,
         };
         let mut message: Message = Message {
-            version: Integer::Primitive(3),
+            version: Integer::from(3),
             global_data: head,
             scoped_data: spd,
             security_parameters: ZB,
@@ -151,9 +151,9 @@ impl Agent {
         let mut spd: ScopedPduData = ScopedPduData::CleartextPdu(scpd);
         let run_time: isize = self.start_time.elapsed().as_secs().try_into().unwrap();
         let mut usm: USMSecurityParameters = USMSecurityParameters {
-            authoritative_engine_boots: Integer::Primitive(self.boots),
+            authoritative_engine_boots: Integer::from(self.boots),
             authoritative_engine_id: self.engine_id.clone(),
-            authoritative_engine_time: Integer::Primitive(run_time),
+            authoritative_engine_time: Integer::from(run_time),
             user_name,
             authentication_parameters: ZB,
             privacy_parameters: ZB,
@@ -167,7 +167,7 @@ impl Agent {
             spd = ScopedPduData::EncryptedPdu(OctetString::from(value));
         }
         let mut output: Message = Message {
-            version: Integer::Primitive(3),
+            version: Integer::from(3),
             global_data: head,
             scoped_data: spd,
             security_parameters: ZB,
@@ -177,7 +177,14 @@ impl Agent {
         output
     }
 
-    fn get(&self, oid_map: &mut OidMap, r: GetRequest, vb: &mut Vec<VarBind>, perm: &Perm, flags: u8) -> (u32, u32, i32) {
+    fn get(
+        &self,
+        oid_map: &mut OidMap,
+        r: GetRequest,
+        vb: &mut Vec<VarBind>,
+        perm: &Perm,
+        flags: u8,
+    ) -> (u32, u32, i32) {
         let mut error_status = Pdu::ERROR_STATUS_NO_ERROR;
         let mut error_index = 0;
         let request_id = r.0.request_id;
@@ -193,7 +200,7 @@ impl Agent {
             match opt_get {
                 Err(insert_point) => {
                     debug!("Get miss case {insert_point}");
-                    let okeep = &oid_map.idx(insert_point - 1);
+                    let okeep = &mut oid_map.idx(insert_point - 1);
                     if okeep.is_scalar(roid.clone()) {
                         debug!("Scalar get ");
                         error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
@@ -223,7 +230,7 @@ impl Agent {
                 }
                 Ok(which) => {
                     vb_cnt += 1;
-                    let okeep = &oid_map.idx(which);
+                    let okeep = &mut oid_map.idx(which);
                     let value_res = okeep.get(roid.clone());
                     if let Ok(value) = value_res {
                         vb.push(VarBind {
@@ -256,9 +263,9 @@ impl Agent {
         flags: u8,
     ) {
         if !perm.check(flags, false, &roid) {
-                *error_status = Pdu::ERROR_STATUS_NO_ACCESS;
-                *error_index = vb_cnt;
-                return;
+            *error_status = Pdu::ERROR_STATUS_NO_ACCESS;
+            *error_index = vb_cnt;
+            return;
         }
         let opt_get: Result<usize, usize> = oid_map.search(&roid);
         match opt_get {
@@ -267,7 +274,7 @@ impl Agent {
                 if insert_point == 0 {
                     // Off the front of our range - give the first thing
                     let oid1 = oid_map.oid(0).clone();
-                    let okeep = &oid_map.idx(0);
+                    let okeep = &mut oid_map.idx(0);
                     if okeep.is_scalar(oid1.clone()) {
                         let value = okeep.get(oid1.clone()).unwrap();
                         vb.push(VarBind {
@@ -290,7 +297,7 @@ impl Agent {
                     });
                 } else {
                     let oid1 = &oid_map.oid(insert_point).clone();
-                    let last_keep = &oid_map.idx(insert_point);
+                    let last_keep = &mut oid_map.idx(insert_point);
 
                     if last_keep.is_scalar(oid1.clone()) {
                         match last_keep.get(oid1.clone()) {
@@ -323,7 +330,7 @@ impl Agent {
                                     } else {
                                         debug!("handle case following table end");
                                         let next_oid = oid_map.oid(insert_point).clone();
-                                        let next_keep = &oid_map.idx(insert_point);
+                                        let next_keep = &mut oid_map.idx(insert_point);
                                         if next_keep.is_scalar(next_oid.clone()) {
                                             let value = next_keep.get(next_oid.clone()).unwrap();
                                             vb.push(VarBind {
@@ -370,7 +377,7 @@ impl Agent {
                     });
                 } else if oid_map.idx(which).is_scalar(roid.clone()) {
                     let next_oid: ObjectIdentifier = oid_map.oid(which + 1).clone();
-                    let okeep = &oid_map.idx(which + 1);
+                    let okeep = &mut oid_map.idx(which + 1);
                     if okeep.is_scalar(next_oid.clone()) {
                         let value_res = okeep.get(next_oid.clone());
                         match value_res {
@@ -387,7 +394,7 @@ impl Agent {
                         vb.push(okeep.get_next(roid.clone()).unwrap());
                     };
                 } else {
-                    let okeep = &oid_map.idx(which);
+                    let okeep = &mut oid_map.idx(which);
                     debug!("Trying okeep");
                     let gn_res = okeep.get_next(roid.clone());
                     match gn_res {
@@ -432,7 +439,14 @@ impl Agent {
         (error_status, error_index, request_id)
     }
 
-    fn set(&self, oid_map: &mut OidMap, r: SetRequest, vb: &mut Vec<VarBind>, perm: &Perm, flags: u8) -> (u32, u32, i32) {
+    fn set(
+        &self,
+        oid_map: &mut OidMap,
+        r: SetRequest,
+        vb: &mut Vec<VarBind>,
+        perm: &Perm,
+        flags: u8,
+    ) -> (u32, u32, i32) {
         let mut error_status = Pdu::ERROR_STATUS_NO_ERROR;
         let mut error_index = 0;
         let request_id = r.0.request_id;
@@ -568,8 +582,13 @@ impl Agent {
     /// Returns None on unsupported PDU types, like BulkRequest
     ///
     /// When everything is supported, remove Option
-    fn do_scoped_pdu(&self, flags: u8, opt_usr: Option<&usm::User>, scoped_pdu: ScopedPdu,
-                      oid_map: &mut OidMap) -> Option<Response> {
+    fn do_scoped_pdu(
+        &self,
+        flags: u8,
+        opt_usr: Option<&usm::User>,
+        scoped_pdu: ScopedPdu,
+        oid_map: &mut OidMap,
+    ) -> Option<Response> {
         //
         let mut skip_pdu = false;
         let mut vb: Vec<VarBind> = Vec::new();
@@ -577,26 +596,28 @@ impl Agent {
         let mut error_index = 0;
         let mut request_id = 0;
         let _context_name = scoped_pdu.name;
-        let perm;
-
-        if opt_usr.is_none() {
-            return None;
+        let perm = if let Some(user) = opt_usr {
+            user.perm
         } else {
-            perm = opt_usr.unwrap().perm;
-        }
+            return None;
+        };
 
         match scoped_pdu.data {
             Pdus::GetRequest(r) => {
-                (error_status, error_index, request_id) = self.get(oid_map, r, &mut vb, perm, flags);
+                (error_status, error_index, request_id) =
+                    self.get(oid_map, r, &mut vb, perm, flags);
             }
             Pdus::GetNextRequest(r) => {
-                (error_status, error_index, request_id) = self.getnext(oid_map, r, &mut vb, perm, flags);
+                (error_status, error_index, request_id) =
+                    self.getnext(oid_map, r, &mut vb, perm, flags);
             }
             Pdus::SetRequest(r) => {
-                (error_status, error_index, request_id) = self.set(oid_map, r, &mut vb, perm, flags);
+                (error_status, error_index, request_id) =
+                    self.set(oid_map, r, &mut vb, perm, flags);
             }
             Pdus::GetBulkRequest(r) => {
-                (error_status, error_index, request_id) = self.bulk(oid_map, r, &mut vb, perm, flags);
+                (error_status, error_index, request_id) =
+                    self.bulk(oid_map, r, &mut vb, perm, flags);
                 // Do BulkRequest once tables work properly
             }
             _ => skip_pdu = true,
@@ -670,8 +691,8 @@ impl Agent {
             if flags & 1 == 1 {
                 // FIXME
                 // Both these cases should send Authentication Failure, rather
-                // than silently dropping the packet. Maybe some 
-                // other auth types have different lengths, so logic 
+                // than silently dropping the packet. Maybe some
+                // other auth types have different lengths, so logic
                 // may be more complex. Probably have to look up user,
                 // and take authentication length from the required method.
                 if usp.authentication_parameters.len() != 12 {
@@ -699,7 +720,8 @@ impl Agent {
                         }
                         continue;
                     }
-                    let resp_opt: Option<Response> = self.do_scoped_pdu(flags, opt_user, scoped_pdu, oid_map);
+                    let resp_opt: Option<Response> =
+                        self.do_scoped_pdu(flags, opt_user, scoped_pdu, oid_map);
                     if resp_opt.is_none() {
                         continue;
                     }
@@ -722,8 +744,8 @@ impl Agent {
                         continue;
                     }
                     let scoped_pdu: ScopedPdu = pdu_decode_res.unwrap();
-                    let resp_opt: Option<Response> = self.do_scoped_pdu(flags, opt_user,
-                         scoped_pdu, oid_map);
+                    let resp_opt: Option<Response> =
+                        self.do_scoped_pdu(flags, opt_user, scoped_pdu, oid_map);
                     if resp_opt.is_none() {
                         warn!("No response, discarding");
                         continue;
