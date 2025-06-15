@@ -1,13 +1,9 @@
 use crate::keeper::oid_keep::{check_type, Access, OType, OidErr, OidKeeper};
 use log::{debug, warn};
 use num_traits::cast::ToPrimitive;
-use rasn::types::{FixedOctetString, Integer, ObjectIdentifier, OctetString};
-use rasn_smi::v2::{
-    ApplicationSyntax, Counter32, Counter64, IpAddress, ObjectSyntax, SimpleSyntax, TimeTicks,
-    Unsigned32,
-};
+use rasn::types::{Integer, ObjectIdentifier, OctetString};
+use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
 use rasn_snmp::v3::{VarBind, VarBindValue};
-use sha1::digest::InvalidOutputSize;
 
 pub const ROW_STATUS_ACTIVE: u32 = 1u32;
 pub const ROW_STATUS_NOT_IN_SERVICE: u32 = 2u32;
@@ -15,36 +11,6 @@ pub const ROW_STATUS_NOT_READY: u32 = 3u32;
 pub const ROW_STATUS_CREATE_AND_GO: u32 = 4u32;
 pub const ROW_STATUS_CREATE_AND_WAIT: u32 = 5u32;
 pub const ROW_STATUS_DESTROY: u32 = 6u32;
-
-fn defval(otype: OType) -> ObjectSyntax {
-    match otype {
-        OType::Integer | OType::TestAndIncr => {
-            ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(0)))
-        }
-        OType::RowStatus => {
-            ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(ROW_STATUS_NOT_READY)))
-        }
-        OType::ObjectId => ObjectSyntax::Simple(SimpleSyntax::ObjectId(
-            ObjectIdentifier::new(&[0, 0]).unwrap(),
-        )),
-        OType::String | OType::Arbitrary => {
-            ObjectSyntax::Simple(SimpleSyntax::String(OctetString::from_static(b"")))
-        }
-        OType::Counter => {
-            ObjectSyntax::ApplicationWide(ApplicationSyntax::Counter(Counter32 { 0: 0 }))
-        }
-        OType::BigCounter => {
-            ObjectSyntax::ApplicationWide(ApplicationSyntax::BigCounter(Counter64(0)))
-        }
-        OType::Ticks => ObjectSyntax::ApplicationWide(ApplicationSyntax::Ticks(TimeTicks { 0: 0 })),
-        OType::Address => ObjectSyntax::ApplicationWide(ApplicationSyntax::Address(IpAddress {
-            0: FixedOctetString::<4>::new([0, 0, 0, 0]),
-        })),
-        OType::Unsigned => {
-            ObjectSyntax::ApplicationWide(ApplicationSyntax::Unsigned(Unsigned32 { 0: 0 }))
-        }
-    }
-}
 
 pub struct TableMemOid {
     rows: Vec<(Vec<u32>, Vec<ObjectSyntax>)>,
@@ -95,33 +61,33 @@ impl TableMemOid {
         for (n, index_column_number) in icols.iter().enumerate() {
             let col = &row[*index_column_number - 1];
             match col {
-                ObjectSyntax::Simple(os) => {
-                    match os { 
-                        SimpleSyntax::Integer(i) => {
-                    let iopt = i.to_i64().unwrap();
-                    let iu32: u32 = iopt.try_into().unwrap();
-                    ret.push(iu32);
-                 },
-                SimpleSyntax::String(s) => {
-                    if !implied_last || n < icols.len() - 1 {
-                        let sl: u32 = s.len().try_into().unwrap();
-                        ret.push(sl);
+                ObjectSyntax::Simple(os) => match os {
+                    SimpleSyntax::Integer(i) => {
+                        let iopt = i.to_i64().unwrap();
+                        let iu32: u32 = iopt.try_into().unwrap();
+                        ret.push(iu32);
                     }
-                    for i in s {
-                        let ir: u8 = *i;
-                        let ui32: u32 = ir.into();
-                        ret.push(ui32);
+                    SimpleSyntax::String(s) => {
+                        if !implied_last || n < icols.len() - 1 {
+                            let sl: u32 = s.len().try_into().unwrap();
+                            ret.push(sl);
+                        }
+                        for i in s {
+                            let ir: u8 = *i;
+                            let ui32: u32 = ir.into();
+                            ret.push(ui32);
+                        }
+                    }
+                    SimpleSyntax::ObjectId(o) => {
+                        if !implied_last || n < icols.len() - 1 {
+                            let ol: u32 = o.len().try_into().unwrap();
+                            ret.push(ol);
+                        }
+                        for ui32 in o.iter().copied() {
+                            ret.push(ui32);
+                        }
                     }
                 },
-                SimpleSyntax::ObjectId(o) => {
-                    if !implied_last || n < icols.len() - 1 {
-                        let ol: u32 = o.len().try_into().unwrap();
-                        ret.push(ol);
-                    }
-                    for ui32 in o.iter().copied() {
-                        ret.push(ui32);
-                    }
-                }}},
                 _ => {
                     // Could be address, which I haven't met yet
                     panic!("Unsupported type in index construction")
@@ -148,9 +114,11 @@ impl TableMemOid {
         let mut row: Vec<ObjectSyntax> = vec![];
         let mut idx_idx = 0;
         let num_idx_cols = self.index_cols.len();
-        for otype in &self.otypes {
-            row.push(defval(*otype));
+        // First populate with defaults
+        for item in &self.default_row {
+            row.push(item.clone());
         }
+        // Now, overwrite index columns
         for (n, index_column_number) in self.index_cols.iter().enumerate() {
             let col = self.otypes[*index_column_number - 1];
             match col {
@@ -199,32 +167,22 @@ impl TableMemOid {
                         ObjectIdentifier::new(arc).unwrap().to_owned(),
                     ));
                 }
-                /*      ObjectSyntax::Simple(SimpleSyntax::String(s)) => {
-                    if !implied_last || n < icols.len() - 1 {
-                        let sl: u32 = s.len().try_into().unwrap();
-                        ret.push(sl);
-                    }
-                    for i in s {
-                        let ir: u8 = *i;
-                        let ui32: u32 = ir.into();
-                        ret.push(ui32);
-                    }
-                }
-                ObjectSyntax::Simple(SimpleSyntax::ObjectId(o)) => {
-                    if !implied_last || n < icols.len() - 1 {
-                        let ol: u32 = o.len().try_into().unwrap();
-                        ret.push(ol);
-                    }
-                    for ui32 in o.iter().copied() {
-                        ret.push(ui32);
-                    }
-                }*/
                 _ => {
                     // Could be address, which I haven't met yet
                     panic!("Unsupported type in row construction from index")
                 }
             }
         }
+        // Mark row as not ready
+        for (n, otype) in self.otypes.iter().enumerate() {
+            if *otype == OType::RowStatus {
+                row[n] = ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(
+                    ROW_STATUS_NOT_READY,
+                )));
+            }
+        }
+        // Further set operations will change various columns, and eventually
+        // set the RowStatus to Active or Not In Service
         row
     }
 
@@ -393,19 +351,22 @@ impl OidKeeper for TableMemOid {
         let mut delete_me = false;
         let mut delete_idx: usize = 0;
         for row in &mut self.rows {
-            if index == row.0 {            
+            if index == row.0 {
                 if let VarBindValue::Value(new_value) = value.clone() {
                     if check_type(self.otypes[col - 1], &new_value) {
-                        if self.otypes[col - 1] == OType::RowStatus &&
-                        new_value == ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(
-                        ROW_STATUS_DESTROY,
-                    ))) {
-                        delete_me = true;
-                        break;
+                        if self.otypes[col - 1] == OType::RowStatus
+                            && new_value
+                                == ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(
+                                    ROW_STATUS_DESTROY,
+                                )))
+                        {
+                            delete_me = true;
+                            break;
+                        } else {
+                            row.1[col - 1] = new_value;
+                            return Ok(value);
+                        }
                     } else {
-                        row.1[col - 1] = new_value;
-                        return Ok(value);
-                    }} else {
                         return Err(OidErr::WrongType);
                     }
                 }

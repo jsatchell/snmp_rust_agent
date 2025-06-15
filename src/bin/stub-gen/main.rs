@@ -19,10 +19,6 @@ struct Cli {
     )]
     out_dir: String,
 
-    /// force everything to update!
-    #[argh(switch, short = 'a')]
-    force_all: bool,
-
     /// names of MIBs to process
     #[argh(positional)]
     mib_names: Vec<String>,
@@ -70,11 +66,11 @@ fn main() -> Result<(), Box<dyn Error>> {
        let path = entry.path();
        //if !path.ends_with("UDPF-MIB") {continue;}
        let text = //fs::read_to_string(&path).unwrap(); */
-    for argument in cli.mib_names {
+    for argument in &cli.mib_names {
         if argument.ends_with("mib-compiler-rs") {
             continue;
         }
-        let text_opt = importer::find_mib_text(&argument);
+        let text_opt = importer::find_mib_text(argument);
         if text_opt.is_none() {
             warn!("Not found MIB {argument}, skipping, will try rest");
             continue;
@@ -198,9 +194,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 &tcs,
                 &entries,
                 &object_ids,
-                &mib_name,
+                mib_name,
                 &cli.out_dir,
-                cli.force_all,
             );
             if compile_res.is_ok() {
                 success += 1;
@@ -210,5 +205,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     info!("{success} read out of {total}");
+    if gen_stub::loader(cli.mib_names).is_ok() {
+        info!("Wrote stub loader");
+    }
     Ok(())
 }

@@ -197,10 +197,11 @@ fn write_object_ids(out: &mut fs::File, object_ids: &[ObjectIdentity]) -> Result
         out.write_all(b"\n// These may be used as values rather than MIB addresses\n\n")?;
         for oid in object_ids {
             let uname = usnake(oid.name);
+            let uname_tr = uname.trim();
             let lname = lsnake(oid.name);
             out.write_all(format!("    let _oid_{lname}: ObjectIdentifier =\n").as_bytes())?;
             out.write_all(
-                format!("        ObjectIdentifier::new(&ARC_{uname}).unwrap();\n").as_bytes(),
+                format!("        ObjectIdentifier::new(&ARC_{uname_tr}).unwrap();\n").as_bytes(),
             )?;
             out.write_all(b"\n")?;
         }
@@ -269,7 +270,8 @@ fn fix_def(arg: &str, syntax: &str, tcs: &HashMap<&str, TextConvention>) -> Stri
         }
         if tc.syntax == "OBJECT IDENTIFIER" {
             let uarg = usnake(arg);
-            return format!("simple_from_vec(&ARC_{uarg})");
+            let uarg_tr = uarg.trim();
+            return format!("simple_from_vec(&ARC_{uarg_tr})");
         }
         if tc.syntax.starts_with("OCTET STRING") {
             let tend = arg.len() - 3;
@@ -300,8 +302,9 @@ fn fix_def(arg: &str, syntax: &str, tcs: &HashMap<&str, TextConvention>) -> Stri
         return format!("simple_from_int({arg})");
     }
     if syntax == "OBJECT IDENTIFIER" {
-        let uarg = usnake(arg);
-        return format!("simple_from_vec(&ARC_{uarg})");
+        let uarg_t = usnake(arg);
+        let uarg = uarg_t.trim();
+        return "simple_from_vec(&ARC_".to_owned() + uarg + ")";
     }
     warn!("Return DEFVAL {arg} {syntax} literal");
     arg.to_string()
@@ -335,10 +338,7 @@ fn write_table_struct(
         .collect();
     let acols = acols_vec.join(", ");
     //", ".join([ACCESS[object_types[name].access]  for (name, _) in entry.syntax]);
-    let cols: Vec<&str> = entry
-        .iter()
-        .map(|(_, x)| name_otype(*x))
-        .collect();
+    let cols: Vec<&str> = entry.iter().map(|(_, x)| name_otype(x)).collect();
     let cols_txt = cols.join(", ");
     //cols = [NAME_OTYPE[_[1].split()[0]] for _ in entry]
     let mut icol_data = vec![];
@@ -364,6 +364,7 @@ fn write_table_struct(
     //       for _ in index_list if e[0] == _]
     let lcols = cols.len();
     let uname = usnake(name);
+    let uname_tr = uname.trim();
     if child.descr.len() > 2 {
         out.write_all(slashb(child.descr).as_bytes())?;
     }
@@ -377,7 +378,7 @@ table: TableMemOid,
 impl {struct_name} {{
 fn new() -> Self {{
    let base_oid: ObjectIdentifier =
-       ObjectIdentifier::new(&ARC_{uname}).unwrap();
+       ObjectIdentifier::new(&ARC_{uname_tr}).unwrap();
 
    {struct_name} {{
        table: TableMemOid::new(
@@ -534,11 +535,12 @@ fn write_object_types(
             continue;
         }
         let uname = usnake(name);
+        let uname_tr = uname.trim();
         let lname = lsnake(name);
         let tname = title(name);
         out.write_all(format!("    let oid_{lname}: ObjectIdentifier =\n").as_bytes())?;
         out.write_all(
-            format!("        ObjectIdentifier::new(&ARC_{uname}).unwrap();\n").as_bytes(),
+            format!("        ObjectIdentifier::new(&ARC_{uname_tr}).unwrap();\n").as_bytes(),
         )?;
         out.write_all(format!("    let k_{lname}: Box<dyn OidKeeper> = \n").as_bytes())?;
         out.write_all(format!("       Box::new(Keep{tname}::new());\n").as_bytes())?;
@@ -555,7 +557,6 @@ pub fn gen_stub(
     object_ids: &[ObjectIdentity],
     mibname: &str,
     out_dir: &str,
-    force: bool,
 ) -> Result<(), Error> {
     //"""Actual code generation"""
     info!("MIB name is {mibname}");
@@ -563,21 +564,18 @@ pub fn gen_stub(
 
     base_name = base_name.replace("-", "_");
     let stub_name = out_dir.to_owned() + &base_name + "_stub.rs";
+    info!("Generated output would be in {stub_name}");
     let stub_ref = &stub_name;
     if fs::exists(stub_ref).is_ok() {
-        if force {
-            info!("Overwriting stub {stub_ref}");
-        } else {
-            info!("Not overwriting stub {stub_ref}");
-            return Ok(());
-        }
+        info!("Overwriting stub {stub_ref}");
+        //return Ok(());
     } else {
         info!("Writing new stub to {stub_ref}");
     }
     let mut out = fs::File::create(stub_name)?;
     let (cnts, tcks) = cnt_ticks(object_types, tcs, entries);
-   //let cnts = true;
-   //let tcks = true;
+    //let cnts = true;
+    //let tcks = true;
     let stub_start = r"
 use crate::keeper::oid_keep::{Access, OidErr, OidKeeper, OType};
 use crate::scalar::ScalarMemOid;
@@ -659,5 +657,29 @@ pub fn load_stub(oid_map: &mut OidMap) {
     write_object_types(&mut out, object_types)?;
     out.write_all(r"}".as_bytes())?;
     out.flush()?;
+    Ok(())
+}
+
+pub fn loader(mibfiles: Vec<String>) -> Result<(), Error> {
+    //"""Write master loader to src/stubs.rs"""
+    info!("Writing loader to src/stubs.rs {0:?}", mibfiles);
+    let mut src = fs::File::create("src/stubs.rs")?;
+    src.write_all(b"use crate::oidmap::OidMap;\n\n")?;
+    let mut stubs = vec![];
+    for mibname in mibfiles {
+        let mut base_name = mibname.split("-MIB").next().unwrap().to_lowercase();
+
+        base_name = base_name.replace("-", "_");
+        let stub_name = base_name + "_stub";
+        stubs.push(stub_name);
+    }
+    for stub in &stubs {
+        src.write_all(format!("mod {stub};\n").as_bytes())?;
+    }
+    src.write_all(b"\n\npub fn load_stubs(oid_map: &mut OidMap) {\n")?;
+    for stub in &stubs {
+        src.write_all(format!("    {stub}::load_stub(oid_map);\n").as_bytes())?;
+    }
+    src.write_all(b"}\n")?;
     Ok(())
 }
