@@ -106,10 +106,6 @@ impl TableMemOid {
         }
     }
 
-    pub fn row_count(&self) -> usize {
-        self.rows.len()
-    }
-
     fn row_from_index(&self, idx: &[u32]) -> Vec<ObjectSyntax> {
         let mut row: Vec<ObjectSyntax> = vec![];
         let mut idx_idx = 0;
@@ -354,14 +350,27 @@ impl OidKeeper for TableMemOid {
             if index == row.0 {
                 if let VarBindValue::Value(new_value) = value.clone() {
                     if check_type(self.otypes[col - 1], &new_value) {
-                        if self.otypes[col - 1] == OType::RowStatus
-                            && new_value
+                        if self.otypes[col - 1] == OType::RowStatus {
+                            if new_value
                                 == ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(
                                     ROW_STATUS_DESTROY,
                                 )))
-                        {
-                            delete_me = true;
-                            break;
+                            {
+                                delete_me = true;
+                                break;
+                            } else if new_value
+                                == ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(
+                                    ROW_STATUS_ACTIVE,
+                                )))
+                                || new_value
+                                    == ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(
+                                        ROW_STATUS_NOT_IN_SERVICE,
+                                    )))
+                            {
+                                return Ok(value);
+                            } else {
+                                return Err(OidErr::WrongType);
+                            }
                         } else {
                             row.1[col - 1] = new_value;
                             return Ok(value);
@@ -496,26 +505,24 @@ mod tests {
     #[test]
     fn test_add_row() {
         let mut tab = tab_fixture();
-        assert_eq!(tab.row_count(), 2);
+        assert_eq!(tab.rows.len(), 2);
         let s6 = simple_from_int(6);
         let s37 = simple_from_int(37);
         let row = vec![s6, s37];
         tab.add_row(&row);
-        assert_eq!(tab.row_count(), 3);
+        assert_eq!(tab.rows.len(), 3);
     }
 
     #[test]
     fn test_create_and_wait() {
         let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap();
         let oid3: ObjectIdentifier = ObjectIdentifier::new(&ARC3).unwrap();
-        let s0 = simple_from_int(0);
+        let s1 = simple_from_int(1);
         let nr = simple_from_int(4);
-        let s41 = simple_from_int(41);
-        let s4 = simple_from_int(4);
         let s5 = simple_from_int(5);
         let mut tab = TableMemOid::new(
             vec![],
-            vec![s0.clone(), nr.clone()],
+            vec![s1.clone(), nr.clone()],
             2,
             &oid2,
             vec![OType::Integer, OType::RowStatus],
@@ -523,12 +530,14 @@ mod tests {
             vec![1usize],
             false,
         );
-        assert_eq!(tab.row_count(), 0);
+        assert_eq!(tab.rows.len(), 0);
         let set_res = tab.set(oid3.clone(), VarBindValue::Value(s5.clone()));
         assert!(set_res.is_ok());
-        assert_eq!(tab.row_count(), 1);
-        let set_res = tab.set(oid3.clone(), VarBindValue::Value(s0.clone()));
+        assert_eq!(tab.rows.len(), 1);
+        let set_res = tab.set(oid3.clone(), VarBindValue::Value(s1.clone()));
         assert!(set_res.is_ok());
-        assert_eq!(tab.row_count(), 1);
+        assert_eq!(tab.rows.len(), 1);
+        let set_res = tab.set(oid3.clone(), VarBindValue::Value(nr.clone()));
+        assert_eq!(set_res, Err(OidErr::WrongType))
     }
 }
