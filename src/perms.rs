@@ -1,11 +1,24 @@
-// Minimal interim permissions model
-//
-// Radically simpler than the full VACM model!
+//! Minimal interim permissions model
+//!
+//! Radically simpler than the full VACM model!
+//!
+//! The permissions are read in from the file "groups.txt".
+//!
+//! This has a line per group. There are four entries per line:
+//! * read permission ("t" or "f")
+//! * write permission ("t" or "f")
+//! * security level (1-3), where 1 is noAuth, 2 is AuthNoPriv, and 3 is AuthPriv
+//! * group name
+//!
+//! The big difference from the VACM model is these permissions are global, rather than confined
+//! to specific OIDs, and there is no provision to change them, except by editing groups.txt
 use rasn::types::ObjectIdentifier;
 use regex::Regex;
 use std::fs::read_to_string;
 use std::str::FromStr;
 
+/// Associates a group name with read and write permissions for a
+/// given security level.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Perm {
     pub read: bool,
@@ -51,6 +64,7 @@ impl Perm {
     }
 }
 
+/// Read "groups.txt" and return group definitions.
 pub fn load_perms() -> Vec<Perm> {
     let mut perms = Vec::new();
     for line in read_to_string("groups.txt").unwrap().lines() {

@@ -1,4 +1,4 @@
-use crate::keeper::oid_keep::{check_type, Access, OType, OidErr, OidKeeper};
+use crate::keeper::{check_type, Access, OType, OidErr, OidKeeper};
 use log::{debug, warn};
 use num_traits::cast::ToPrimitive;
 use rasn::types::{Integer, ObjectIdentifier, OctetString};

@@ -1,11 +1,10 @@
-/*mod engine_id;
-pub mod keeper;
-pub mod oidmap;
-mod privacy;
-mod usm;*/
+//! Implementation of Agent
+//!
+//! Agent is the basic run time service.  See main.rs for a simple example of how
+//! it might be used.
 
 pub use crate::engine_id::snmp_engine_id;
-use crate::keeper::oid_keep::OidErr;
+use crate::keeper::OidErr;
 use crate::oidmap::OidMap;
 use crate::perms::Perm;
 use crate::privacy;
@@ -125,6 +124,7 @@ impl Agent {
         message
     }
 
+    /// Internal method that builds response packets.
     fn prepare_back(
         &self,
         message_id: Integer,

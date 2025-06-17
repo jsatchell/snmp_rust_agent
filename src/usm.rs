@@ -1,10 +1,27 @@
-//use hex;
+//! User module
+//!
+//! This only implements a very restricted subset of RFC3414.
+//!
+//! The user data is read from a file called "users.txt", one line per user.
+//!
+//! The fields on the line are:
+//! * the username (no spaces!)
+//! * the group name of the user (must match a name in groups.txt, see perms module)
+//! * the hash type in use. Currently only sha1 is accepted here.
+//! * the localised authentication hahs
+//! * the privacy type (only aes alllowed)
+//! * the localised privacy hash
+//!
+//!
+use crate::perms::Perm;
 use regex::Regex;
 use sha1::{Digest, Sha1};
 use std::fs::read_to_string;
-//use std::str::FromStr;
-use crate::perms::Perm;
 
+/// User struct holds data about user.
+/// 
+/// Contains localised hashes, and pre calculated values for k1 and k2, used
+/// in generating the checksums.
 #[derive(Debug, PartialEq)]
 pub struct User<'a> {
     pub group: Vec<u8>,
@@ -20,6 +37,10 @@ pub struct User<'a> {
 pub struct ParseUserError;
 
 impl<'a> User<'a> {
+    /// Create a User from a line in the file
+    /// 
+    /// Will throw ParseUserError on problems.
+    /// User group name (the second item on the line) must match a group in perms
     fn from_str(s: &str, perms: &'a Vec<Perm>) -> Result<Self, ParseUserError> {
         if perms.is_empty() {
             return Err(ParseUserError);
@@ -30,7 +51,7 @@ impl<'a> User<'a> {
 
         let captures = re.captures(s).ok_or(ParseUserError)?;
 
-        // Change this when we support additional hash types from RFC7360
+        // Change this when we support additional hash types from RFC7630
         if captures["hash"] != *"sha1" {
             return Err(ParseUserError);
         }
@@ -53,6 +74,9 @@ impl<'a> User<'a> {
         Err(ParseUserError)
     }
 
+    /// Calculate the HMAC checksum from the data.
+    /// 
+    /// Will need to be templated or parameterised to support RFC7630
     pub fn auth_from_bytes(&self, data: &[u8]) -> Vec<u8> {
         let mut hasher = Sha1::new();
         hasher.update(self.k1);
@@ -96,6 +120,7 @@ fn read_lines(filename: &str) -> Vec<String> {
     result
 }
 
+/// Load user definitions from "users.txt"
 pub fn load_users(perms: &Vec<Perm>) -> Vec<User<'_>> {
     let lines = read_lines("users.txt");
     let mut users = Vec::new();
