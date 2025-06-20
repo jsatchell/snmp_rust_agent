@@ -19,7 +19,7 @@ use sha1::{Digest, Sha1};
 use std::fs::read_to_string;
 
 /// User struct holds data about user.
-/// 
+///
 /// Contains localised hashes, and pre calculated values for k1 and k2, used
 /// in generating the checksums.
 #[derive(Debug, PartialEq)]
@@ -38,7 +38,7 @@ pub struct ParseUserError;
 
 impl<'a> User<'a> {
     /// Create a User from a line in the file
-    /// 
+    ///
     /// Will throw ParseUserError on problems.
     /// User group name (the second item on the line) must match a group in perms
     fn from_str(s: &str, perms: &'a Vec<Perm>) -> Result<Self, ParseUserError> {
@@ -75,7 +75,7 @@ impl<'a> User<'a> {
     }
 
     /// Calculate the HMAC checksum from the data.
-    /// 
+    ///
     /// Will need to be templated or parameterised to support RFC7630
     pub fn auth_from_bytes(&self, data: &[u8]) -> Vec<u8> {
         let mut hasher = Sha1::new();

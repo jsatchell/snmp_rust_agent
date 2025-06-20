@@ -681,7 +681,9 @@ pub fn loader(mibfiles: Vec<String>) -> Result<(), Error> {
     for stub in &stubs {
         src.write_all(format!("mod {stub};\n").as_bytes())?;
     }
-    src.write_all(b"\n\n///Generated function to load all stubs\npub fn load_stubs(oid_map: &mut OidMap) {\n")?;
+    src.write_all(
+        b"\n\n///Generated function to load all stubs\npub fn load_stubs(oid_map: &mut OidMap) {\n",
+    )?;
     for stub in &stubs {
         src.write_all(format!("    {stub}::load_stub(oid_map);\n").as_bytes())?;
     }
