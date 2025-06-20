@@ -2,7 +2,7 @@
 
 This is preliminary work towards a framework for developing SNMP v3 agents, using the rasn ASN-1 library for decoding the on the wire data. While a manager (effectively a client) has to support a range of legacy agents, an agent (e.g. server) can offer a subset of features and still be useful.
 
-This agent only support SNMP v3.
+This agent only supports SNMP v3.
 
 The standards define the use of horrible old crypto types like single DES for privacy, and MD5 in the authentication. The code currently supports HMAC-SHA-1-96 and AES-128; stronger hashes from RFC7360 are planned for the future. There is no agreed standard for stronger ciphers. It is not clear that using stronger hash functions or ciphers will deliver significant advantages in practice. The well known collision weakness of SHA-1 is not a problem in an HMAC application.
 
@@ -10,14 +10,15 @@ The agent server loop is a single threaded blocking design. I would argue that t
 
 At present, there is a simplistic permissions model, and some real world applications will need more than that. Coming real soon. It may not be RFC view action model, as that seems complex, and the facility to dynamically change the permissions model remotely is not often implemented. Instead, some sort of compile time model seems more appropriate to the sort of boxes that run agents.
 
-The Engine ID is currently a constant in the source. It should be loaded from a configuration file.
+In this release the Engine ID is loaded from a configuration file. A sample configuration file is included at .snmp-agent.conf.
 
 There is no support for notifications so far.
 
 There is no explicit support for Module Compliance.
 
 ## Users and passwords
-There is a small python tool for generating a username and password file under tools/usekey.py. If you change the Engine ID in the agent source, you will need to make a matching change here.
+There is a small python tool for generating a username and password file under tools/usekey.py. It picks the EngineID up
+from the configuration file.
 
 Changing passwords on the wire is not yet implemented, and would be a really good project.
 
@@ -46,3 +47,23 @@ The generated stubs will be placed under src/stubs/.
 If you want the agent to do something useful, you need to write your own back-end implementations.The generated stubs are placed in the src/stubs/ directory. The basic idea is to associate instances that support the OidKeeper trait with the OID value or values that they support in the OidMap. This is populated and then the agent loop_forever() runs.
 
 Two toy implementations of the OidKeeper trait are provided by way of example, both purely memory based. One is for scalars, and the other is a limited table mode. Set can change cell values in existing rows. New rows can be created by the CreateAndWait mechanism if there is a RowStatus column in the table, and destroyed by Destroy. If you change the value of index cells, the results may be puzzling. If the MIB is correctly structured, teh permissions checks should stop you making that mistake. The generated stub implementations just wrap the toy struct types, and need to be replaced by real actions.
+
+## Trying it out
+Edit the configuration file .snmp-agent.conf, and insert your Enterprise number and other details.
+
+Create a password file called users.txt, using python3 tools/usekey.py. For example,
+
+```shell
+python3 tools/usekey.py admin myv3user password password1
+```
+
+Optionally, edit groups.txt.
+
+Set a suitable log level with, for example, export RUST_LOG=info.
+
+Run the agent with cargo run.
+
+Install netsnmp for testing purposes, and run in another terminal:
+'''shell
+snmpwalk -v 3 -l authPriv -a SHA -A password  -x AES -X password1 -u myv3user   127.0.0.1:2161 1.3.6.1 1.3.6.1.6.3
+'''

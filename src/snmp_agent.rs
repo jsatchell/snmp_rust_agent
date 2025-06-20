@@ -3,7 +3,7 @@
 //! Agent is the basic run time service.  See main.rs for a simple example of how
 //! it might be used.
 
-pub use crate::engine_id::snmp_engine_id;
+//pub use crate::engine_id;
 use crate::keeper::OidErr;
 use crate::oidmap::OidMap;
 use crate::perms::Perm;

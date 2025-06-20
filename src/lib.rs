@@ -81,6 +81,7 @@
 //! the permissions checks should stop you making that mistake. The generated stub implementations
 //! just wrap the toy struct types, and need to be replaced by real actions.
 
+pub mod config;
 mod engine_id;
 pub mod keeper;
 pub mod oidmap;

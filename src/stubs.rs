@@ -3,9 +3,8 @@
 //! Do not edit - it will be over-written next time you run stub-gen
 use crate::oidmap::OidMap;
 
-mod snmpv2_stub;
 mod snmp_user_based_sm_stub;
-
+mod snmpv2_stub;
 
 ///Generated function to load all stubs
 pub fn load_stubs(oid_map: &mut OidMap) {
