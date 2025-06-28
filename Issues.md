@@ -12,11 +12,14 @@
   * Permission Errors (in some cases)
   * Wrong encoding / size
 * Tests - Started
-  * Keeper - OK
-  * Usm - 2
+  * Table - 5
+  * Scalar - 4
+  * Usm - 4
+  * Config - 1
   * Privacy - no test cases in RFCs.
-  * Agent  Hardest, needs mocks etc.
-* Debug /Fix snmpwalk  - done?
+  * Agent -  Hardest, needs mocks etc.
+  * Engine ID - 3
+* Debug /Fix Getnext so snmpwalk works - done?
 * Table model
   * Integer indices in column 1 - Done
     * Get - Done
@@ -26,29 +29,31 @@
   * Default Values - mostly done
   * Augment tables - FIXME - wrong implementation, needs Rust support to do right, do after MVP
   * Row management via row status column
-    * Delete
-    * Active / "not in service" switching
-    * Create and Wait
-    * Create and Go
+    * Delete - Done
+    * Active / "not in service" switching - Done
+    * Create and Wait - Done
+    * Create and Go - After MVP
   * Extra errors - done except for permissions / read-only
 * Change from trait enum to trait objects. Done.
 * Rough outline of MiB compiler / code generator - Started
 * Using logging rather than println! - Done
-* Simplistic permissions model
-* Get-bulk - Done, but error handling is hope and wishful thinking
+* Simplistic permissions model - Done, maybe too simple!
+* Get-bulk - Done, but error handling is hope and wishful thinking 
 * Remote user support as example of table model
 * Refactor into library plus example(s) - Done
-* Refactor compiler using classes
+* Refactor compiler using classes - Won't do, rust / nom compiler is now main line.
+* At least two MIB fairly complete implementations that are not just stubs:
+  * SNMPv2
+  * SNMP-USER-BASED-SM
 
 ## After MVP
 
 * no panics in run time loop
-* more hash / cipher choices (at least SHA-256, AES-256) - RFC 7630
+* more hash / cipher choices (at least SHA-256, maybe AES-256, but no standard) - RFC 7630
 * View model and user mapping to views
 * Multiple contexts - separate Oid maps?
 * Traps / Informs
 * Augments support in compiler and Rust code
+* 
 
-## Blue Sky
 
-* Proper MIB compiler, using nom!

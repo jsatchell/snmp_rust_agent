@@ -47,11 +47,12 @@ fn get_increment_boot_cnt() -> isize {
 pub struct Agent {
     socket: UdpSocket,
     engine_id: OctetString,
-    start_time: Instant,
+    pub start_time: Instant,
     boots: isize,
-    in_pkts: u64,
-    unknown_engine_ids: u32,
-    decode_error_cnt: u32,
+    pub in_pkts: u64,
+    pub unknown_engine_ids: u32,
+    pub decode_error_cnt: u32,
+    pub decryption_errors: u32,
 }
 
 impl Agent {
@@ -74,6 +75,7 @@ impl Agent {
             in_pkts: 0u64,
             unknown_engine_ids: 0u32,
             decode_error_cnt: 0u32,
+            decryption_errors: 0u32,
         }
     }
 
@@ -740,6 +742,7 @@ impl Agent {
                         rasn::ber::decode(&buf2);
                     if pdu_decode_res.is_err() {
                         // Should return decode error
+                        self.decryption_errors += 1;
                         warn!("Decode error {pdu_decode_res:?}");
                         continue;
                     }

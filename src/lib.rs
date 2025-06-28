@@ -83,6 +83,7 @@
 
 pub mod config;
 mod engine_id;
+pub mod handlers;
 pub mod keeper;
 pub mod oidmap;
 pub mod perms;

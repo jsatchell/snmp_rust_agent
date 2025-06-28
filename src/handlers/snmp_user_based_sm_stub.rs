@@ -1,6 +1,8 @@
+use crate::config::Config;
 use crate::keeper::{Access, OType, OidErr, OidKeeper};
 use crate::oidmap::OidMap;
-use crate::scalar::ScalarMemOid;
+use crate::scalar::{PersistentScalar, ScalarMemOid};
+use crate::snmp_agent::Agent;
 use crate::table::TableMemOid;
 use rasn::types::{Integer, ObjectIdentifier, OctetString};
 
@@ -43,6 +45,9 @@ const ARC_USM_NO_PRIV_PROTOCOL: [u32; 10] = [1, 3, 6, 1, 6, 3, 10, 1, 2, 1];
 const ARC_USM_DES_PRIV_PROTOCOL: [u32; 10] = [1, 3, 6, 1, 6, 3, 10, 1, 2, 2];
 const ARC_SNMP_AUTH_PROTOCOLS: [u32; 9] = [1, 3, 6, 1, 6, 3, 10, 1, 1];
 const ARC_SNMP_PRIV_PROTOCOLS: [u32; 9] = [1, 3, 6, 1, 6, 3, 10, 1, 2];
+
+// From RFC 3826
+const ARC_USM_AES_CFB_128_PRIV_PROTOCOL: [u32; 10] = [1, 3, 6, 1, 6, 3, 10, 1, 2, 4];
 
 // Now the OBJECT-TYPES. These need actual code added to the stubs
 
@@ -87,13 +92,19 @@ impl OidKeeper for KeepUsmStatsUnknownUserNames {
 //
 
 struct KeepUsmUserSpinLock {
-    scalar: ScalarMemOid,
+    scalar: PersistentScalar,
 }
 
 impl KeepUsmUserSpinLock {
-    fn new() -> Self {
+    fn new(config: &Config) -> Self {
+        let file_name: String = config.storage_path.clone() + "/usm_user_spin_lock";
         KeepUsmUserSpinLock {
-            scalar: ScalarMemOid::new(simple_from_int(4), OType::Integer, Access::ReadWrite),
+            scalar: PersistentScalar::new(
+                simple_from_int(4),
+                OType::Integer,
+                Access::ReadWrite,
+                file_name,
+            ),
         }
     }
 }
@@ -155,13 +166,13 @@ impl OidKeeper for KeepUsmStatsWrongDigests {
 //
 
 struct KeepUsmStatsDecryptionErrors {
-    scalar: ScalarMemOid,
+    err_cnt: u32,
 }
 
 impl KeepUsmStatsDecryptionErrors {
-    fn new() -> Self {
+    fn new(agent: &Agent) -> Self {
         KeepUsmStatsDecryptionErrors {
-            scalar: ScalarMemOid::new(counter_from_int(0), OType::Counter, Access::ReadOnly),
+            err_cnt: agent.decryption_errors,
         }
     }
 }
@@ -170,17 +181,22 @@ impl OidKeeper for KeepUsmStatsDecryptionErrors {
     fn is_scalar(&self, _oid: ObjectIdentifier) -> bool {
         true
     }
-    fn get(&self, oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {
-        self.scalar.get(oid)
+    fn get(&self, _oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {
+        let value: i32 = self.err_cnt.try_into().unwrap_or(i32::MAX);
+        Ok(VarBindValue::Value(simple_from_int(value)))
     }
-    fn get_next(&self, oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
-        self.scalar.get_next(oid)
+    fn get_next(&self, _oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
+        Err(OidErr::OutOfRange)
     }
-    fn access(&self, oid: ObjectIdentifier) -> Access {
-        self.scalar.access(oid)
+    fn access(&self, _oid: ObjectIdentifier) -> Access {
+        Access::ReadOnly
     }
-    fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
-        self.scalar.set(oid, value)
+    fn set(
+        &mut self,
+        _oid: ObjectIdentifier,
+        _value: VarBindValue,
+    ) -> Result<VarBindValue, OidErr> {
+        Err(OidErr::NotWritable)
     }
 }
 // The total number of packets received by the SNMP
@@ -388,7 +404,7 @@ impl OidKeeper for KeepUsmUserTable {
     }
 }
 
-pub fn load_stub(oid_map: &mut OidMap) {
+pub fn load_stub(oid_map: &mut OidMap, config: &Config, agent: &Agent) {
     // The next group is for OBJECT-IDENTITY.
 
     // These may be used as values rather than MIB addresses
@@ -408,6 +424,9 @@ pub fn load_stub(oid_map: &mut OidMap) {
     let _oid_usm_des_priv_protocol: ObjectIdentifier =
         ObjectIdentifier::new(&ARC_USM_DES_PRIV_PROTOCOL).unwrap();
 
+    let _oid_usm_aes_cfb_128_priv_protocol: ObjectIdentifier =
+        ObjectIdentifier::new(&ARC_USM_AES_CFB_128_PRIV_PROTOCOL).unwrap();
+
     let _oid_snmp_auth_protocols: ObjectIdentifier =
         ObjectIdentifier::new(&ARC_SNMP_AUTH_PROTOCOLS).unwrap();
 
@@ -416,6 +435,7 @@ pub fn load_stub(oid_map: &mut OidMap) {
 
     let oid_usm_stats_unknown_user_names: ObjectIdentifier =
         ObjectIdentifier::new(&ARC_USM_STATS_UNKNOWN_USER_NAMES).unwrap();
+
     let k_usm_stats_unknown_user_names: Box<dyn OidKeeper> =
         Box::new(KeepUsmStatsUnknownUserNames::new());
     oid_map.push(
@@ -424,7 +444,7 @@ pub fn load_stub(oid_map: &mut OidMap) {
     );
     let oid_usm_user_spin_lock: ObjectIdentifier =
         ObjectIdentifier::new(&ARC_USM_USER_SPIN_LOCK).unwrap();
-    let k_usm_user_spin_lock: Box<dyn OidKeeper> = Box::new(KeepUsmUserSpinLock::new());
+    let k_usm_user_spin_lock: Box<dyn OidKeeper> = Box::new(KeepUsmUserSpinLock::new(config));
     oid_map.push(oid_usm_user_spin_lock, k_usm_user_spin_lock);
     let oid_usm_stats_wrong_digests: ObjectIdentifier =
         ObjectIdentifier::new(&ARC_USM_STATS_WRONG_DIGESTS).unwrap();
@@ -433,7 +453,7 @@ pub fn load_stub(oid_map: &mut OidMap) {
     let oid_usm_stats_decryption_errors: ObjectIdentifier =
         ObjectIdentifier::new(&ARC_USM_STATS_DECRYPTION_ERRORS).unwrap();
     let k_usm_stats_decryption_errors: Box<dyn OidKeeper> =
-        Box::new(KeepUsmStatsDecryptionErrors::new());
+        Box::new(KeepUsmStatsDecryptionErrors::new(agent));
     oid_map.push(
         oid_usm_stats_decryption_errors,
         k_usm_stats_decryption_errors,

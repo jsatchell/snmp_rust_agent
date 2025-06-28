@@ -1,6 +1,10 @@
+use std::time::Instant;
+
+use crate::config::Config;
 use crate::keeper::{Access, OType, OidErr, OidKeeper};
 use crate::oidmap::OidMap;
 use crate::scalar::ScalarMemOid;
+use crate::snmp_agent::Agent;
 use crate::table::TableMemOid;
 use rasn::types::{Integer, ObjectIdentifier, OctetString};
 
@@ -12,8 +16,8 @@ fn simple_from_int(value: i32) -> ObjectSyntax {
     ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(value)))
 }
 
-fn simple_from_str(value: &'static [u8]) -> ObjectSyntax {
-    ObjectSyntax::Simple(SimpleSyntax::String(OctetString::from_static(value)))
+fn simple_from_str(value: &[u8]) -> ObjectSyntax {
+    ObjectSyntax::Simple(SimpleSyntax::String(OctetString::copy_from_slice(value)))
 }
 
 fn simple_from_vec(value: &'static [u32]) -> ObjectSyntax {
@@ -342,7 +346,7 @@ struct KeepSysServices {
 impl KeepSysServices {
     fn new() -> Self {
         KeepSysServices {
-            scalar: ScalarMemOid::new(simple_from_int(4), OType::Integer, Access::ReadOnly),
+            scalar: ScalarMemOid::new(simple_from_int(72), OType::Integer, Access::ReadOnly),
         }
     }
 }
@@ -403,13 +407,13 @@ impl OidKeeper for KeepSnmpInBadValues {
 // re-initialized.
 
 struct KeepSysUpTime {
-    scalar: ScalarMemOid,
+    start: Instant,
 }
 
 impl KeepSysUpTime {
-    fn new() -> Self {
+    fn new(agent: &Agent) -> Self {
         KeepSysUpTime {
-            scalar: ScalarMemOid::new(ticks_from_int(0), OType::Ticks, Access::ReadOnly),
+            start: agent.start_time,
         }
     }
 }
@@ -418,17 +422,23 @@ impl OidKeeper for KeepSysUpTime {
     fn is_scalar(&self, _oid: ObjectIdentifier) -> bool {
         true
     }
-    fn get(&self, oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {
-        self.scalar.get(oid)
+    fn get(&self, _oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {
+        let up = self.start.elapsed().as_millis() / 10;
+        let value = up.try_into().unwrap_or(i32::MAX);
+        Ok(VarBindValue::Value(simple_from_int(value)))
     }
-    fn get_next(&self, oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
-        self.scalar.get_next(oid)
+    fn get_next(&self, _oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
+        Err(OidErr::OutOfRange)
     }
-    fn access(&self, oid: ObjectIdentifier) -> Access {
-        self.scalar.access(oid)
+    fn access(&self, _oid: ObjectIdentifier) -> Access {
+        Access::ReadOnly
     }
-    fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
-        self.scalar.set(oid, value)
+    fn set(
+        &mut self,
+        _oid: ObjectIdentifier,
+        _value: VarBindValue,
+    ) -> Result<VarBindValue, OidErr> {
+        Err(OidErr::NotWritable)
     }
 }
 // The total number of SNMP PDUs which were
@@ -586,9 +596,9 @@ impl KeepSysORTable {
         KeepSysORTable {
             table: TableMemOid::new(
                 vec![vec![
-                    simple_from_int(4),
-                    simple_from_vec(&[1, 3, 6, 1]),
-                    simple_from_str(b"b"),
+                    simple_from_int(1),
+                    simple_from_vec(&[1, 3, 6, 1, 2, 1]),
+                    simple_from_str(b"SNMPv2-MIB"),
                     ticks_from_int(0),
                 ]],
                 vec![
@@ -640,9 +650,13 @@ struct KeepSysContact {
 }
 
 impl KeepSysContact {
-    fn new() -> Self {
+    fn new(config: &Config) -> Self {
         KeepSysContact {
-            scalar: ScalarMemOid::new(simple_from_str(b"b"), OType::String, Access::ReadWrite),
+            scalar: ScalarMemOid::new(
+                simple_from_str(config.contact.as_bytes()),
+                OType::String,
+                Access::ReadWrite,
+            ),
         }
     }
 }
@@ -834,7 +848,11 @@ struct KeepSysDescr {
 impl KeepSysDescr {
     fn new() -> Self {
         KeepSysDescr {
-            scalar: ScalarMemOid::new(simple_from_str(b"b"), OType::String, Access::ReadOnly),
+            scalar: ScalarMemOid::new(
+                simple_from_str(b"snmp-rust-agent 0.1.4a"),
+                OType::String,
+                Access::ReadOnly,
+            ),
         }
     }
 }
@@ -932,13 +950,13 @@ impl OidKeeper for KeepSysORLastChange {
 // the SNMP entity when decoding received SNMP messages.
 
 struct KeepSnmpInASNParseErrs {
-    scalar: ScalarMemOid,
+    err_cnt: u32,
 }
 
 impl KeepSnmpInASNParseErrs {
-    fn new() -> Self {
+    fn new(agent: &Agent) -> Self {
         KeepSnmpInASNParseErrs {
-            scalar: ScalarMemOid::new(counter_from_int(0), OType::Counter, Access::ReadOnly),
+            err_cnt: agent.decode_error_cnt,
         }
     }
 }
@@ -947,17 +965,22 @@ impl OidKeeper for KeepSnmpInASNParseErrs {
     fn is_scalar(&self, _oid: ObjectIdentifier) -> bool {
         true
     }
-    fn get(&self, oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {
-        self.scalar.get(oid)
+    fn get(&self, _oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {
+        let value = self.err_cnt.try_into().unwrap();
+        Ok(VarBindValue::Value(simple_from_int(value)))
     }
-    fn get_next(&self, oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
-        self.scalar.get_next(oid)
+    fn get_next(&self, _oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
+        Err(OidErr::OutOfRange)
     }
-    fn access(&self, oid: ObjectIdentifier) -> Access {
-        self.scalar.access(oid)
+    fn access(&self, _oid: ObjectIdentifier) -> Access {
+        Access::ReadOnly
     }
-    fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
-        self.scalar.set(oid, value)
+    fn set(
+        &mut self,
+        _oid: ObjectIdentifier,
+        _value: VarBindValue,
+    ) -> Result<VarBindValue, OidErr> {
+        Err(OidErr::NotWritable)
     }
 }
 // The total number of SNMP PDUs which were
@@ -1143,7 +1166,7 @@ struct KeepSnmpEnableAuthenTraps {
 impl KeepSnmpEnableAuthenTraps {
     fn new() -> Self {
         KeepSnmpEnableAuthenTraps {
-            scalar: ScalarMemOid::new(simple_from_int(4), OType::Integer, Access::ReadWrite),
+            scalar: ScalarMemOid::new(simple_from_int(0), OType::Integer, Access::ReadWrite),
         }
     }
 }
@@ -1176,7 +1199,11 @@ struct KeepSysLocation {
 impl KeepSysLocation {
     fn new() -> Self {
         KeepSysLocation {
-            scalar: ScalarMemOid::new(simple_from_str(b"b"), OType::String, Access::ReadWrite),
+            scalar: ScalarMemOid::new(
+                simple_from_str(b"Living room"),
+                OType::String,
+                Access::ReadWrite,
+            ),
         }
     }
 }
@@ -1476,9 +1503,13 @@ struct KeepSysName {
 }
 
 impl KeepSysName {
-    fn new() -> Self {
+    fn new(config: &Config) -> Self {
         KeepSysName {
-            scalar: ScalarMemOid::new(simple_from_str(b"b"), OType::String, Access::ReadWrite),
+            scalar: ScalarMemOid::new(
+                simple_from_str(config.fqdn.as_bytes()),
+                OType::String,
+                Access::ReadWrite,
+            ),
         }
     }
 }
@@ -1572,7 +1603,7 @@ impl OidKeeper for KeepSnmpOutTraps {
     }
 }
 
-pub fn load_stub(oid_map: &mut OidMap) {
+pub fn load_stub(oid_map: &mut OidMap, config: &Config, agent: &Agent) {
     let oid_snmp_in_get_nexts: ObjectIdentifier =
         ObjectIdentifier::new(&ARC_SNMP_IN_GET_NEXTS).unwrap();
     let k_snmp_in_get_nexts: Box<dyn OidKeeper> = Box::new(KeepSnmpInGetNexts::new());
@@ -1607,7 +1638,7 @@ pub fn load_stub(oid_map: &mut OidMap) {
     let k_snmp_in_bad_values: Box<dyn OidKeeper> = Box::new(KeepSnmpInBadValues::new());
     oid_map.push(oid_snmp_in_bad_values, k_snmp_in_bad_values);
     let oid_sys_up_time: ObjectIdentifier = ObjectIdentifier::new(&ARC_SYS_UP_TIME).unwrap();
-    let k_sys_up_time: Box<dyn OidKeeper> = Box::new(KeepSysUpTime::new());
+    let k_sys_up_time: Box<dyn OidKeeper> = Box::new(KeepSysUpTime::new(agent));
     oid_map.push(oid_sys_up_time, k_sys_up_time);
     let oid_snmp_in_no_such_names: ObjectIdentifier =
         ObjectIdentifier::new(&ARC_SNMP_IN_NO_SUCH_NAMES).unwrap();
@@ -1627,7 +1658,7 @@ pub fn load_stub(oid_map: &mut OidMap) {
     let k_sys_or_table: Box<dyn OidKeeper> = Box::new(KeepSysORTable::new());
     oid_map.push(oid_sys_or_table, k_sys_or_table);
     let oid_sys_contact: ObjectIdentifier = ObjectIdentifier::new(&ARC_SYS_CONTACT).unwrap();
-    let k_sys_contact: Box<dyn OidKeeper> = Box::new(KeepSysContact::new());
+    let k_sys_contact: Box<dyn OidKeeper> = Box::new(KeepSysContact::new(config));
     oid_map.push(oid_sys_contact, k_sys_contact);
     let oid_snmp_in_gen_errs: ObjectIdentifier =
         ObjectIdentifier::new(&ARC_SNMP_IN_GEN_ERRS).unwrap();
@@ -1663,7 +1694,7 @@ pub fn load_stub(oid_map: &mut OidMap) {
     oid_map.push(oid_sys_or_last_change, k_sys_or_last_change);
     let oid_snmp_in_asn_parse_errs: ObjectIdentifier =
         ObjectIdentifier::new(&ARC_SNMP_IN_ASN_PARSE_ERRS).unwrap();
-    let k_snmp_in_asn_parse_errs: Box<dyn OidKeeper> = Box::new(KeepSnmpInASNParseErrs::new());
+    let k_snmp_in_asn_parse_errs: Box<dyn OidKeeper> = Box::new(KeepSnmpInASNParseErrs::new(agent));
     oid_map.push(oid_snmp_in_asn_parse_errs, k_snmp_in_asn_parse_errs);
     let oid_snmp_in_too_bigs: ObjectIdentifier =
         ObjectIdentifier::new(&ARC_SNMP_IN_TOO_BIGS).unwrap();
@@ -1724,7 +1755,7 @@ pub fn load_stub(oid_map: &mut OidMap) {
     let k_snmp_in_set_requests: Box<dyn OidKeeper> = Box::new(KeepSnmpInSetRequests::new());
     oid_map.push(oid_snmp_in_set_requests, k_snmp_in_set_requests);
     let oid_sys_name: ObjectIdentifier = ObjectIdentifier::new(&ARC_SYS_NAME).unwrap();
-    let k_sys_name: Box<dyn OidKeeper> = Box::new(KeepSysName::new());
+    let k_sys_name: Box<dyn OidKeeper> = Box::new(KeepSysName::new(config));
     oid_map.push(oid_sys_name, k_sys_name);
     let oid_snmp_proxy_drops: ObjectIdentifier =
         ObjectIdentifier::new(&ARC_SNMP_PROXY_DROPS).unwrap();

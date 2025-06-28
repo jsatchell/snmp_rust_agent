@@ -1,4 +1,5 @@
 use snmp_rust_agent::config::Config;
+use snmp_rust_agent::handlers;
 use snmp_rust_agent::oidmap::OidMap;
 use snmp_rust_agent::perms;
 use snmp_rust_agent::snmp_agent::Agent;
@@ -13,7 +14,8 @@ fn main() -> std::io::Result<()> {
     let mut oid_map: OidMap = OidMap::new();
     let conf = Config::load();
     load_stubs(&mut oid_map);
-    let mut agent: Agent = Agent::build(conf.engine_id, &conf.listen);
+    let mut agent: Agent = Agent::build(conf.engine_id.clone(), &conf.listen);
+    handlers::load_stubs(&mut oid_map, &conf, &agent);
     agent.loop_forever(&mut oid_map, users);
     Ok(())
 }
