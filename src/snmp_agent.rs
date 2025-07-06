@@ -66,7 +66,6 @@ impl Agent {
     pub fn build(eid: OctetString, addr_str: &str) -> Self {
         let sock = UdpSocket::bind(addr_str).expect("Couldn't bind to address");
 
-        //let users = usm::load_users();
         Agent {
             socket: sock,
             engine_id: eid,
@@ -620,7 +619,6 @@ impl Agent {
             Pdus::GetBulkRequest(r) => {
                 (error_status, error_index, request_id) =
                     self.bulk(oid_map, r, &mut vb, perm, flags);
-                // Do BulkRequest once tables work properly
             }
             _ => skip_pdu = true,
         }
@@ -653,7 +651,7 @@ impl Agent {
     ///
     /// This can be populated in any order, as it is sorted on the Oids before the loop starts.
     ///
-    pub fn loop_forever(&mut self, oid_map: &mut OidMap, users: Vec<usm::User>) {
+    pub fn loop_forever(&mut self, oid_map: &mut OidMap, users: usm::Users) {
         let mut buf = [0; 65100];
         let mut opt_user: Option<&usm::User> = None;
         // Sort by oid, the lookups use binary search.
@@ -701,7 +699,7 @@ impl Agent {
                     warn!("Authentication parameters must be 12 bytes");
                     continue;
                 }
-                opt_user = Self::lookup_user(usp.user_name.to_vec(), &users);
+                opt_user = users.lookup_user(usp.user_name.to_vec());
                 if self.wrong_auth(&mut message, opt_user, usp.clone()) {
                     warn!("Wrong auth, dropping");
                     continue;
@@ -805,17 +803,5 @@ impl Agent {
             return true;
         }
         false
-    }
-
-    /// Lookup user by name.
-    fn lookup_user<'a>(name: Vec<u8>, users: &'a Vec<usm::User>) -> Option<&'a usm::User<'a>> {
-        for user in users {
-            let uname = user.name.clone();
-            if uname == name {
-                return Some(user);
-            }
-        }
-        warn!("Name doesn't match");
-        None
     }
 }

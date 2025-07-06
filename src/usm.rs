@@ -14,16 +14,28 @@
 //!
 //!
 use crate::perms::Perm;
+use log::warn;
 use regex::Regex;
 use sha1::{Digest, Sha1};
+//use sha2::{Digest, Sha224, Sha256, Sha384, Sha512};
 use std::fs::read_to_string;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+enum WhatHash {
+  Sha1,
+  Sha224,
+  Sha256,
+  Sha384,
+  Sha512,
+}
 
 /// User struct holds data about user.
 ///
-/// Contains localised hashes, and pre calculated values for k1 and k2, used
+/// Contains localized hashes, and pre calculated values for k1 and k2, used
 /// in generating the checksums.
 #[derive(Debug, PartialEq)]
 pub struct User<'a> {
+    what: WhatHash,
     pub group: Vec<u8>,
     pub perm: &'a Perm,
     pub name: Vec<u8>,
@@ -61,6 +73,7 @@ impl<'a> User<'a> {
         for perm_entry in perms {
             if group == perm_entry.group_name {
                 return Ok(User {
+                    what: WhatHash::Sha1,
                     group,
                     perm: perm_entry,
                     name: captures["name"].as_bytes().to_vec(),
@@ -129,24 +142,44 @@ fn k2_from_ak(ak: &[u8]) -> [u8; 64] {
     eak
 }
 
-fn read_lines(filename: &str) -> Vec<String> {
-    let mut result = Vec::new();
-
-    for line in read_to_string(filename).unwrap().lines() {
-        result.push(line.to_string())
-    }
-
-    result
+pub struct Users<'a> {
+    filename: String,
+    pub users: Vec<User<'a>>,
 }
 
-/// Load user definitions from "users.txt"
-pub fn load_users(perms: &Vec<Perm>) -> Vec<User<'_>> {
-    let lines = read_lines("users.txt");
-    let mut users = Vec::new();
-    for line in lines {
-        users.push(User::from_str(&line, perms).expect("Parse error reading users.txt"));
+impl Default for Users<'_> {
+    fn default() -> Self {
+        Self::new()
     }
-    users
+}
+
+impl<'a> Users<'a> {
+    pub fn new() -> Self {
+        Users {
+            filename: "users.txt".to_string(),
+            users: vec![],
+        }
+    }
+
+    pub fn lookup_user(&self, name: Vec<u8>) -> Option<&User<'a>> {
+        for user in &self.users {
+            let uname = user.name.clone();
+            if uname == name {
+                return Some(user);
+            }
+        }
+        warn!("Name doesn't match");
+        None
+    }
+
+    pub fn load_from_file(&mut self, perms: &'a Vec<Perm>) {
+        for line in read_to_string(self.filename.clone()).unwrap().lines() {
+            self.users
+                .push(User::from_str(line, perms).expect("Parse error reading users.txt"));
+        }
+        //  Sort so we can do binary search lookups
+        self.users.sort_by(|a, b| a.name.cmp(&b.name));
+    }
 }
 
 #[cfg(test)]
@@ -208,6 +241,7 @@ mod tests {
         let hex_data = b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x9c\x10\x17\xf4\xfd\x48\x3d\x2d\xe8\xd5\xfa\xdb\xf8\x43\x92\xcb\x06\x45\x70\x51";
         let p = perms();
         let u = User {
+            what: WhatHash::Sha1,
             group: vec![0, 1],
             perm: &p[0],
             name: b"twst".to_vec(),

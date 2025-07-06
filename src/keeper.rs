@@ -33,7 +33,7 @@ pub enum Access {
     ReadCreate,
 }
 
-// Defines what types are allowed for scalar or table column
+/// Defines what types are allowed for scalar or table column
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum OType {
     Integer,
@@ -49,7 +49,7 @@ pub enum OType {
     Ticks,
 }
 
-// Return true if the type of val is consistent with the enum otype.
+/// Return true if the type of val is consistent with the enum otype.
 pub fn check_type(otype: OType, val: &ObjectSyntax) -> bool {
     match val {
         ObjectSyntax::Simple(SimpleSyntax::Integer(_)) => {
@@ -68,24 +68,24 @@ pub fn check_type(otype: OType, val: &ObjectSyntax) -> bool {
     }
 }
 
-// Trait for handlers
-//
-// Sample memory based implementations are in table.rs and scalar.rs.
+/// Trait for handlers
+///
+/// Sample memory based implementations are in table.rs and scalar.rs.
 pub trait OidKeeper {
-    // Return true if trait object handles a scalar.
-    //
-    // SNMP has different semantics for scalars and conceptual tables.
+    /// Return true if trait object handles a scalar.
+    ///
+    /// SNMP has different semantics for scalars and conceptual tables.
     fn is_scalar(&self, oid: ObjectIdentifier) -> bool;
 
-    // Implement to support the Get PDU
+    /// Implement to support the Get PDU
     fn get(&self, oid: ObjectIdentifier) -> Result<VarBindValue, OidErr>;
 
-    // Implement to support GetNext PDU - also used in GetBulk
+    /// Implement to support GetNext PDU - also used in GetBulk
     fn get_next(&self, oid: ObjectIdentifier) -> Result<VarBind, OidErr>;
 
-    // Return the access for the given Oid
+    /// Return the access for the given Oid
     fn access(&self, oid: ObjectIdentifier) -> Access;
 
-    // Set a value, if permitted
+    /// Set a value, if permitted
     fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr>;
 }

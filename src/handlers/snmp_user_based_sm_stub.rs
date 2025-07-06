@@ -4,6 +4,7 @@ use crate::oidmap::OidMap;
 use crate::scalar::{PersistentScalar, ScalarMemOid};
 use crate::snmp_agent::Agent;
 use crate::table::TableMemOid;
+use crate::usm::Users;
 use rasn::types::{Integer, ObjectIdentifier, OctetString};
 
 use rasn_smi::v2::{ApplicationSyntax, Counter32, ObjectSyntax, SimpleSyntax};
@@ -14,8 +15,8 @@ fn simple_from_int(value: i32) -> ObjectSyntax {
     ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(value)))
 }
 
-fn simple_from_str(value: &'static [u8]) -> ObjectSyntax {
-    ObjectSyntax::Simple(SimpleSyntax::String(OctetString::from_static(value)))
+fn simple_from_str(value: &[u8]) -> ObjectSyntax {
+    ObjectSyntax::Simple(SimpleSyntax::String(OctetString::copy_from_slice(value)))
 }
 
 fn simple_from_vec(value: &'static [u32]) -> ObjectSyntax {
@@ -308,35 +309,44 @@ impl OidKeeper for KeepUsmStatsUnsupportedSecLevels {
 //
 
 struct KeepUsmUserTable {
+    //users: &'a Users<'a>,
     table: TableMemOid,
 }
 
-impl KeepUsmUserTable {
-    fn new() -> Self {
+impl  KeepUsmUserTable{
+    fn new(users: & Users, engine_id: OctetString) -> Self {
         let base_oid: ObjectIdentifier = ObjectIdentifier::new(&ARC_USM_USER_TABLE).unwrap();
-
-        KeepUsmUserTable {
-            table: TableMemOid::new(
-                vec![vec![
-                    simple_from_vec(&[1, 3, 6, 1]),
-                    simple_from_str(b"b"),
-                    simple_from_str(b"b"),
-                    simple_from_vec(&[1, 3, 6, 1]),
-                    simple_from_vec(&ARC_USM_NO_AUTH_PROTOCOL),
+        let mut data = vec![];
+        for user in &users.users {
+            let mut name = vec![];
+            for b in &user.name {
+                name.push(*b);
+            }
+            let row = vec![
+                    ObjectSyntax::Simple(SimpleSyntax::String(engine_id.clone())),
+                    simple_from_str(& name),
+                    simple_from_str(& name),
+                    simple_from_vec(&[0, 0]),
+                    simple_from_vec(&ARC_USM_HMACSHA_AUTH_PROTOCOL),
                     simple_from_str(b"'"),
                     simple_from_str(b"'"),
-                    simple_from_vec(&ARC_USM_NO_PRIV_PROTOCOL),
+                    simple_from_vec(&ARC_USM_AES_CFB_128_PRIV_PROTOCOL),
                     simple_from_str(b"'"),
                     simple_from_str(b"'"),
                     simple_from_str(b"'"),
                     simple_from_int(3),
                     simple_from_vec(&[1, 3, 6, 1]),
-                ]],
+                ];
+            data.push(row);
+        }
+        KeepUsmUserTable {
+            table: TableMemOid::new(
+                data,
                 vec![
-                    simple_from_vec(&[1, 3, 6, 1]),
+                    ObjectSyntax::Simple(SimpleSyntax::String(engine_id.clone())),
                     simple_from_str(b"b"),
                     simple_from_str(b"b"),
-                    simple_from_vec(&[1, 3, 6, 1]),
+                    simple_from_vec(&[0, 0]),
                     simple_from_vec(&ARC_USM_NO_AUTH_PROTOCOL),
                     simple_from_str(b"'"),
                     simple_from_str(b"'"),
@@ -350,7 +360,7 @@ impl KeepUsmUserTable {
                 13,
                 &base_oid,
                 vec![
-                    OType::ObjectId,
+                    OType::String,
                     OType::String,
                     OType::String,
                     OType::ObjectId,
@@ -404,7 +414,7 @@ impl OidKeeper for KeepUsmUserTable {
     }
 }
 
-pub fn load_stub(oid_map: &mut OidMap, config: &Config, agent: &Agent) {
+pub fn load_stub(oid_map: &mut OidMap, config: &Config, agent: &Agent, users: &Users) {
     // The next group is for OBJECT-IDENTITY.
 
     // These may be used as values rather than MIB addresses
@@ -483,6 +493,6 @@ pub fn load_stub(oid_map: &mut OidMap, config: &Config, agent: &Agent) {
         k_usm_stats_unsupported_sec_levels,
     );
     let oid_usm_user_table: ObjectIdentifier = ObjectIdentifier::new(&ARC_USM_USER_TABLE).unwrap();
-    let k_usm_user_table: Box<dyn OidKeeper> = Box::new(KeepUsmUserTable::new());
+    let k_usm_user_table: Box<dyn OidKeeper> = Box::new(KeepUsmUserTable::new(users, config.engine_id.clone()));
     oid_map.push(oid_usm_user_table, k_usm_user_table);
 }
