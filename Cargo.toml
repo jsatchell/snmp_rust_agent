@@ -1,7 +1,7 @@
 [package]
 name = "snmp_rust_agent"
 authors = ["Julian Satchell"]
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 publish = true
 default-run = "snmp_rust_agent"

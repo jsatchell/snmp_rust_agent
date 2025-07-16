@@ -24,7 +24,7 @@
   * Integer indices in column 1 - Done
     * Get - Done
     * Set existing cells - Done
-  * Multicolumn indices: Integers, strings and addresses - done.
+  * Multi-column indices: Integers, strings and addresses - done.
   * Text-Convention range checking (lookup done for DEFVAL)
   * Default Values - mostly done
   * Augment tables - FIXME - wrong implementation, needs Rust support to do right, do after MVP
@@ -35,25 +35,22 @@
     * Create and Go - After MVP
   * Extra errors - done except for permissions / read-only
 * Change from trait enum to trait objects. Done.
-* Rough outline of MiB compiler / code generator - Started
+* Rough outline of MiB compiler / code generator - Started, both python and rust.
 * Using logging rather than println! - Done
 * Simplistic permissions model - Done, maybe too simple!
-* Get-bulk - Done, but error handling is hope and wishful thinking 
-* Remote user support as example of table model
+* Get-bulk - Done, but error handling is hope and wishful thinking
 * Refactor into library plus example(s) - Done
 * Refactor compiler using classes - Won't do, rust / nom compiler is now main line.
 * At least two MIB fairly complete implementations that are not just stubs:
-  * SNMPv2
-  * SNMP-USER-BASED-SM
+  * SNMPv2  - started, mostly done
+  * SNMP-USER-BASED-SM - started, no password change or user creation from templates yet.
 
 ## After MVP
 
 * no panics in run time loop
-* more hash / cipher choices (at least SHA-256, maybe AES-256, but no standard) - RFC 7630
+* more hash / cipher choices (at least SHA-256, maybe AES-256, but no standard for that) - RFC 7630
 * View model and user mapping to views
 * Multiple contexts - separate Oid maps?
 * Traps / Informs
 * Augments support in compiler and Rust code
-* 
-
-
+*

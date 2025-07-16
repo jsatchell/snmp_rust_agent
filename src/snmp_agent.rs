@@ -25,7 +25,7 @@ use std::net::UdpSocket;
 use std::str::FromStr;
 use std::time::Instant;
 
-const BOOTCNT_FILENAME: &str = "boot-cnt.txt";
+const BOOT_CNT_FILENAME: &str = "boot-cnt.txt";
 const B12: [u8; 12] = [0; 12];
 const Z12: OctetString = OctetString::from_static(&B12);
 const ZB: OctetString = OctetString::from_static(b"");
@@ -34,12 +34,12 @@ const ZB: OctetString = OctetString::from_static(b"");
 /// Panic if the file cannot be parsed or updated, as that indicates tampering or hardware failure.
 fn get_increment_boot_cnt() -> isize {
     let mut boots: isize = 0;
-    let cnt_res: Result<String, std::io::Error> = read_to_string(BOOTCNT_FILENAME);
+    let cnt_res: Result<String, std::io::Error> = read_to_string(BOOT_CNT_FILENAME);
     if let Ok(string) = cnt_res {
-        boots = isize::from_str(&string).unwrap();
+        boots = isize::from_str(string.trim()).unwrap();
     }
     boots += 1;
-    write(BOOTCNT_FILENAME, boots.to_string().as_bytes()).unwrap();
+    write(BOOT_CNT_FILENAME, boots.to_string().as_bytes()).unwrap();
     boots
 }
 
@@ -50,6 +50,9 @@ pub struct Agent {
     pub start_time: Instant,
     boots: isize,
     pub in_pkts: u64,
+    pub unknown_users: u32,
+    pub wrong_digests: u32,
+    pub not_in_time_window: u32,
     pub unknown_engine_ids: u32,
     pub decode_error_cnt: u32,
     pub decryption_errors: u32,
@@ -72,6 +75,9 @@ impl Agent {
             start_time: Instant::now(),
             boots: get_increment_boot_cnt(),
             in_pkts: 0u64,
+            unknown_users: 0u32,
+            wrong_digests: 0u32,
+            not_in_time_window: 0u32,
             unknown_engine_ids: 0u32,
             decode_error_cnt: 0u32,
             decryption_errors: 0u32,
@@ -291,15 +297,17 @@ impl Agent {
                             }),
                         }
                     }
-                } else if insert_point >= oid_map.len() {
+                } else if insert_point > oid_map.len() {
+                    debug!("miss case {insert_point} >= oid_map.len()");
                     vb.push(VarBind {
                         name: roid.clone(),
                         value: VarBindValue::EndOfMibView,
                     });
                 } else {
-                    let oid1 = &oid_map.oid(insert_point).clone();
-                    let last_keep = &mut oid_map.idx(insert_point);
-
+                    debug!("Insert point in map");
+                    let oid1 = &oid_map.oid(insert_point - 1).clone();
+                    let last_keep = &mut oid_map.idx(insert_point - 1);
+                    debug!("last_keep oid {oid1:?}");
                     if last_keep.is_scalar(oid1.clone()) {
                         match last_keep.get(oid1.clone()) {
                             Ok(value) => vb.push(VarBind {
@@ -411,6 +419,7 @@ impl Agent {
                 }
             }
         }
+        debug!("do_next returning {vb:?}");
     }
 
     fn getnext(
@@ -662,6 +671,7 @@ impl Agent {
             if recv_res.is_err() {
                 continue;
             }
+            opt_user = None;
             self.in_pkts += 1;
             let (amt, src) = recv_res.unwrap();
 
@@ -684,9 +694,19 @@ impl Agent {
             // Simply ignore packets that do not decode
             // In theory, should send decode error
             if r_sp.is_err() {
+                self.decode_error_cnt += 1;
                 continue;
             }
             let usp: USMSecurityParameters = r_sp.ok().expect("Errors caught above");
+
+            if !usp.user_name.is_empty() {
+                opt_user = users.lookup_user(usp.user_name.to_vec());
+                if opt_user.is_none() {
+                    self.unknown_users += 1;
+                    // FIXME should send auth failure back.
+                    continue;
+                }
+            }
             // Check the authentication
             if flags & 1 == 1 {
                 // FIXME
@@ -699,7 +719,6 @@ impl Agent {
                     warn!("Authentication parameters must be 12 bytes");
                     continue;
                 }
-                opt_user = users.lookup_user(usp.user_name.to_vec());
                 if self.wrong_auth(&mut message, opt_user, usp.clone()) {
                     warn!("Wrong auth, dropping");
                     continue;
@@ -786,7 +805,7 @@ impl Agent {
 
     /// Return true if the auth is wrong
     fn wrong_auth(
-        &self,
+        &mut self,
         message: &mut Message,
         opt_usr: Option<&usm::User>,
         usp: USMSecurityParameters,
@@ -795,11 +814,20 @@ impl Agent {
             warn!("User is none");
             return true;
         }
+        let run_time: i32 = self.start_time.elapsed().as_secs().try_into().unwrap();
+        let man_time: i32 = usp.authoritative_engine_time.try_into().unwrap();
+        let delta_t: i32 = man_time - run_time;
+        if !(-150..=150).contains(&delta_t) {
+            self.not_in_time_window += 1;
+            return true;
+        }
+
         let hmac = usp.authentication_parameters.clone().to_vec();
         let our_hmac = self.set_auth(message, opt_usr);
         // Actually check the auth
         if hmac != our_hmac {
             debug!("Message hmac {hmac:?} ours {our_hmac:?} ");
+            self.wrong_digests += 1;
             return true;
         }
         false
