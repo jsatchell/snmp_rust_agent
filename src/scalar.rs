@@ -4,6 +4,7 @@ use rasn::ber::{decode, encode};
 use rasn::types::{Integer, ObjectIdentifier};
 use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
 use rasn_snmp::v3::{VarBind, VarBindValue};
+use std::io::Error;
 
 use log::debug;
 
@@ -68,7 +69,11 @@ impl OidKeeper for ScalarMemOid {
                         // Then return current value and increment
                         if new_value == self.value {
                             if let ObjectSyntax::Simple(SimpleSyntax::Integer(incr)) = &self.value {
-                                let incr1 = Integer::from(incr.to_u32().unwrap() + 1);
+                                let mut incr32: u32 = incr.to_u32().unwrap() + 1;
+                                if incr32 > 2147483647u32 {
+                                    incr32 = 0u32;
+                                }
+                                let incr1 = Integer::from(incr32);
                                 self.value = ObjectSyntax::Simple(SimpleSyntax::Integer(incr1));
                             }
                         } else {
@@ -98,13 +103,14 @@ impl PersistentScalar {
         PersistentScalar { scalar, file_name }
     }
 
-    pub fn load(&mut self) {
+    pub fn load(&mut self) -> Result<(), Error> {
         debug!["file name {0:?}", self.file_name];
-        let bytes = std::fs::read(self.file_name.clone()).unwrap();
+        let bytes = std::fs::read(self.file_name.clone())?;
         let value_res = decode::<ObjectSyntax>(&bytes);
         match value_res {
             Ok(value) => {
                 self.scalar.value = value;
+                Ok(())
             }
             Err(err) => {
                 panic!["Decode failure {err:?}"];

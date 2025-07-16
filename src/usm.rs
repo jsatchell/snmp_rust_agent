@@ -8,25 +8,27 @@
 //! * the username (no spaces!)
 //! * the group name of the user (must match a name in groups.txt, see perms module)
 //! * the hash type in use. Currently only sha1 is accepted here.
-//! * the localised authentication hahs
-//! * the privacy type (only aes alllowed)
-//! * the localised privacy hash
+//! * the localized authentication hahs
+//! * the privacy type (only aes allowed)
+//! * the localized privacy hash
 //!
 //!
 use crate::perms::Perm;
 use log::warn;
 use regex::Regex;
 use sha1::{Digest, Sha1};
+use std::fs::File;
+use std::io::{Error, Write};
 //use sha2::{Digest, Sha224, Sha256, Sha384, Sha512};
 use std::fs::read_to_string;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 enum WhatHash {
-  Sha1,
-  Sha224,
-  Sha256,
-  Sha384,
-  Sha512,
+    Sha1,
+    Sha224,
+    Sha256,
+    Sha384,
+    Sha512,
 }
 
 /// User struct holds data about user.
@@ -67,6 +69,9 @@ impl<'a> User<'a> {
         if captures["hash"] != *"sha1" {
             return Err(ParseUserError);
         }
+        if captures["priv"] != *"aes" {
+            return Err(ParseUserError);
+        }
         let akb = hex::decode(&captures["ak"]).unwrap();
         let group = captures["group"].as_bytes().to_vec();
 
@@ -87,9 +92,23 @@ impl<'a> User<'a> {
         Err(ParseUserError)
     }
 
+    /// Generates the bytes for a line in the file for the user.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out = vec![];
+        out.extend(self.name.clone());
+        out.push(b' ');
+        out.extend(self.group.clone());
+        out.extend(b" sha1 ");
+        out.extend(hex::encode(self.auth_key.clone()).as_bytes());
+        out.extend(b" aes ");
+        out.extend(hex::encode(self.priv_key.clone()).as_bytes());
+        out.push(b'\n');
+        out
+    }
+
     /// Calculate the HMAC checksum from the data.
     ///
-    /// Will need to be templated or parameterised to support RFC7630
+    /// Will need to be templated or parameterized to support RFC7630
     pub fn auth_from_bytes(&self, data: &[u8]) -> Vec<u8> {
         let mut hasher = Sha1::new();
         hasher.update(self.k1);
@@ -102,9 +121,9 @@ impl<'a> User<'a> {
         last[0..12].to_owned()
     }
 
-    /// Keychange algoritm from RFC3414#page-84 for HMAC SHA-1.
+    /// Key change algorithm from RFC3414#page-84 for HMAC SHA-1.
     /// In this case, L=20, K=20. data must be 40 bytes.
-    pub fn keychange(&self, data: &[u8]) -> Vec<u8> {
+    pub fn key_change(&self, data: &[u8]) -> Vec<u8> {
         let mut temp = self.auth_key.clone();
 
         // append random bytes
@@ -114,11 +133,11 @@ impl<'a> User<'a> {
         let mut hasher = Sha1::new();
         hasher.update(temp);
         let next = hasher.finalize();
-        let mut newkey = vec![];
+        let mut new_key = vec![];
         for i in 0..20 {
-            newkey.push(next[i] ^ data[20 + i]);
+            new_key.push(next[i] ^ data[20 + i]);
         }
-        newkey
+        new_key
     }
 }
 
@@ -180,6 +199,14 @@ impl<'a> Users<'a> {
         //  Sort so we can do binary search lookups
         self.users.sort_by(|a, b| a.name.cmp(&b.name));
     }
+
+    pub fn save_to_file(&self) -> Result<(), Error> {
+        let mut save = File::create(&self.filename)?;
+        for user in &self.users {
+            save.write_all(&user.to_bytes())?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -225,6 +252,17 @@ mod tests {
     }
 
     #[test]
+    fn roundtrip_case1_test() {
+        let s ="test test sha1 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
+        let pv = perms();
+        let u = User::from_str(s, &pv).unwrap();
+        let b = u.to_bytes();
+        // Strip newline off end
+        let a = b.split_last().unwrap().1;
+        assert_eq!(s.as_bytes(), a);
+    }
+
+    #[test]
     fn rfc2202_case3_test() {
         let s ="test test sha1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
         let pv = perms();
@@ -236,7 +274,7 @@ mod tests {
     }
 
     #[test]
-    fn test_keychange() {
+    fn test_key_change() {
         // Appendix A5.2 of RFC3414, localized key from A3.2
         let hex_data = b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x9c\x10\x17\xf4\xfd\x48\x3d\x2d\xe8\xd5\xfa\xdb\xf8\x43\x92\xcb\x06\x45\x70\x51";
         let p = perms();
@@ -244,7 +282,7 @@ mod tests {
             what: WhatHash::Sha1,
             group: vec![0, 1],
             perm: &p[0],
-            name: b"twst".to_vec(),
+            name: b"test".to_vec(),
             auth_key:
                 b"\x66\x95\xfe\xbc\x92\x88\xe3\x62\x82\x23\x5f\xc7\x15\x1f\x12\x84\x97\xb3\x8f\x3f"
                     .to_vec(),
@@ -252,9 +290,9 @@ mod tests {
             k1: [0; 64],
             k2: [0; 64],
         };
-        let newk = u.keychange(hex_data);
+        let new_k = u.key_change(hex_data);
         assert_eq!(
-            newk,
+            new_k,
             b"\x78\xe2\xdc\xce\x79\xd5\x94\x03\xb5\x8c\x1b\xba\xa5\xbf\xf4\x63\x91\xf1\xcd\x25"
                 .to_vec()
         );

@@ -5,10 +5,9 @@ use crate::scalar::{PersistentScalar, ScalarMemOid};
 use crate::snmp_agent::Agent;
 use crate::table::TableMemOid;
 use crate::usm::Users;
+use log::{debug, warn};
 use rasn::types::{Integer, ObjectIdentifier, OctetString};
-
 use rasn_smi::v2::{ApplicationSyntax, Counter32, ObjectSyntax, SimpleSyntax};
-
 use rasn_snmp::v3::{VarBind, VarBindValue};
 
 fn simple_from_int(value: i32) -> ObjectSyntax {
@@ -58,13 +57,13 @@ const ARC_USM_AES_CFB_128_PRIV_PROTOCOL: [u32; 10] = [1, 3, 6, 1, 6, 3, 10, 1, 2
 //
 
 struct KeepUsmStatsUnknownUserNames {
-    scalar: ScalarMemOid,
+    bad_users: u32,
 }
 
 impl KeepUsmStatsUnknownUserNames {
-    fn new() -> Self {
+    fn new(agent: &Agent) -> Self {
         KeepUsmStatsUnknownUserNames {
-            scalar: ScalarMemOid::new(counter_from_int(0), OType::Counter, Access::ReadOnly),
+            bad_users: agent.unknown_users,
         }
     }
 }
@@ -73,17 +72,21 @@ impl OidKeeper for KeepUsmStatsUnknownUserNames {
     fn is_scalar(&self, _oid: ObjectIdentifier) -> bool {
         true
     }
-    fn get(&self, oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {
-        self.scalar.get(oid)
+    fn get(&self, _oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {
+        Ok(VarBindValue::Value(counter_from_int(self.bad_users)))
     }
-    fn get_next(&self, oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
-        self.scalar.get_next(oid)
+    fn get_next(&self, _oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
+        Err(OidErr::OutOfRange)
     }
-    fn access(&self, oid: ObjectIdentifier) -> Access {
-        self.scalar.access(oid)
+    fn access(&self, _oid: ObjectIdentifier) -> Access {
+        Access::ReadOnly
     }
-    fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
-        self.scalar.set(oid, value)
+    fn set(
+        &mut self,
+        _oid: ObjectIdentifier,
+        _value: VarBindValue,
+    ) -> Result<VarBindValue, OidErr> {
+        Err(OidErr::NotWritable)
     }
 }
 // An advisory lock used to allow several cooperating
@@ -99,14 +102,19 @@ struct KeepUsmUserSpinLock {
 impl KeepUsmUserSpinLock {
     fn new(config: &Config) -> Self {
         let file_name: String = config.storage_path.clone() + "/usm_user_spin_lock";
-        KeepUsmUserSpinLock {
-            scalar: PersistentScalar::new(
-                simple_from_int(4),
-                OType::Integer,
-                Access::ReadWrite,
-                file_name,
-            ),
+        let mut scalar = PersistentScalar::new(
+            simple_from_int(4),
+            OType::Integer,
+            Access::ReadWrite,
+            file_name,
+        );
+        let load_result = scalar.load();
+        if load_result.is_ok() {
+            debug!("SpinLock reloaded from storage");
+        } else {
+            warn!("SpinLock using default value - load from storage failed");
         }
+        KeepUsmUserSpinLock { scalar }
     }
 }
 
@@ -133,13 +141,13 @@ impl OidKeeper for KeepUsmUserSpinLock {
 //
 
 struct KeepUsmStatsWrongDigests {
-    scalar: ScalarMemOid,
+    wrong: u32,
 }
 
 impl KeepUsmStatsWrongDigests {
-    fn new() -> Self {
+    fn new(agent: &Agent) -> Self {
         KeepUsmStatsWrongDigests {
-            scalar: ScalarMemOid::new(counter_from_int(0), OType::Counter, Access::ReadOnly),
+            wrong: agent.wrong_digests,
         }
     }
 }
@@ -148,17 +156,21 @@ impl OidKeeper for KeepUsmStatsWrongDigests {
     fn is_scalar(&self, _oid: ObjectIdentifier) -> bool {
         true
     }
-    fn get(&self, oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {
-        self.scalar.get(oid)
+    fn get(&self, _oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {
+        Ok(VarBindValue::Value(counter_from_int(self.wrong)))
     }
-    fn get_next(&self, oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
-        self.scalar.get_next(oid)
+    fn get_next(&self, _oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
+        Err(OidErr::OutOfRange)
     }
-    fn access(&self, oid: ObjectIdentifier) -> Access {
-        self.scalar.access(oid)
+    fn access(&self, _oid: ObjectIdentifier) -> Access {
+        Access::ReadOnly
     }
-    fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
-        self.scalar.set(oid, value)
+    fn set(
+        &mut self,
+        _oid: ObjectIdentifier,
+        _value: VarBindValue,
+    ) -> Result<VarBindValue, OidErr> {
+        Err(OidErr::NotWritable)
     }
 }
 // The total number of packets received by the SNMP
@@ -240,13 +252,13 @@ impl OidKeeper for KeepUsmStatsUnknownEngineIDs {
 //
 
 struct KeepUsmStatsNotInTimeWindows {
-    scalar: ScalarMemOid,
+    not_in_window: u32,
 }
 
 impl KeepUsmStatsNotInTimeWindows {
-    fn new() -> Self {
+    fn new(agent: &Agent) -> Self {
         KeepUsmStatsNotInTimeWindows {
-            scalar: ScalarMemOid::new(counter_from_int(0), OType::Counter, Access::ReadOnly),
+            not_in_window: agent.not_in_time_window,
         }
     }
 }
@@ -255,17 +267,21 @@ impl OidKeeper for KeepUsmStatsNotInTimeWindows {
     fn is_scalar(&self, _oid: ObjectIdentifier) -> bool {
         true
     }
-    fn get(&self, oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {
-        self.scalar.get(oid)
+    fn get(&self, _oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {
+        Ok(VarBindValue::Value(counter_from_int(self.not_in_window)))
     }
-    fn get_next(&self, oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
-        self.scalar.get_next(oid)
+    fn get_next(&self, _oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
+        Err(OidErr::OutOfRange)
     }
-    fn access(&self, oid: ObjectIdentifier) -> Access {
-        self.scalar.access(oid)
+    fn access(&self, _oid: ObjectIdentifier) -> Access {
+        Access::ReadOnly
     }
-    fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
-        self.scalar.set(oid, value)
+    fn set(
+        &mut self,
+        _oid: ObjectIdentifier,
+        _value: VarBindValue,
+    ) -> Result<VarBindValue, OidErr> {
+        Err(OidErr::NotWritable)
     }
 }
 // The total number of packets received by the SNMP
@@ -293,14 +309,18 @@ impl OidKeeper for KeepUsmStatsUnsupportedSecLevels {
     fn get(&self, oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {
         self.scalar.get(oid)
     }
-    fn get_next(&self, oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
-        self.scalar.get_next(oid)
+    fn get_next(&self, _oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
+        Err(OidErr::OutOfRange)
     }
-    fn access(&self, oid: ObjectIdentifier) -> Access {
-        self.scalar.access(oid)
+    fn access(&self, _oid: ObjectIdentifier) -> Access {
+        Access::ReadOnly
     }
-    fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
-        self.scalar.set(oid, value)
+    fn set(
+        &mut self,
+        _oid: ObjectIdentifier,
+        _value: VarBindValue,
+    ) -> Result<VarBindValue, OidErr> {
+        Err(OidErr::NotWritable)
     }
 }
 // A user configured in the SNMP engine's Local
@@ -313,8 +333,8 @@ struct KeepUsmUserTable {
     table: TableMemOid,
 }
 
-impl  KeepUsmUserTable{
-    fn new(users: & Users, engine_id: OctetString) -> Self {
+impl KeepUsmUserTable {
+    fn new(users: &Users, engine_id: OctetString) -> Self {
         let base_oid: ObjectIdentifier = ObjectIdentifier::new(&ARC_USM_USER_TABLE).unwrap();
         let mut data = vec![];
         for user in &users.users {
@@ -323,20 +343,20 @@ impl  KeepUsmUserTable{
                 name.push(*b);
             }
             let row = vec![
-                    ObjectSyntax::Simple(SimpleSyntax::String(engine_id.clone())),
-                    simple_from_str(& name),
-                    simple_from_str(& name),
-                    simple_from_vec(&[0, 0]),
-                    simple_from_vec(&ARC_USM_HMACSHA_AUTH_PROTOCOL),
-                    simple_from_str(b"'"),
-                    simple_from_str(b"'"),
-                    simple_from_vec(&ARC_USM_AES_CFB_128_PRIV_PROTOCOL),
-                    simple_from_str(b"'"),
-                    simple_from_str(b"'"),
-                    simple_from_str(b"'"),
-                    simple_from_int(3),
-                    simple_from_vec(&[1, 3, 6, 1]),
-                ];
+                ObjectSyntax::Simple(SimpleSyntax::String(engine_id.clone())),
+                simple_from_str(&name),
+                simple_from_str(&name),
+                simple_from_vec(&[0, 0]),
+                simple_from_vec(&ARC_USM_HMACSHA_AUTH_PROTOCOL),
+                simple_from_str(b""),
+                simple_from_str(b""),
+                simple_from_vec(&ARC_USM_AES_CFB_128_PRIV_PROTOCOL),
+                simple_from_str(b""),
+                simple_from_str(b""),
+                simple_from_str(b""),
+                simple_from_int(3),
+                simple_from_int(1),
+            ];
             data.push(row);
         }
         KeepUsmUserTable {
@@ -348,14 +368,14 @@ impl  KeepUsmUserTable{
                     simple_from_str(b"b"),
                     simple_from_vec(&[0, 0]),
                     simple_from_vec(&ARC_USM_NO_AUTH_PROTOCOL),
-                    simple_from_str(b"'"),
-                    simple_from_str(b"'"),
+                    simple_from_str(b""),
+                    simple_from_str(b""),
                     simple_from_vec(&ARC_USM_NO_PRIV_PROTOCOL),
-                    simple_from_str(b"'"),
-                    simple_from_str(b"'"),
-                    simple_from_str(b"'"),
+                    simple_from_str(b""),
+                    simple_from_str(b""),
+                    simple_from_str(b""),
                     simple_from_int(3),
-                    simple_from_vec(&[1, 3, 6, 1]),
+                    simple_from_int(1),
                 ],
                 13,
                 &base_oid,
@@ -365,14 +385,14 @@ impl  KeepUsmUserTable{
                     OType::String,
                     OType::ObjectId,
                     OType::ObjectId,
-                    OType::ObjectId,
-                    OType::ObjectId,
-                    OType::ObjectId,
-                    OType::ObjectId,
-                    OType::ObjectId,
+                    OType::String,
                     OType::String,
                     OType::ObjectId,
-                    OType::ObjectId,
+                    OType::String,
+                    OType::String,
+                    OType::String,
+                    OType::Integer,
+                    OType::RowStatus,
                 ],
                 vec![
                     Access::NoAccess,
@@ -447,7 +467,7 @@ pub fn load_stub(oid_map: &mut OidMap, config: &Config, agent: &Agent, users: &U
         ObjectIdentifier::new(&ARC_USM_STATS_UNKNOWN_USER_NAMES).unwrap();
 
     let k_usm_stats_unknown_user_names: Box<dyn OidKeeper> =
-        Box::new(KeepUsmStatsUnknownUserNames::new());
+        Box::new(KeepUsmStatsUnknownUserNames::new(agent));
     oid_map.push(
         oid_usm_stats_unknown_user_names,
         k_usm_stats_unknown_user_names,
@@ -458,7 +478,8 @@ pub fn load_stub(oid_map: &mut OidMap, config: &Config, agent: &Agent, users: &U
     oid_map.push(oid_usm_user_spin_lock, k_usm_user_spin_lock);
     let oid_usm_stats_wrong_digests: ObjectIdentifier =
         ObjectIdentifier::new(&ARC_USM_STATS_WRONG_DIGESTS).unwrap();
-    let k_usm_stats_wrong_digests: Box<dyn OidKeeper> = Box::new(KeepUsmStatsWrongDigests::new());
+    let k_usm_stats_wrong_digests: Box<dyn OidKeeper> =
+        Box::new(KeepUsmStatsWrongDigests::new(agent));
     oid_map.push(oid_usm_stats_wrong_digests, k_usm_stats_wrong_digests);
     let oid_usm_stats_decryption_errors: ObjectIdentifier =
         ObjectIdentifier::new(&ARC_USM_STATS_DECRYPTION_ERRORS).unwrap();
@@ -479,7 +500,7 @@ pub fn load_stub(oid_map: &mut OidMap, config: &Config, agent: &Agent, users: &U
     let oid_usm_stats_not_in_time_windows: ObjectIdentifier =
         ObjectIdentifier::new(&ARC_USM_STATS_NOT_IN_TIME_WINDOWS).unwrap();
     let k_usm_stats_not_in_time_windows: Box<dyn OidKeeper> =
-        Box::new(KeepUsmStatsNotInTimeWindows::new());
+        Box::new(KeepUsmStatsNotInTimeWindows::new(agent));
     oid_map.push(
         oid_usm_stats_not_in_time_windows,
         k_usm_stats_not_in_time_windows,
@@ -493,6 +514,7 @@ pub fn load_stub(oid_map: &mut OidMap, config: &Config, agent: &Agent, users: &U
         k_usm_stats_unsupported_sec_levels,
     );
     let oid_usm_user_table: ObjectIdentifier = ObjectIdentifier::new(&ARC_USM_USER_TABLE).unwrap();
-    let k_usm_user_table: Box<dyn OidKeeper> = Box::new(KeepUsmUserTable::new(users, config.engine_id.clone()));
+    let k_usm_user_table: Box<dyn OidKeeper> =
+        Box::new(KeepUsmUserTable::new(users, config.engine_id.clone()));
     oid_map.push(oid_usm_user_table, k_usm_user_table);
 }
