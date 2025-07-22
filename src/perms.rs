@@ -29,7 +29,11 @@ pub struct Perm {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ParsePermError;
-
+/// Returns a Perm struct from string data.
+///
+/// Panics on error.
+///
+/// Only executed at agent startup, and would indicate mis-configuration or file-system corruption.
 impl FromStr for Perm {
     type Err = ParsePermError;
 
@@ -65,6 +69,9 @@ impl Perm {
 }
 
 /// Read "groups.txt" and return group definitions.
+///
+/// Panics if read fails - this is during startup so indicates a configuration error,
+/// or file system corruption.
 pub fn load_perms() -> Vec<Perm> {
     let mut perms = Vec::new();
     for line in read_to_string("groups.txt").unwrap().lines() {

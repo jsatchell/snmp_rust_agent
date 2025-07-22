@@ -9,7 +9,7 @@
 //! The code currently supports HMAC-SHA-1-96 and AES-128; stronger hashes from RFC7630 are planned for the future.
 //! There is no agreed standard for stronger ciphers. It is not clear that using stronger hash functions or ciphers
 //! will deliver significant advantages in practice. The well known collision weakness of SHA-1 is not a problem in
-//!  an HMAC application.
+//! an HMAC application.
 //!
 //! The agent server loop is a single threaded blocking design. I would argue that this is appropriate for almost all
 //! agents, as typically a single manager will interact with multiple agents. Managers may well want to support high
@@ -22,7 +22,7 @@
 //! change the permissions model remotely is not often implemented. Instead, some sort of compile time model seems
 //! more appropriate to the sort of boxes that run agents.
 //!
-//! The Engine ID is currently a constant in the source. It should be loaded from a configuration file.
+//! The Engine ID is loaded from a configuration file.
 //!
 //! There is no support for notifications so far.
 //!

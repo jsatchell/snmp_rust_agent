@@ -231,7 +231,7 @@ impl OidKeeper for TableMemOid {
         }
         // This is OK on 16 bit and larger machines. Might fail on a microcontroller,
         // but you probably don't want more than 255 columns on such a machine anyway
-        let col: usize = suffix[1].try_into().unwrap();
+        let col: usize = suffix[1] as usize;
         if col == 0 || col > self.cols {
             return Err(OidErr::NoSuchName);
         }
@@ -252,6 +252,7 @@ impl OidKeeper for TableMemOid {
     fn get_next(&self, oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
         let suffix = self.suffix(oid.clone());
         let mut col: usize = if suffix.len() < 3 {
+            // Column not specified, so choose first readable column.
             1 + self
                 .access
                 .iter()
@@ -260,7 +261,7 @@ impl OidKeeper for TableMemOid {
                 })
                 .unwrap()
         } else {
-            suffix[1].try_into().unwrap()
+            suffix[1] as usize
         };
         if col == 0 || col > self.cols {
             return Err(OidErr::NoSuchName);
@@ -269,33 +270,38 @@ impl OidKeeper for TableMemOid {
             return Err(OidErr::OutOfRange);
         }
         if suffix.len() >= 3 {
-            let res = self.rows.binary_search_by(|a| a.0.cmp(&suffix[2..].to_vec()));
+            let res = self
+                .rows
+                .binary_search_by(|a| a.0.cmp(&suffix[2..].to_vec()));
             match res {
-                Ok(idx) => { if idx < self.rows.len() -1 {
+                Ok(idx) => {
+                    if idx < self.rows.len() - 1 {
                         let (next_index, next_row) = &self.rows[idx + 1];
                         let value = VarBindValue::Value(next_row[col - 1].clone());
                         let name = self.make_oid(col, next_index);
                         return Ok(VarBind { name, value });
-                } else if col < self.cols {
+                    } else if col < self.cols {
                         //  FIXME - need to skip non readable columns
                         col += 1;
                         let value = VarBindValue::Value(self.rows[0].1[col - 1].clone());
                         let name = self.make_oid(col, &self.rows[0].0);
                         return Ok(VarBind { name, value });
                     }
-            },
-                Err(insert_point) => {if insert_point < self.rows.len() {
+                }
+                Err(insert_point) => {
+                    if insert_point < self.rows.len() {
                         let (next_index, next_row) = &self.rows[insert_point];
                         let value = VarBindValue::Value(next_row[col - 1].clone());
                         let name = self.make_oid(col, next_index);
                         return Ok(VarBind { name, value });
-                } else if col < self.cols {
+                    } else if col < self.cols {
                         //  FIXME - need to skip non readable columns
                         col += 1;
                         let value = VarBindValue::Value(self.rows[0].1[col - 1].clone());
                         let name = self.make_oid(col, &self.rows[0].0);
                         return Ok(VarBind { name, value });
-                    }}
+                    }
+                }
             }
             debug!("Off end of table");
             Err(OidErr::OutOfRange)
@@ -318,7 +324,7 @@ impl OidKeeper for TableMemOid {
         if suffix[1] > 16384 {
             return Access::NoAccess;
         }
-        let col: usize = suffix[1].try_into().unwrap();
+        let col: usize = suffix[1] as usize;
         if col == 0 || col > self.cols {
             return Access::NoAccess;
         }
@@ -343,7 +349,7 @@ impl OidKeeper for TableMemOid {
         }
         // This is OK on 16bit and larger machines. Might fail on a microcontroller,
         // but you probably don't want more than 255 columns on such a machine anyway
-        let col: usize = suffix[1].try_into().unwrap();
+        let col: usize = suffix[1] as usize;
         // col is 1 based, so 0 is wrong
         if col == 0 || col > self.cols {
             return Err(OidErr::NoSuchName);
@@ -464,11 +470,14 @@ mod tests {
         let s4 = simple_from_int(4);
         let s5 = simple_from_int(5);
         TableMemOid::new(
-            vec![vec![first.clone(), s4.clone(), s41.clone()], vec![last.clone(), s5.clone(), s42.clone()]],
+            vec![
+                vec![first.clone(), s4.clone(), s41.clone()],
+                vec![last.clone(), s5.clone(), s42.clone()],
+            ],
             vec![blank.clone(), s0.clone(), s0.clone()],
             3,
             &oid2,
-            vec![OType::String ,OType::Integer, OType::Integer],
+            vec![OType::String, OType::Integer, OType::Integer],
             vec![Access::ReadOnly, Access::ReadOnly, Access::ReadWrite],
             vec![1usize, 2usize],
             false,
@@ -510,7 +519,7 @@ mod tests {
         assert!(res.is_ok());
         let vb = res.unwrap();
         let o5 = ObjectIdentifier::new(&[1, 6, 1, 2, 4]).unwrap();
-     //   assert_eq!(vb.name, o5);
+        //   assert_eq!(vb.name, o5);
         assert_eq!(vb.value, VarBindValue::Value(simple_from_int(4)));
         let res = tab.get_next(o5);
         assert!(res.is_ok());

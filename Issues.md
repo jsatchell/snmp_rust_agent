@@ -44,6 +44,7 @@
 * At least two MIB fairly complete implementations that are not just stubs:
   * SNMPv2  - started, mostly done
   * SNMP-USER-BASED-SM - started, no password change or user creation from templates yet.
+* Debug AuthNoPriv mode, snmpwalk gives Authorization errors - Done!
 
 ## After MVP
 
@@ -53,4 +54,4 @@
 * Multiple contexts - separate Oid maps?
 * Traps / Informs
 * Augments support in compiler and Rust code
-*
+

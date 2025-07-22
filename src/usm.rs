@@ -8,7 +8,7 @@
 //! * the username (no spaces!)
 //! * the group name of the user (must match a name in groups.txt, see perms module)
 //! * the hash type in use. Currently only sha1 is accepted here.
-//! * the localized authentication hahs
+//! * the localized authentication hash
 //! * the privacy type (only aes allowed)
 //! * the localized privacy hash
 //!
@@ -25,10 +25,10 @@ use std::fs::read_to_string;
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 enum WhatHash {
     Sha1,
-    Sha224,
+    /* Sha224,
     Sha256,
     Sha384,
-    Sha512,
+    Sha512, */
 }
 
 /// User struct holds data about user.
@@ -66,9 +66,11 @@ impl<'a> User<'a> {
         let captures = re.captures(s).ok_or(ParseUserError)?;
 
         // Change this when we support additional hash types from RFC7630
-        if captures["hash"] != *"sha1" {
-            return Err(ParseUserError);
-        }
+        let what = match &captures["hash"] {
+            "sha1" => WhatHash::Sha1,
+            _ => return Err(ParseUserError),
+        };
+
         if captures["priv"] != *"aes" {
             return Err(ParseUserError);
         }
@@ -78,7 +80,7 @@ impl<'a> User<'a> {
         for perm_entry in perms {
             if group == perm_entry.group_name {
                 return Ok(User {
-                    what: WhatHash::Sha1,
+                    what,
                     group,
                     perm: perm_entry,
                     name: captures["name"].as_bytes().to_vec(),
@@ -98,7 +100,9 @@ impl<'a> User<'a> {
         out.extend(self.name.clone());
         out.push(b' ');
         out.extend(self.group.clone());
-        out.extend(b" sha1 ");
+        out.extend(match self.what {
+            WhatHash::Sha1 => b" sha1 ",
+        });
         out.extend(hex::encode(self.auth_key.clone()).as_bytes());
         out.extend(b" aes ");
         out.extend(hex::encode(self.priv_key.clone()).as_bytes());
@@ -110,11 +114,15 @@ impl<'a> User<'a> {
     ///
     /// Will need to be templated or parameterized to support RFC7630
     pub fn auth_from_bytes(&self, data: &[u8]) -> Vec<u8> {
-        let mut hasher = Sha1::new();
+        let mut hasher = match self.what {
+            WhatHash::Sha1 => Sha1::new(),
+        };
         hasher.update(self.k1);
         hasher.update(data);
         let mid = hasher.finalize();
-        let mut hash2 = Sha1::new();
+        let mut hash2 = match self.what {
+            WhatHash::Sha1 => Sha1::new(),
+        };
         hash2.update(self.k2);
         hash2.update(mid);
         let last: [u8; 20] = hash2.finalize().into();
@@ -130,7 +138,9 @@ impl<'a> User<'a> {
         for item in data.iter().take(20) {
             temp.push(*item);
         }
-        let mut hasher = Sha1::new();
+        let mut hasher = match self.what {
+            WhatHash::Sha1 => Sha1::new(),
+        };
         hasher.update(temp);
         let next = hasher.finalize();
         let mut new_key = vec![];

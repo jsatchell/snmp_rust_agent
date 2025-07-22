@@ -195,8 +195,7 @@ impl OidKeeper for KeepUsmStatsDecryptionErrors {
         true
     }
     fn get(&self, _oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {
-        let value: i32 = self.err_cnt.try_into().unwrap_or(i32::MAX);
-        Ok(VarBindValue::Value(simple_from_int(value)))
+        Ok(VarBindValue::Value(counter_from_int(self.err_cnt)))
     }
     fn get_next(&self, _oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
         Err(OidErr::OutOfRange)

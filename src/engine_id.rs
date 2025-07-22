@@ -160,7 +160,7 @@ pub const LOCAL_ENGINE_ID: OctetString = OctetString::from_static(b"\x80\x00\x00
 
 /// Format the engine_id into a descriptive string.
 ///
-/// Probably behaves badly if you feed an arbitrary OctetString that is not
+/// Probably behaves badly (panics!) if you feed an arbitrary OctetString that is not
 /// actually an engine_id.
 pub fn format_engine_id(engine_id: OctetString) -> String {
     let mut vid = engine_id.to_vec();
@@ -228,7 +228,7 @@ pub fn format_engine_id(engine_id: OctetString) -> String {
                 if engine_id == LOCAL_ENGINE_ID {
                     "Local Engine ID for RFC5354".to_string()
                 } else {
-                    "Scheme 6 is reseved for RFC5354, misused here".to_string()
+                    "Scheme 6 is reserved for RFC5354, misused here".to_string()
                 }
             }
             7..127 => "Reserved scheme number for future use. Are you sure this is an Engine ID?"
@@ -294,6 +294,14 @@ mod tests {
         assert_eq!(
             engine_id::engine_id_from_str("1234 1 127.0.0.1"),
             engine_id::ipv4_engine_id(1234, "127.0.0.1")
+        )
+    }
+
+    #[test]
+    fn test_engine_id_mac_from_str() {
+        assert_eq!(
+            engine_id::engine_id_from_str("1234 3 AA:BB:CC:DD:EE:FF"),
+            engine_id::mac_engine_id(1234, "AA:BB:CC:DD:EE:FF")
         )
     }
 }

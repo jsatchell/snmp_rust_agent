@@ -39,7 +39,7 @@ const ARC_SNMP_SET_SERIAL_NO: [u32; 10] = [1, 3, 6, 1, 6, 3, 1, 1, 6, 1];
 const ARC_SNMP_OUT_GET_RESPONSES: [u32; 8] = [1, 3, 6, 1, 2, 1, 11, 28];
 const ARC_SNMP_OUT_GET_NEXTS: [u32; 8] = [1, 3, 6, 1, 2, 1, 11, 26];
 const ARC_SNMP_OUT_PKTS: [u32; 8] = [1, 3, 6, 1, 2, 1, 11, 2];
-const ARC_SNMP_TRAP_OID: [u32; 10] = [1, 3, 6, 1, 6, 3, 1, 1, 4, 1];
+//const ARC_SNMP_TRAP_OID: [u32; 10] = [1, 3, 6, 1, 6, 3, 1, 1, 4, 1];
 const ARC_SYS_SERVICES: [u32; 8] = [1, 3, 6, 1, 2, 1, 1, 7];
 const ARC_SNMP_IN_BAD_VALUES: [u32; 8] = [1, 3, 6, 1, 2, 1, 11, 10];
 const ARC_SYS_UP_TIME: [u32; 8] = [1, 3, 6, 1, 2, 1, 1, 3];
@@ -51,7 +51,7 @@ const ARC_SYS_OR_TABLE: [u32; 8] = [1, 3, 6, 1, 2, 1, 1, 9];
 const ARC_SYS_CONTACT: [u32; 8] = [1, 3, 6, 1, 2, 1, 1, 4];
 const ARC_SNMP_IN_GEN_ERRS: [u32; 8] = [1, 3, 6, 1, 2, 1, 11, 12];
 const ARC_SNMP_IN_BAD_COMMUNITY_USES: [u32; 8] = [1, 3, 6, 1, 2, 1, 11, 5];
-const ARC_SNMP_TRAP_ENTERPRISE: [u32; 10] = [1, 3, 6, 1, 6, 3, 1, 1, 4, 3];
+//const ARC_SNMP_TRAP_ENTERPRISE: [u32; 10] = [1, 3, 6, 1, 6, 3, 1, 1, 4, 3];
 const ARC_SNMP_IN_BAD_COMMUNITY_NAMES: [u32; 8] = [1, 3, 6, 1, 2, 1, 11, 4];
 const ARC_SYS_DESCR: [u32; 8] = [1, 3, 6, 1, 2, 1, 1, 1];
 const ARC_SNMP_SILENT_DROPS: [u32; 8] = [1, 3, 6, 1, 2, 1, 11, 31];
@@ -278,44 +278,7 @@ impl OidKeeper for KeepSnmpOutPkts {
         self.scalar.set(oid, value)
     }
 }
-// The authoritative identification of the notification
-// currently being sent.  This variable occurs as
-// the second varbind in every SNMPv2-Trap-PDU and
-// InformRequest-PDU.
 
-struct KeepSnmpTrapOID {
-    scalar: ScalarMemOid,
-}
-
-impl KeepSnmpTrapOID {
-    fn new() -> Self {
-        KeepSnmpTrapOID {
-            scalar: ScalarMemOid::new(
-                simple_from_vec(&[1, 3, 6, 1]),
-                OType::ObjectId,
-                Access::NotificationOnly,
-            ),
-        }
-    }
-}
-
-impl OidKeeper for KeepSnmpTrapOID {
-    fn is_scalar(&self, _oid: ObjectIdentifier) -> bool {
-        true
-    }
-    fn get(&self, oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {
-        self.scalar.get(oid)
-    }
-    fn get_next(&self, oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
-        self.scalar.get_next(oid)
-    }
-    fn access(&self, oid: ObjectIdentifier) -> Access {
-        self.scalar.access(oid)
-    }
-    fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
-        self.scalar.set(oid, value)
-    }
-}
 // A value which indicates the set of services that this
 // entity may potentially offer.  The value is a sum.
 //
@@ -424,8 +387,8 @@ impl OidKeeper for KeepSysUpTime {
     }
     fn get(&self, _oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {
         let up = self.start.elapsed().as_millis() / 10;
-        let value = up.try_into().unwrap_or(i32::MAX);
-        Ok(VarBindValue::Value(simple_from_int(value)))
+        let value = up.try_into().unwrap_or(u32::MAX);
+        Ok(VarBindValue::Value(ticks_from_int(value)))
     }
     fn get_next(&self, _oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
         Err(OidErr::OutOfRange)
@@ -753,45 +716,7 @@ impl OidKeeper for KeepSnmpInBadCommunityUses {
         self.scalar.set(oid, value)
     }
 }
-// The authoritative identification of the enterprise
-// associated with the trap currently being sent.  When an
-// SNMP proxy agent is mapping an RFC1157 Trap-PDU
-// into a SNMPv2-Trap-PDU, this variable occurs as the
-// last varbind.
 
-struct KeepSnmpTrapEnterprise {
-    scalar: ScalarMemOid,
-}
-
-impl KeepSnmpTrapEnterprise {
-    fn new() -> Self {
-        KeepSnmpTrapEnterprise {
-            scalar: ScalarMemOid::new(
-                simple_from_vec(&[1, 3, 6, 1]),
-                OType::ObjectId,
-                Access::NotificationOnly,
-            ),
-        }
-    }
-}
-
-impl OidKeeper for KeepSnmpTrapEnterprise {
-    fn is_scalar(&self, _oid: ObjectIdentifier) -> bool {
-        true
-    }
-    fn get(&self, oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {
-        self.scalar.get(oid)
-    }
-    fn get_next(&self, oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
-        self.scalar.get_next(oid)
-    }
-    fn access(&self, oid: ObjectIdentifier) -> Access {
-        self.scalar.access(oid)
-    }
-    fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
-        self.scalar.set(oid, value)
-    }
-}
 // The total number of community-based SNMP messages (for
 // example,  SNMPv1) delivered to the SNMP entity which
 // used an SNMP community name not known to said entity.
@@ -966,8 +891,7 @@ impl OidKeeper for KeepSnmpInASNParseErrs {
         true
     }
     fn get(&self, _oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {
-        let value = self.err_cnt.try_into().unwrap();
-        Ok(VarBindValue::Value(simple_from_int(value)))
+        Ok(VarBindValue::Value(counter_from_int(self.err_cnt)))
     }
     fn get_next(&self, _oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
         Err(OidErr::OutOfRange)
@@ -1627,9 +1551,9 @@ pub fn load_stub(oid_map: &mut OidMap, config: &Config, agent: &Agent) {
     let oid_snmp_out_pkts: ObjectIdentifier = ObjectIdentifier::new(&ARC_SNMP_OUT_PKTS).unwrap();
     let k_snmp_out_pkts: Box<dyn OidKeeper> = Box::new(KeepSnmpOutPkts::new());
     oid_map.push(oid_snmp_out_pkts, k_snmp_out_pkts);
-    let oid_snmp_trap_oid: ObjectIdentifier = ObjectIdentifier::new(&ARC_SNMP_TRAP_OID).unwrap();
+    /*/ let oid_snmp_trap_oid: ObjectIdentifier = ObjectIdentifier::new(&ARC_SNMP_TRAP_OID).unwrap();
     let k_snmp_trap_oid: Box<dyn OidKeeper> = Box::new(KeepSnmpTrapOID::new());
-    oid_map.push(oid_snmp_trap_oid, k_snmp_trap_oid);
+    oid_map.push(oid_snmp_trap_oid, k_snmp_trap_oid); */
     let oid_sys_services: ObjectIdentifier = ObjectIdentifier::new(&ARC_SYS_SERVICES).unwrap();
     let k_sys_services: Box<dyn OidKeeper> = Box::new(KeepSysServices::new());
     oid_map.push(oid_sys_services, k_sys_services);
@@ -1669,10 +1593,10 @@ pub fn load_stub(oid_map: &mut OidMap, config: &Config, agent: &Agent) {
     let k_snmp_in_bad_community_uses: Box<dyn OidKeeper> =
         Box::new(KeepSnmpInBadCommunityUses::new());
     oid_map.push(oid_snmp_in_bad_community_uses, k_snmp_in_bad_community_uses);
-    let oid_snmp_trap_enterprise: ObjectIdentifier =
+    /*let oid_snmp_trap_enterprise: ObjectIdentifier =
         ObjectIdentifier::new(&ARC_SNMP_TRAP_ENTERPRISE).unwrap();
     let k_snmp_trap_enterprise: Box<dyn OidKeeper> = Box::new(KeepSnmpTrapEnterprise::new());
-    oid_map.push(oid_snmp_trap_enterprise, k_snmp_trap_enterprise);
+    oid_map.push(oid_snmp_trap_enterprise, k_snmp_trap_enterprise);*/
     let oid_snmp_in_bad_community_names: ObjectIdentifier =
         ObjectIdentifier::new(&ARC_SNMP_IN_BAD_COMMUNITY_NAMES).unwrap();
     let k_snmp_in_bad_community_names: Box<dyn OidKeeper> =

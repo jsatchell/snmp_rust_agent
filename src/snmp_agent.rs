@@ -112,7 +112,12 @@ impl Agent {
             data: Pdus::Report(report),
         };
         let spd: ScopedPduData = ScopedPduData::CleartextPdu(scpd);
-        let run_time: isize = self.start_time.elapsed().as_secs().try_into().unwrap();
+        let run_time: isize = self
+            .start_time
+            .elapsed()
+            .as_secs()
+            .try_into()
+            .unwrap_or(isize::MAX);
         let usm: USMSecurityParameters = USMSecurityParameters {
             authoritative_engine_boots: Integer::from(self.boots),
             authoritative_engine_id: self.engine_id.clone(),
@@ -136,8 +141,9 @@ impl Agent {
         &self,
         message_id: Integer,
         resp: Response,
-        opt_usr: Option<&usm::User>,
+        user: &usm::User,
         usp: USMSecurityParameters,
+        encrypted: bool,
     ) -> Message {
         // Return message with matching ids etc.
         let head = HeaderData {
@@ -151,12 +157,15 @@ impl Agent {
             name: ZB,
             data: Pdus::Response(resp),
         };
-        let user_name = match opt_usr {
-            Some(user) => OctetString::copy_from_slice(&user.name),
-            None => ZB,
-        };
+        let user_name = OctetString::copy_from_slice(&user.name);
+
         let mut spd: ScopedPduData = ScopedPduData::CleartextPdu(scpd);
-        let run_time: isize = self.start_time.elapsed().as_secs().try_into().unwrap();
+        let run_time: isize = self
+            .start_time
+            .elapsed()
+            .as_secs()
+            .try_into()
+            .unwrap_or(isize::MAX);
         let mut usm: USMSecurityParameters = USMSecurityParameters {
             authoritative_engine_boots: Integer::from(self.boots),
             authoritative_engine_id: self.engine_id.clone(),
@@ -165,9 +174,8 @@ impl Agent {
             authentication_parameters: ZB,
             privacy_parameters: ZB,
         };
-        if opt_usr.is_some() {
+        if encrypted {
             usm.privacy_parameters = usp.privacy_parameters.clone();
-            let user = opt_usr.unwrap();
             let key = &user.priv_key;
             let enc_octs = rasn::ber::encode(&spd).unwrap();
             let value: Vec<u8> = privacy::encrypt(&mut enc_octs.to_vec(), usp, key);
@@ -266,14 +274,7 @@ impl Agent {
         error_status: &mut u32,
         error_index: &mut u32,
         vb_cnt: u32,
-        perm: &Perm,
-        flags: u8,
     ) {
-        if !perm.check(flags, false, &roid) {
-            *error_status = Pdu::ERROR_STATUS_NO_ACCESS;
-            *error_index = vb_cnt;
-            return;
-        }
         let opt_get: Result<usize, usize> = oid_map.search(&roid);
         match opt_get {
             Err(insert_point) => {
@@ -367,6 +368,14 @@ impl Agent {
                                         value: VarBindValue::NoSuchObject,
                                     });
                                 }
+                                OidErr::GenErr => {
+                                    *error_index = vb_cnt;
+                                    *error_status = Pdu::ERROR_STATUS_GEN_ERR;
+                                    vb.push(VarBind {
+                                        name: roid,
+                                        value: VarBindValue::Unspecified,
+                                    });
+                                }
                                 _ => {
                                     warn!("unexpected response from get_next {bad:?}")
                                 }
@@ -435,6 +444,11 @@ impl Agent {
         let request_id = r.0.request_id;
         for (vb_cnt, vbind) in r.0.variable_bindings.iter().enumerate() {
             let roid = vbind.name.clone();
+            if !perm.check(flags, false, &roid) {
+                error_status = Pdu::ERROR_STATUS_NO_ACCESS;
+                error_index = vb_cnt as u32;
+                return (error_status, error_index, request_id);
+            }
             self.do_next(
                 roid,
                 oid_map,
@@ -442,8 +456,6 @@ impl Agent {
                 &mut error_status,
                 &mut error_index,
                 vb_cnt.try_into().unwrap(),
-                perm,
-                flags,
             );
         }
         (error_status, error_index, request_id)
@@ -542,8 +554,13 @@ impl Agent {
         let max_repeats = r.0.max_repetitions;
         let mut rep_oids: Vec<ObjectIdentifier> = vec![];
         for (n, vbind) in r.0.variable_bindings.iter().enumerate() {
-            let roid = vbind.name.clone();
             if n < non_repeaters {
+                let roid = vbind.name.clone();
+                if !perm.check(flags, false, &roid) {
+                    error_status = Pdu::ERROR_STATUS_NO_ACCESS;
+                    error_index = vb_cnt;
+                    return (error_status, error_index, request_id);
+                }
                 self.do_next(
                     roid,
                     oid_map,
@@ -551,8 +568,6 @@ impl Agent {
                     &mut error_status,
                     &mut error_index,
                     vb_cnt,
-                    perm,
-                    flags,
                 );
                 vb_cnt += 1;
             } else {
@@ -565,6 +580,11 @@ impl Agent {
         for i in 0..max_repeats {
             let mut new_oids: Vec<ObjectIdentifier> = vec![];
             for roid in &rep_oids {
+                if !perm.check(flags, false, roid) {
+                    error_status = Pdu::ERROR_STATUS_NO_ACCESS;
+                    error_index = vb_cnt;
+                    return (error_status, error_index, request_id);
+                }
                 self.do_next(
                     roid.clone(),
                     oid_map,
@@ -572,8 +592,6 @@ impl Agent {
                     &mut error_status,
                     &mut error_index,
                     vb_cnt,
-                    perm,
-                    flags,
                 );
                 let last = vb.last().unwrap();
                 new_oids.push(last.name.clone());
@@ -589,13 +607,13 @@ impl Agent {
 
     /// Process a Scoped PDU, returning an Option<Response>
     ///
-    /// Returns None on unsupported PDU types, like BulkRequest
+    /// Returns None on unsupported PDU types, like Notify
     ///
     /// When everything is supported, remove Option
     fn do_scoped_pdu(
         &self,
         flags: u8,
-        opt_usr: Option<&usm::User>,
+        user: &usm::User,
         scoped_pdu: ScopedPdu,
         oid_map: &mut OidMap,
     ) -> Option<Response> {
@@ -606,11 +624,7 @@ impl Agent {
         let mut error_index = 0;
         let mut request_id = 0;
         let _context_name = scoped_pdu.name;
-        let perm = if let Some(user) = opt_usr {
-            user.perm
-        } else {
-            return None;
-        };
+        let perm = user.perm;
 
         match scoped_pdu.data {
             Pdus::GetRequest(r) => {
@@ -632,6 +646,7 @@ impl Agent {
             _ => skip_pdu = true,
         }
         if skip_pdu {
+            warn!["skip_pdu is true"];
             None
         } else {
             let pdu = Pdu {
@@ -662,7 +677,7 @@ impl Agent {
     ///
     pub fn loop_forever(&mut self, oid_map: &mut OidMap, users: usm::Users) {
         let mut buf = [0; 65100];
-        let mut opt_user: Option<&usm::User> = None;
+        let mut opt_user: Option<&usm::User>;
         // Sort by oid, the lookups use binary search.
         oid_map.sort();
         loop {
@@ -671,7 +686,7 @@ impl Agent {
             if recv_res.is_err() {
                 continue;
             }
-            opt_user = None;
+
             self.in_pkts += 1;
             let (amt, src) = recv_res.unwrap();
 
@@ -685,6 +700,8 @@ impl Agent {
                 continue;
             }
             let mut message: Message = decode_res.unwrap();
+            let resp_opt: Option<Response>;
+            let mut out_message: Message;
             let message_id = message.global_data.message_id.to_owned();
             let flags: u8 = *message.global_data.flags.first().unwrap();
 
@@ -706,6 +723,21 @@ impl Agent {
                     // FIXME should send auth failure back.
                     continue;
                 }
+            } else {
+                if let ScopedPduData::CleartextPdu(ref scoped_pdu) = message.scoped_data {
+                    // FIXME Add extra conditions here on engine_id discovery
+                    if scoped_pdu.engine_id.to_vec() == b"" {
+                        // Return EngineId if manager does not know it yet.
+                        // This has to be in clear, as engine_id is used in the
+                        // encryption.
+                        if let Pdus::GetRequest(r) = &scoped_pdu.data {
+                            let request_id = r.0.request_id;
+                            self.unknown_engine_ids += 1;
+                            self.send(src, self.id_response(request_id, message_id));
+                        }
+                    }
+                }
+                continue;
             }
             // Check the authentication
             if flags & 1 == 1 {
@@ -724,33 +756,10 @@ impl Agent {
                     continue;
                 }
             }
-
+            let user = opt_user.unwrap();
             match message.scoped_data {
                 ScopedPduData::CleartextPdu(scoped_pdu) => {
-                    // FIXME Add extra conditions here on engine_id discovery
-                    if scoped_pdu.engine_id.to_vec() == b"" {
-                        // Return EngineId if manager does not know it yet.
-                        // This has to be in clear, as engine_id is used in the
-                        // encryption.
-                        if let Pdus::GetRequest(r) = scoped_pdu.data {
-                            let request_id = r.0.request_id;
-                            self.unknown_engine_ids += 1;
-                            self.send(src, self.id_response(request_id, message_id));
-                        }
-                        continue;
-                    }
-                    let resp_opt: Option<Response> =
-                        self.do_scoped_pdu(flags, opt_user, scoped_pdu, oid_map);
-                    if resp_opt.is_none() {
-                        continue;
-                    }
-                    let resp = resp_opt.unwrap();
-                    let mut out_message = self.prepare_back(message_id, resp, None, usp);
-                    out_message.global_data.flags = message.global_data.flags;
-                    if flags & 1 == 1 {
-                        self.set_auth(&mut out_message, opt_user);
-                    }
-                    self.send(src, out_message);
+                    resp_opt = self.do_scoped_pdu(flags, user, scoped_pdu, oid_map);
                 }
                 ScopedPduData::EncryptedPdu(enc_octs) => {
                     let key = &opt_user.unwrap().priv_key;
@@ -764,26 +773,25 @@ impl Agent {
                         continue;
                     }
                     let scoped_pdu: ScopedPdu = pdu_decode_res.unwrap();
-                    let resp_opt: Option<Response> =
-                        self.do_scoped_pdu(flags, opt_user, scoped_pdu, oid_map);
-                    if resp_opt.is_none() {
-                        warn!("No response, discarding");
-                        continue;
-                    }
-                    let resp = resp_opt.unwrap();
-                    let mut out_message =
-                        self.prepare_back(message_id, resp, opt_user, usp.clone());
-                    out_message.global_data.flags = message.global_data.flags;
-                    if flags & 1 == 1 {
-                        self.set_auth(&mut out_message, opt_user);
-                    }
-                    self.send(src, out_message);
+                    resp_opt = self.do_scoped_pdu(flags, user, scoped_pdu, oid_map);
                 }
             }
+
+            if resp_opt.is_none() {
+                warn!("No response, discarding");
+                continue;
+            }
+            let resp = resp_opt.unwrap();
+            out_message = self.prepare_back(message_id, resp, user, usp, flags & 2 == 2);
+            out_message.global_data.flags = message.global_data.flags;
+            if flags & 1 == 1 {
+                self.set_auth(&mut out_message, user);
+            }
+            self.send(src, out_message);
         }
     }
 
-    fn set_auth(&self, message: &mut Message, opt_usr: Option<&usm::User>) -> Vec<u8> {
+    fn set_auth(&self, message: &mut Message, usr: &usm::User) -> Vec<u8> {
         let r_sp: Result<USMSecurityParameters, Box<dyn Display>> =
             message.decode_security_parameters(rasn::Codec::Ber);
         if r_sp.is_err() {
@@ -793,10 +801,7 @@ impl Agent {
         usp.authentication_parameters = Z12;
         let _ = message.encode_security_parameters(rasn::Codec::Ber, &usp);
         let buf = rasn::ber::encode(message).unwrap();
-        if opt_usr.is_none() {
-            return vec![];
-        }
-        let usr = opt_usr.unwrap();
+
         let auth = usr.auth_from_bytes(&buf);
         usp.authentication_parameters = OctetString::copy_from_slice(&auth);
         let _ = message.encode_security_parameters(rasn::Codec::Ber, &usp);
@@ -823,7 +828,7 @@ impl Agent {
         }
 
         let hmac = usp.authentication_parameters.clone().to_vec();
-        let our_hmac = self.set_auth(message, opt_usr);
+        let our_hmac = self.set_auth(message, opt_usr.unwrap());
         // Actually check the auth
         if hmac != our_hmac {
             debug!("Message hmac {hmac:?} ours {our_hmac:?} ");

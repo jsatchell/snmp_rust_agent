@@ -22,6 +22,7 @@ pub enum OidErr {
     NoSuchName,
     NoAccess,
     NotWritable,
+    GenErr,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]

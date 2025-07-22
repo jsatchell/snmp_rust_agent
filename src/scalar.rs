@@ -6,7 +6,7 @@ use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
 use rasn_snmp::v3::{VarBind, VarBindValue};
 use std::io::Error;
 
-use log::debug;
+use log::{debug, error};
 
 /// Simplistic scalar stored in memory.
 /// Initialized in constructor.
@@ -140,10 +140,17 @@ impl OidKeeper for PersistentScalar {
     fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
         let result = self.scalar.set(oid, value);
         if result.is_ok() {
-            let bytes = encode::<ObjectSyntax>(&self.scalar.value).unwrap();
-            let outcome = std::fs::write(&self.file_name, bytes);
-            if outcome.is_err() {
-                debug!["Write failure saving to {0}", self.file_name]
+            let bytes_res = encode::<ObjectSyntax>(&self.scalar.value);
+            match bytes_res {
+                Ok(bytes) => {
+                    let outcome = std::fs::write(&self.file_name, bytes);
+                    if outcome.is_err() {
+                        error!["Write failure saving to {0}", self.file_name]
+                    }
+                }
+                Err(err) => {
+                    error!["Persistence failure {err:?}"];
+                }
             }
         }
         result
@@ -212,7 +219,8 @@ mod tests {
         let res = pscl.get(oid2.clone());
         assert!(res.is_ok());
         assert_eq!(res.unwrap(), VarBindValue::Value(s17.clone()));
-        pscl.load();
+        let load_res = pscl.load();
+        assert!(load_res.is_ok());
         let res = pscl.get(oid2);
         assert!(res.is_ok());
         assert_eq!(res.unwrap(), VarBindValue::Value(s17.clone()));
