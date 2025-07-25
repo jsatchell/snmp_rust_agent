@@ -12,6 +12,9 @@
 //!
 //! These keys are optional, and zero length strings will be used if they are absent.
 //! * Contact - name and email (or other) address for person responsible for system where Agent is running
+//! * TrapSink - address and port where Trap PDUs will be sent when the agent has trap support.
+//!
+//! Panics if the file cannot be found, has missing keys or on parse errors.
 //!
 
 use crate::engine_id;
@@ -25,6 +28,7 @@ pub struct Config {
     pub listen: String,
     pub storage_path: String,
     pub contact: String,
+    pub trap_sink: String,
 }
 
 const CONF_FILES: [&str; 3] = [
@@ -40,6 +44,7 @@ impl Config {
         let mut contact = "".to_string();
         let mut storage_path = "".to_string();
         let mut listen = "".to_string();
+        let mut trap_sink = "".to_string();
         let mut got_eid = false;
         let mut got_fqdn = false;
         let mut got_listen = false;
@@ -64,7 +69,10 @@ impl Config {
                     got_path = true;
                 }
                 "Contact" => contact = parts[1].to_string(),
-                _ => {}
+                "TrapSink" => trap_sink = parts[1].to_string(),
+                _ => {
+                    debug!("Unexpected keyword in config file {0}", parts[0]);
+                }
             }
         }
         if got_eid && got_fqdn && got_listen && got_path {
@@ -91,9 +99,13 @@ impl Config {
             listen,
             storage_path,
             contact,
+            trap_sink,
         }
     }
 
+    /// Create a config struct by searching for file in well known places.
+    ///
+    ///  Panics if the file cannot be found, does not contain all the compulsory keys or on parse errors.
     pub fn load() -> Self {
         for name in CONF_FILES {
             let good = exists(name);

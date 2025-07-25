@@ -40,12 +40,30 @@ impl OidMap {
 
     /// Binary search for trait object associated with oid, or insert point if not exact match
     pub fn search(&self, oid: &ObjectIdentifier) -> Result<usize, usize> {
-        self.store.binary_search_by(|a| a.0.cmp(oid))
+        self.store.binary_search_by(|a| {
+            let al = a.0.len();
+            let b = if oid.len() > al {
+                oid.get(0..al).unwrap()
+            } else {
+                oid
+            };
+            //let ob = &ObjectIdentifier::new(b).unwrap();
+            a.0.to_vec().cmp(&b.to_vec())
+        })
     }
 
     /// Return trait object that owns next key after oid, if found.
     pub fn search_next(&mut self, oid: &ObjectIdentifier) -> Option<&mut Box<dyn OidKeeper>> {
-        let bin_res = self.store.binary_search_by(|a| a.0.cmp(oid));
+        let bin_res = self.store.binary_search_by(|a| {
+            let al = a.0.len();
+            let b = if oid.len() > al {
+                oid.get(0..al).unwrap()
+            } else {
+                oid
+            };
+            //let ob = &ObjectIdentifier::new(b).unwrap();
+            a.0.to_vec().cmp(&b.to_vec())
+        });
         match bin_res {
             Ok(which) => {
                 if which < self.store.len() - 1 {

@@ -215,33 +215,13 @@ impl Agent {
             match opt_get {
                 Err(insert_point) => {
                     debug!("Get miss case {insert_point}");
-                    let okeep = &mut oid_map.idx(insert_point - 1);
-                    if okeep.is_scalar(roid.clone()) {
-                        debug!("Scalar get ");
-                        error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
-                        vb.push(VarBind {
-                            name: roid,
-                            value: VarBindValue::NoSuchObject,
-                        });
-                        error_index = vb_cnt;
-                    } else {
-                        debug!("Table get ");
-                        let get_res = okeep.get(roid.clone());
-                        debug!("Table get {get_res:?}");
-                        match get_res {
-                            Ok(res) => vb.push(VarBind {
-                                name: roid.clone(),
-                                value: res,
-                            }),
-                            Err(_) => {
-                                error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
-                                vb.push(VarBind {
-                                    name: roid,
-                                    value: VarBindValue::NoSuchObject,
-                                });
-                            }
-                        }
-                    }
+                    error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
+                    vb.push(VarBind {
+                        name: roid,
+                        value: VarBindValue::NoSuchObject,
+                    });
+                    error_index = vb_cnt;
+                    break;
                 }
                 Ok(which) => {
                     vb_cnt += 1;
@@ -259,6 +239,7 @@ impl Agent {
                             value: VarBindValue::NoSuchInstance,
                         });
                         error_index = vb_cnt;
+                        break;
                     }
                 }
             }
@@ -284,11 +265,23 @@ impl Agent {
                     let oid1 = oid_map.oid(0).clone();
                     let okeep = &mut oid_map.idx(0);
                     if okeep.is_scalar(oid1.clone()) {
-                        let value = okeep.get(oid1.clone()).unwrap();
-                        vb.push(VarBind {
-                            name: oid1.clone(),
-                            value,
-                        });
+                        let value_res = okeep.get(oid1.clone());
+                        match value_res {
+                            Ok(value) => vb.push(VarBind {
+                                name: oid1.clone(),
+                                value,
+                            }),
+                            Err(_err) => {
+                                // FIXME map errors
+                                *error_index = vb_cnt;
+                                *error_status = Pdu::ERROR_STATUS_GEN_ERR;
+                                vb.push(VarBind {
+                                    name: oid1.clone(),
+                                    value: VarBindValue::Unspecified,
+                                });
+                                return;
+                            }
+                        };
                     } else {
                         match okeep.get_next(oid1.clone()) {
                             Ok(bind) => vb.push(bind),
@@ -298,7 +291,7 @@ impl Agent {
                             }),
                         }
                     }
-                } else if insert_point > oid_map.len() {
+                } else if insert_point >= oid_map.len() {
                     debug!("miss case {insert_point} >= oid_map.len()");
                     vb.push(VarBind {
                         name: roid.clone(),
@@ -386,7 +379,7 @@ impl Agent {
             }
             Ok(which) => {
                 debug!("hit case {which}");
-                if which == oid_map.len() - 1 {
+                if which == oid_map.len() - 1 && oid_map.idx(which).is_scalar(roid.clone()) {
                     debug!("End of oids, ");
                     // This should error and generate a report?
                     vb.push(VarBind {
@@ -413,16 +406,38 @@ impl Agent {
                     };
                 } else {
                     let okeep = &mut oid_map.idx(which);
-                    debug!("Trying okeep");
+                    debug!("Trying okeep ");
                     let gn_res = okeep.get_next(roid.clone());
+                    debug!("gn_res {gn_res:?}");
                     match gn_res {
                         Ok(nvb) => vb.push(nvb),
                         //FIXME More cases here - permissions, general error etc, not just end
-                        Err(_) => {
-                            vb.push(VarBind {
-                                name: roid.clone(),
-                                value: VarBindValue::EndOfMibView,
-                            });
+                        Err(err) => {
+                            if err == OidErr::OutOfRange && which < oid_map.len() - 1 {
+                                let next_oid: ObjectIdentifier = oid_map.oid(which + 1).clone();
+
+                                let okeep = &mut oid_map.idx(which + 1);
+                                if okeep.is_scalar(next_oid.clone()) {
+                                    let value_res = okeep.get(next_oid.clone());
+                                    match value_res {
+                                        Err(_) => vb.push(VarBind {
+                                            name: next_oid.clone(),
+                                            value: VarBindValue::Unspecified,
+                                        }),
+                                        Ok(value) => vb.push(VarBind {
+                                            name: next_oid.clone(),
+                                            value,
+                                        }),
+                                    }
+                                } else {
+                                    vb.push(okeep.get_next(roid.clone()).unwrap());
+                                };
+                            } else {
+                                vb.push(VarBind {
+                                    name: roid.clone(),
+                                    value: VarBindValue::EndOfMibView,
+                                });
+                            }
                         }
                     }
                 }
@@ -457,10 +472,17 @@ impl Agent {
                 &mut error_index,
                 vb_cnt.try_into().unwrap(),
             );
+            if error_status != Pdu::ERROR_STATUS_NO_ERROR {
+                break;
+            }
         }
         (error_status, error_index, request_id)
     }
 
+    /// Make changes!
+    ///
+    /// Current implementation is not transactional, and does not return full set of errors.
+    ///
     fn set(
         &self,
         oid_map: &mut OidMap,
@@ -469,6 +491,7 @@ impl Agent {
         perm: &Perm,
         flags: u8,
     ) -> (u32, u32, i32) {
+        // FIXME need to do two passes - validation, error return if need be and then actually apply the changes.
         let mut error_status = Pdu::ERROR_STATUS_NO_ERROR;
         let mut error_index = 0;
         let request_id = r.0.request_id;
@@ -569,6 +592,9 @@ impl Agent {
                     &mut error_index,
                     vb_cnt,
                 );
+                if error_status != Pdu::ERROR_STATUS_NO_ERROR {
+                    return (error_status, error_index, request_id);
+                }
                 vb_cnt += 1;
             } else {
                 // construct repeater row
@@ -593,6 +619,9 @@ impl Agent {
                     &mut error_index,
                     vb_cnt,
                 );
+                if error_status != Pdu::ERROR_STATUS_NO_ERROR {
+                    return (error_status, error_index, request_id);
+                }
                 let last = vb.last().unwrap();
                 new_oids.push(last.name.clone());
                 vb_cnt += 1;
@@ -739,6 +768,7 @@ impl Agent {
                 }
                 continue;
             }
+            let user = opt_user.unwrap();
             // Check the authentication
             if flags & 1 == 1 {
                 // FIXME
@@ -751,12 +781,12 @@ impl Agent {
                     warn!("Authentication parameters must be 12 bytes");
                     continue;
                 }
-                if self.wrong_auth(&mut message, opt_user, usp.clone()) {
+                if self.wrong_auth(&mut message, user, usp.clone()) {
                     warn!("Wrong auth, dropping");
                     continue;
                 }
             }
-            let user = opt_user.unwrap();
+
             match message.scoped_data {
                 ScopedPduData::CleartextPdu(scoped_pdu) => {
                     resp_opt = self.do_scoped_pdu(flags, user, scoped_pdu, oid_map);
@@ -812,15 +842,24 @@ impl Agent {
     fn wrong_auth(
         &mut self,
         message: &mut Message,
-        opt_usr: Option<&usm::User>,
+        user: &usm::User,
         usp: USMSecurityParameters,
     ) -> bool {
-        if opt_usr.is_none() {
-            warn!("User is none");
+        let boots: isize = usp
+            .authoritative_engine_boots
+            .try_into()
+            .unwrap_or(isize::MAX);
+        if boots != self.boots {
+            self.not_in_time_window += 1;
             return true;
         }
-        let run_time: i32 = self.start_time.elapsed().as_secs().try_into().unwrap();
-        let man_time: i32 = usp.authoritative_engine_time.try_into().unwrap();
+        let run_time: i32 = self
+            .start_time
+            .elapsed()
+            .as_secs()
+            .try_into()
+            .unwrap_or(i32::MAX);
+        let man_time: i32 = usp.authoritative_engine_time.try_into().unwrap_or(i32::MAX);
         let delta_t: i32 = man_time - run_time;
         if !(-150..=150).contains(&delta_t) {
             self.not_in_time_window += 1;
@@ -828,7 +867,7 @@ impl Agent {
         }
 
         let hmac = usp.authentication_parameters.clone().to_vec();
-        let our_hmac = self.set_auth(message, opt_usr.unwrap());
+        let our_hmac = self.set_auth(message, user);
         // Actually check the auth
         if hmac != our_hmac {
             debug!("Message hmac {hmac:?} ours {our_hmac:?} ");
@@ -837,4 +876,146 @@ impl Agent {
         }
         false
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::keeper::{Access, OType, OidKeeper};
+    use crate::oidmap;
+    use crate::table::TableMemOid;
+
+    fn make_agent(port: &str) -> Agent {
+        let eid = OctetString::from_static(b"test");
+        let addr = "127.0.0.1:".to_owned() + port;
+        Agent::build(eid, &addr)
+    }
+
+    fn get_pdu(arg: &'static [u32]) -> GetRequest {
+        let vb = vec![VarBind {
+            name: ObjectIdentifier::new(arg).unwrap(),
+            value: VarBindValue::Unspecified,
+        }];
+        let pdu = Pdu {
+            request_id: 1,
+            error_status: 0,
+            error_index: 0,
+            variable_bindings: vb,
+        };
+        GetRequest(pdu)
+    }
+
+    fn get_next_pdu(arg: &'static [u32]) -> GetNextRequest {
+        let vb = vec![VarBind {
+            name: ObjectIdentifier::new(arg).unwrap(),
+            value: VarBindValue::Unspecified,
+        }];
+        let pdu = Pdu {
+            request_id: 1,
+            error_status: 0,
+            error_index: 0,
+            variable_bindings: vb,
+        };
+        GetNextRequest(pdu)
+    }
+    fn simple_from_int(value: i32) -> ObjectSyntax {
+        ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(value)))
+    }
+
+    fn simple_from_str(value: &[u8]) -> ObjectSyntax {
+        ObjectSyntax::Simple(SimpleSyntax::String(OctetString::copy_from_slice(value)))
+    }
+
+    const ARC2: [u32; 2] = [1, 6];
+    //const ARC3: [u32; 5] = [1, 6, 1, 2, 1];
+
+    fn tab_fixture() -> Box<dyn OidKeeper> {
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap();
+        let first = simple_from_str(b"abc");
+        let last = simple_from_str(b"xyz");
+        let blank = simple_from_str(b"");
+        let s0 = simple_from_int(0);
+        let s42 = simple_from_int(42);
+        let s41 = simple_from_int(41);
+        let s4 = simple_from_int(4);
+        let s5 = simple_from_int(5);
+        Box::new(TableMemOid::new(
+            vec![
+                vec![first.clone(), s4.clone(), s41.clone()],
+                vec![last.clone(), s5.clone(), s42.clone()],
+            ],
+            vec![blank.clone(), s0.clone(), s0.clone()],
+            3,
+            &oid2,
+            vec![OType::String, OType::Integer, OType::Integer],
+            vec![Access::ReadOnly, Access::ReadOnly, Access::ReadWrite],
+            vec![1usize, 2usize],
+            false,
+        ))
+    }
+
+    fn make_oid_map() -> OidMap {
+        let mut om = oidmap::OidMap::new();
+        let tab = tab_fixture();
+        let oid = ObjectIdentifier::new(&ARC2).unwrap();
+        om.push(oid, tab);
+        om
+    }
+
+    fn perms() -> Vec<Perm> {
+        vec![Perm {
+            read: true,
+            write: true,
+            security_level: 1u8, // Just flags
+            group_name: "test".as_bytes().to_vec(),
+        }]
+    }
+
+    #[test]
+    fn test_get() {
+        let agent = make_agent("3161");
+        let gp = get_pdu(&ARC2);
+        let mut vb: Vec<VarBind> = vec![];
+        let mut oid_map = make_oid_map();
+        let (status, idx, r_id) = agent.get(&mut oid_map, gp, &mut vb, &perms()[0], 3);
+        assert_eq!(r_id, 1);
+        assert_eq!(idx, 1);
+        assert_eq!(status, Pdu::ERROR_STATUS_NO_SUCH_NAME);
+        assert_eq!(vb.len(), 1);
+        vb.clear();
+        let gp = get_pdu(&[1, 6, 1, 2, 3, 120, 121, 122, 5]);
+        let (status, idx, r_id) = agent.get(&mut oid_map, gp, &mut vb, &perms()[0], 3);
+        assert_eq!(r_id, 1);
+        assert_eq!(idx, 0);
+        assert_eq!(status, Pdu::ERROR_STATUS_NO_ERROR);
+        assert_eq!(vb.len(), 1);
+        assert_eq!(vb[0].value, VarBindValue::Value(simple_from_int(5)));
+    }
+
+    #[test]
+    fn test_get_next() {
+        let agent = make_agent("3162");
+        let gp = get_next_pdu(&ARC2);
+        let mut vb: Vec<VarBind> = vec![];
+        let mut oid_map = make_oid_map();
+        let (status, idx, r_id) = agent.getnext(&mut oid_map, gp, &mut vb, &perms()[0], 3);
+        println!("{status} {idx} {r_id}");
+        assert_eq!(r_id, 1);
+        assert_eq!(idx, 0);
+        assert_eq!(status, Pdu::ERROR_STATUS_NO_ERROR);
+        assert_eq!(vb.len(), 1);
+        vb.clear();
+        let gp = get_next_pdu(&[1, 6, 1, 2, 3, 120, 121, 122, 5]);
+        let (status, idx, r_id) = agent.getnext(&mut oid_map, gp, &mut vb, &perms()[0], 3);
+        println!("{status} {idx} {r_id}");
+        assert_eq!(r_id, 1);
+        assert_eq!(idx, 0);
+        assert_eq!(status, Pdu::ERROR_STATUS_NO_ERROR);
+        assert_eq!(vb.len(), 1);
+        assert_eq!(vb[0].value, VarBindValue::Value(simple_from_int(41)));
+    }
+
+    // FIXME add tests for set and bulk, and maybe do at least some through do_scoped_pdu.
+    // Maybe do some cfg[test] to allow testing of main loop code? Or refactor into small loop
+    // and handle_packet?
 }
