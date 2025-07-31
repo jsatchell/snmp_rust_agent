@@ -88,6 +88,15 @@ impl OidKeeper for KeepUsmStatsUnknownUserNames {
     ) -> Result<VarBindValue, OidErr> {
         Err(OidErr::NotWritable)
     }
+    fn begin_transaction(&mut self) -> Result<(), OidErr> {
+        Ok(())
+    }
+    fn commit(&mut self) -> Result<(), OidErr> {
+        Ok(())
+    }
+    fn rollback(&mut self) -> Result<(), OidErr> {
+        Ok(())
+    }
 }
 // An advisory lock used to allow several cooperating
 // Command Generator Applications to coordinate their
@@ -134,6 +143,15 @@ impl OidKeeper for KeepUsmUserSpinLock {
     fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value)
     }
+    fn begin_transaction(&mut self) -> Result<(), OidErr> {
+        self.scalar.begin_transaction()
+    }
+    fn commit(&mut self) -> Result<(), OidErr> {
+        self.scalar.commit()
+    }
+    fn rollback(&mut self) -> Result<(), OidErr> {
+        self.scalar.rollback()
+    }
 }
 // The total number of packets received by the SNMP
 // engine which were dropped because they didn't
@@ -171,6 +189,15 @@ impl OidKeeper for KeepUsmStatsWrongDigests {
         _value: VarBindValue,
     ) -> Result<VarBindValue, OidErr> {
         Err(OidErr::NotWritable)
+    }
+    fn begin_transaction(&mut self) -> Result<(), OidErr> {
+        Ok(())
+    }
+    fn commit(&mut self) -> Result<(), OidErr> {
+        Ok(())
+    }
+    fn rollback(&mut self) -> Result<(), OidErr> {
+        Ok(())
     }
 }
 // The total number of packets received by the SNMP
@@ -210,6 +237,15 @@ impl OidKeeper for KeepUsmStatsDecryptionErrors {
     ) -> Result<VarBindValue, OidErr> {
         Err(OidErr::NotWritable)
     }
+    fn begin_transaction(&mut self) -> Result<(), OidErr> {
+        Ok(())
+    }
+    fn commit(&mut self) -> Result<(), OidErr> {
+        Ok(())
+    }
+    fn rollback(&mut self) -> Result<(), OidErr> {
+        Ok(())
+    }
 }
 // The total number of packets received by the SNMP
 // engine which were dropped because they referenced an
@@ -243,6 +279,15 @@ impl OidKeeper for KeepUsmStatsUnknownEngineIDs {
     }
     fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value)
+    }
+    fn begin_transaction(&mut self) -> Result<(), OidErr> {
+        self.scalar.begin_transaction()
+    }
+    fn commit(&mut self) -> Result<(), OidErr> {
+        self.scalar.commit()
+    }
+    fn rollback(&mut self) -> Result<(), OidErr> {
+        self.scalar.rollback()
     }
 }
 // The total number of packets received by the SNMP
@@ -282,6 +327,15 @@ impl OidKeeper for KeepUsmStatsNotInTimeWindows {
     ) -> Result<VarBindValue, OidErr> {
         Err(OidErr::NotWritable)
     }
+        fn begin_transaction(&mut self) -> Result<(), OidErr> {
+        Ok(())
+    }
+    fn commit(&mut self) -> Result<(), OidErr> {
+        Ok(())
+    }
+    fn rollback(&mut self) -> Result<(), OidErr> {
+        Ok(())
+    }
 }
 // The total number of packets received by the SNMP
 // engine which were dropped because they requested a
@@ -320,6 +374,15 @@ impl OidKeeper for KeepUsmStatsUnsupportedSecLevels {
         _value: VarBindValue,
     ) -> Result<VarBindValue, OidErr> {
         Err(OidErr::NotWritable)
+    }
+    fn begin_transaction(&mut self) -> Result<(), OidErr> {
+        Ok(())
+    }
+    fn commit(&mut self) -> Result<(), OidErr> {
+        Ok(())
+    }
+    fn rollback(&mut self) -> Result<(), OidErr> {
+        Ok(())
     }
 }
 // A user configured in the SNMP engine's Local
@@ -430,6 +493,15 @@ impl OidKeeper for KeepUsmUserTable {
     }
     fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
         self.table.set(oid, value)
+    }
+    fn begin_transaction(&mut self) -> Result<(), OidErr> {
+        self.table.begin_transaction()
+    }
+    fn commit(&mut self) -> Result<(), OidErr> {
+        self.table.commit()
+    }
+    fn rollback(&mut self) -> Result<(), OidErr> {
+        self.table.rollback()
     }
 }
 

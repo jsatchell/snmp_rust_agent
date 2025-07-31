@@ -14,6 +14,8 @@ pub struct ScalarMemOid {
     value: ObjectSyntax,
     otype: OType,
     access: Access,
+    transaction: bool,
+    pending: ObjectSyntax,
 }
 
 impl ScalarMemOid {
@@ -32,9 +34,11 @@ impl ScalarMemOid {
             panic!("Initial value is unexpected type {otype:?} {value:?}");
         }
         ScalarMemOid {
-            value,
+            value: value.clone(),
             otype,
             access,
+            transaction: false,
+            pending: value,
         }
     }
 }
@@ -61,8 +65,21 @@ impl OidKeeper for ScalarMemOid {
         self.access
     }
 
+    fn begin_transaction(&mut self) -> Result<(), OidErr> {
+        if self.transaction {
+            self.transaction = false;
+            Err(OidErr::WrongType)
+        } else {
+            self.transaction = true;
+            Ok(())
+        }
+    }
+
     fn set(&mut self, _oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
         if self.access == Access::ReadCreate || self.access == Access::ReadWrite {
+            if ! self.transaction {
+                return Err(OidErr::WrongType);
+            }
             if let VarBindValue::Value(new_value) = value.clone() {
                 if check_type(self.otype, &new_value) {
                     if self.otype == OType::TestAndIncr {
@@ -74,13 +91,13 @@ impl OidKeeper for ScalarMemOid {
                                     incr32 = 0u32;
                                 }
                                 let incr1 = Integer::from(incr32);
-                                self.value = ObjectSyntax::Simple(SimpleSyntax::Integer(incr1));
+                                self.pending = ObjectSyntax::Simple(SimpleSyntax::Integer(incr1));
                             }
                         } else {
                             return Err(OidErr::OutOfRange); // InconsistentValue
                         }
                     }
-                    self.value = new_value;
+                    self.pending = new_value;
                 } else {
                     return Err(OidErr::WrongType);
                 }
@@ -89,6 +106,17 @@ impl OidKeeper for ScalarMemOid {
         } else {
             Err(OidErr::NotWritable)
         }
+    }
+
+    fn commit(&mut self) -> Result<(), OidErr> {
+        self.value = self.pending.clone();
+        self.transaction = false;
+        Ok(())
+    }
+
+    fn rollback(&mut self) -> Result<(), OidErr> {
+        self.transaction = false;
+        Ok(())
     }
 }
 
@@ -137,23 +165,34 @@ impl OidKeeper for PersistentScalar {
         self.scalar.access(oid)
     }
 
+    fn begin_transaction(&mut self) -> Result<(), OidErr> {
+        self.scalar.begin_transaction()
+    }
+
     fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
-        let result = self.scalar.set(oid, value);
-        if result.is_ok() {
-            let bytes_res = encode::<ObjectSyntax>(&self.scalar.value);
-            match bytes_res {
-                Ok(bytes) => {
-                    let outcome = std::fs::write(&self.file_name, bytes);
-                    if outcome.is_err() {
-                        error!["Write failure saving to {0}", self.file_name]
-                    }
-                }
-                Err(err) => {
-                    error!["Persistence failure {err:?}"];
+        self.scalar.set(oid, value)
+
+    }
+
+    fn rollback(&mut self) -> Result<(), OidErr> {
+        self.scalar.rollback()
+    }
+
+    fn commit(&mut self) -> Result<(), OidErr> {
+        let comm_res =  self.scalar.commit();
+        let bytes_res = encode::<ObjectSyntax>(&self.scalar.value);
+        match bytes_res {
+            Ok(bytes) => {
+                let outcome = std::fs::write(&self.file_name, bytes);
+                if outcome.is_err() {
+                    error!["Write failure saving to {0}", self.file_name]
                 }
             }
+            Err(err) => {
+                error!["Persistence failure {err:?}"];
+            }
         }
-        result
+        comm_res
     }
 }
 
@@ -214,8 +253,11 @@ mod tests {
         let mut pscl = pscl_fixture();
         let s17 = simple_from_int(17);
         let vb = VarBindValue::Value(s17.clone());
+        let b_res = pscl.begin_transaction();
+        assert!(b_res.is_ok());
         let set_rs = pscl.set(oid2.clone(), vb);
         assert!(set_rs.is_ok());
+        let c_res = pscl.commit();
         let res = pscl.get(oid2.clone());
         assert!(res.is_ok());
         assert_eq!(res.unwrap(), VarBindValue::Value(s17.clone()));

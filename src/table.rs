@@ -203,6 +203,7 @@ impl TableMemOid {
         for i in index {
             tmp.push(*i); // However many pieces of index
         }
+        // Should be OK if base is OK, unless index very long, and we hit length limit.
         ObjectIdentifier::new(tmp).unwrap().to_owned()
     }
 }
@@ -259,7 +260,7 @@ impl OidKeeper for TableMemOid {
                 .position(|p| {
                     *p == Access::ReadOnly || *p == Access::ReadWrite || *p == Access::ReadCreate
                 })
-                .unwrap()
+                .unwrap_or(1)  // If nothing is readable, arbitrarily use fisrt
         } else {
             suffix[1] as usize
         };
@@ -329,6 +330,10 @@ impl OidKeeper for TableMemOid {
             return Access::NoAccess;
         }
         self.access[col - 1]
+    }
+
+    fn begin_transaction(&mut self) -> Result<(), OidErr> {
+        Ok(())
     }
 
     /// Supports updating existing cells, NOT YET new row creation via RowStatus column
@@ -428,6 +433,14 @@ impl OidKeeper for TableMemOid {
             }
         }
         Err(OidErr::NoSuchInstance)
+    }
+
+    fn commit(&mut self) -> Result<(), OidErr> {
+        Ok(())
+    }
+
+    fn rollback(&mut self) -> Result<(), OidErr> {
+        Ok(())
     }
 }
 

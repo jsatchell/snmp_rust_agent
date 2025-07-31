@@ -87,6 +87,16 @@ pub trait OidKeeper {
     /// Return the access for the given Oid
     fn access(&self, oid: ObjectIdentifier) -> Access;
 
+    /// Start a set transaction
+    fn begin_transaction(&mut self) -> Result<(), OidErr>;
+
     /// Set a value, if permitted
+    /// Transaction must be active!
     fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr>;
+
+    /// Commit the transaction
+    fn commit(&mut self) -> Result<(), OidErr>;
+
+    /// Rollback the transaction
+    fn rollback(&mut self) -> Result<(), OidErr>;
 }
