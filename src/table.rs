@@ -12,6 +12,7 @@ pub const ROW_STATUS_CREATE_AND_GO: u32 = 4u32;
 pub const ROW_STATUS_CREATE_AND_WAIT: u32 = 5u32;
 pub const ROW_STATUS_DESTROY: u32 = 6u32;
 
+#[derive(PartialEq, Eq, Hash)]
 pub struct TableMemOid {
     rows: Vec<(Vec<u32>, Vec<ObjectSyntax>)>,
     default_row: Vec<ObjectSyntax>,
@@ -20,7 +21,9 @@ pub struct TableMemOid {
     otypes: Vec<OType>,
     access: Vec<Access>,
     index_cols: Vec<usize>,
+    pending: Vec<(Vec<u32>, VarBindValue)>,
     implied_last: bool,
+    in_transaction: bool,
 }
 
 impl TableMemOid {
@@ -52,7 +55,9 @@ impl TableMemOid {
             otypes,
             access,
             index_cols,
+            pending: vec![],
             implied_last,
+            in_transaction: false,
         }
     }
 
@@ -260,7 +265,7 @@ impl OidKeeper for TableMemOid {
                 .position(|p| {
                     *p == Access::ReadOnly || *p == Access::ReadWrite || *p == Access::ReadCreate
                 })
-                .unwrap_or(1)  // If nothing is readable, arbitrarily use fisrt
+                .unwrap_or(1) // If nothing is readable, arbitrarily use fisrt
         } else {
             suffix[1] as usize
         };
@@ -333,11 +338,27 @@ impl OidKeeper for TableMemOid {
     }
 
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
+        if self.in_transaction {
+            warn!("Begin transaction - but already in transaction!");
+            return Err(OidErr::GenErr);
+        }
+        self.pending.clear(); // Defensive - rollback or commit should have done this
+        self.in_transaction = true;
         Ok(())
     }
 
-    /// Supports updating existing cells, NOT YET new row creation via RowStatus column
+    /// Supports updating existing cells, and new row creation via RowStatus column using CreateAndWait
+    ///
+    /// CreateAndGo will be in future version
+    ///
+    /// This doesn't actual make changes yet, but does checking, and adds the arguments
+    /// to the pending transaction. If the whole PDU is OK, then the transaction is applied.
+    /// If an error is found, possibly from a completely different MIB, then the transaction is rolled back.
     fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
+        if !self.in_transaction {
+            warn!("Not in transaction in set");
+            return Err(OidErr::GenErr);
+        }
         let suffix = self.suffix(oid);
         debug!("Suffix is {suffix:?}");
         // Complex indices (not integer and/or multicolumn need longer than 2)
@@ -366,80 +387,135 @@ impl OidKeeper for TableMemOid {
             }
             _ => {}
         }
+        if let VarBindValue::Value(new_value) = value.clone() {
+            if !check_type(self.otypes[col - 1], &new_value) {
+                return Err(OidErr::WrongType);
+            }
+        }
         let index = &suffix[2..];
-        let mut delete_me = false;
-        let mut delete_idx: usize = 0;
-        for row in &mut self.rows {
-            if index == row.0 {
-                if let VarBindValue::Value(new_value) = value.clone() {
-                    if check_type(self.otypes[col - 1], &new_value) {
-                        if self.otypes[col - 1] == OType::RowStatus {
-                            if new_value
-                                == ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(
-                                    ROW_STATUS_DESTROY,
-                                )))
-                            {
-                                delete_me = true;
-                                break;
-                            } else if new_value
-                                == ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(
-                                    ROW_STATUS_ACTIVE,
-                                )))
-                                || new_value
-                                    == ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(
-                                        ROW_STATUS_NOT_IN_SERVICE,
-                                    )))
-                            {
-                                return Ok(value);
-                            } else {
-                                return Err(OidErr::WrongType);
-                            }
-                        } else {
-                            row.1[col - 1] = new_value;
-                            return Ok(value);
-                        }
-                    } else {
-                        return Err(OidErr::WrongType);
+        let s_res = self.rows.binary_search_by(|a| a.0.cmp(&index.to_vec()));
+        if s_res.is_err() {
+            // Then it is either row creation, or refers to a row created earlier the transaction,
+            // or it is an error.
+            // Is there a pending row with this index?
+            for (pidx, _) in &self.pending {
+                if pidx[2..] == *index {
+                    self.pending.push((suffix, value.clone()));
+                    return Ok(value);
+                }
+            }
+            // Is it row creation?
+            if let VarBindValue::Value(new_value) = value.clone() {
+                if self.otypes[col - 1] == OType::RowStatus {
+                    if new_value
+                        == ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(
+                            ROW_STATUS_CREATE_AND_WAIT,
+                        )))
+                    {
+                        self.pending.push((suffix, value.clone()));
+                        return Ok(value);
                     }
                 }
             }
-            delete_idx += 1;
+            // Then it is an error
+            return Err(OidErr::NoSuchInstance);
         }
-        if delete_me {
-            self.rows.remove(delete_idx);
-            return Ok(value);
-        }
-        // No existing row matches. So either it is a row creation request
-        // or an error.
-        if let VarBindValue::Value(new_value) = value.clone() {
-            if self.otypes[col - 1] == OType::RowStatus {
-                if new_value
-                    == ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(
-                        ROW_STATUS_CREATE_AND_WAIT,
-                    )))
-                {
-                    let row = self.row_from_index(index);
-                    self.add_row(&row);
-                    return Ok(value);
-                }
-                if new_value
-                    == ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(
-                        ROW_STATUS_CREATE_AND_GO,
-                    )))
-                {
-                    warn!["CreateAndGo not supported"];
-                    return Err(OidErr::WrongType);
-                }
-            }
-        }
-        Err(OidErr::NoSuchInstance)
+        self.pending.push((suffix, value.clone()));
+        Ok(value)
     }
 
     fn commit(&mut self) -> Result<(), OidErr> {
+        if !self.in_transaction {
+            warn!("Commit - but not in transaction!");
+            // Should raise some sort of error?
+        }
+        self.in_transaction = false;
+        let pending = self.pending.clone();
+        for (suffix, value) in pending {
+            let col: usize = suffix[1] as usize;
+            let index = &suffix[2..];
+            let mut delete_me = false;
+            let mut delete_idx: usize = 0;
+            let s_res = self.rows.binary_search_by(|a| a.0.cmp(&index.to_vec()));
+            match s_res {
+                Ok(sidx) => {
+                    let row = &mut self.rows[sidx];
+                    if let VarBindValue::Value(new_value) = value.clone() {
+                        if check_type(self.otypes[col - 1], &new_value) {
+                            if self.otypes[col - 1] == OType::RowStatus {
+                                if new_value
+                                    == ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(
+                                        ROW_STATUS_DESTROY,
+                                    )))
+                                {
+                                    delete_me = true;
+                                    delete_idx = sidx;
+                                } else if new_value
+                                    == ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(
+                                        ROW_STATUS_ACTIVE,
+                                    )))
+                                    || new_value
+                                        == ObjectSyntax::Simple(SimpleSyntax::Integer(
+                                            Integer::from(ROW_STATUS_NOT_IN_SERVICE),
+                                        ))
+                                {
+                                    continue;
+                                } else {
+                                    return Err(OidErr::WrongType);
+                                }
+                            } else {
+                                row.1[col - 1] = new_value;
+                                continue;
+                            }
+                        } else {
+                            return Err(OidErr::WrongType);
+                        }
+                    }
+                    if delete_me {
+                        self.rows.remove(delete_idx);
+                        continue;
+                    }
+                }
+                Err(_) => {
+                    println!("index not matched in set {index:?}");
+                    if let VarBindValue::Value(new_value) = value.clone() {
+                        if self.otypes[col - 1] == OType::RowStatus {
+                            if new_value
+                                == ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(
+                                    ROW_STATUS_CREATE_AND_WAIT,
+                                )))
+                            {
+                                let row: Vec<ObjectSyntax> = self.row_from_index(index);
+                                self.add_row(&row);
+                                continue;
+                            }
+                            if new_value
+                                == ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(
+                                    ROW_STATUS_CREATE_AND_GO,
+                                )))
+                            {
+                                warn!["CreateAndGo not supported"];
+                                return Err(OidErr::WrongType);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // No existing row matches. So either it is a row creation request
+            // or an error.
+        }
+        self.pending.clear();
         Ok(())
     }
 
     fn rollback(&mut self) -> Result<(), OidErr> {
+        if !self.in_transaction {
+            warn!("Rollback - but not in transaction!");
+            // Should raise some sort of error?
+        }
+        self.in_transaction = false;
+        self.pending.clear();
         Ok(())
     }
 }
@@ -560,7 +636,7 @@ mod tests {
         let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap();
         let oid3: ObjectIdentifier = ObjectIdentifier::new(&ARC3).unwrap();
         let s1 = simple_from_int(1);
-        let nr = simple_from_int(4);
+        let nr = simple_from_str(b"four");
         let s5 = simple_from_int(5);
         let mut tab = TableMemOid::new(
             vec![],
@@ -573,13 +649,20 @@ mod tests {
             false,
         );
         assert_eq!(tab.rows.len(), 0);
+        assert!(tab.begin_transaction().is_ok());
         let set_res = tab.set(oid3.clone(), VarBindValue::Value(s5.clone()));
         assert!(set_res.is_ok());
+        assert_eq!(tab.rows.len(), 0);
+        assert!(tab.commit().is_ok());
         assert_eq!(tab.rows.len(), 1);
+        assert!(tab.begin_transaction().is_ok());
         let set_res = tab.set(oid3.clone(), VarBindValue::Value(s1.clone()));
         assert!(set_res.is_ok());
         assert_eq!(tab.rows.len(), 1);
+        assert!(tab.commit().is_ok());
+        assert!(tab.begin_transaction().is_ok());
         let set_res = tab.set(oid3.clone(), VarBindValue::Value(nr.clone()));
-        assert_eq!(set_res, Err(OidErr::WrongType))
+        assert_eq!(set_res, Err(OidErr::WrongType));
+        assert!(tab.rollback().is_ok());
     }
 }

@@ -5,6 +5,7 @@
 
 //pub use crate::engine_id;
 use crate::keeper::OidErr;
+//use crate::keeper::OidKeeper;
 use crate::oidmap::OidMap;
 use crate::perms::Perm;
 use crate::privacy;
@@ -18,6 +19,7 @@ use rasn_snmp::v3::VarBindValue;
 use rasn_snmp::v3::{GetBulkRequest, GetNextRequest, GetRequest, SetRequest};
 use rasn_snmp::v3::{HeaderData, Message, Pdus, ScopedPdu, USMSecurityParameters};
 use rasn_snmp::v3::{Response, ScopedPduData};
+use std::collections::HashSet;
 use std::fmt::Display;
 use std::fs::{read_to_string, write};
 use std::net::SocketAddr;
@@ -32,6 +34,7 @@ const ZB: OctetString = OctetString::from_static(b"");
 
 /// Get the boot count from non-volatile storage, creating file if it does not exist.
 /// Panic if the file cannot be parsed or updated, as that indicates tampering or hardware failure.
+/// This function is not thread safe - should add some sort of exclusion locking
 fn get_increment_boot_cnt() -> isize {
     let mut boots: isize = 0;
     let cnt_res: Result<String, std::io::Error> = read_to_string(BOOT_CNT_FILENAME);
@@ -492,17 +495,35 @@ impl Agent {
         flags: u8,
     ) -> (u32, u32, i32) {
         // FIXME need to do two passes - validation, error return if need be and then actually apply the changes.
+        //let mut keeps = HashSet::<&mut Box<dyn OidKeeper>>::new();
+        let mut keeps = HashSet::<usize>::new();
         let mut error_status = Pdu::ERROR_STATUS_NO_ERROR;
         let mut error_index = 0;
         let request_id = r.0.request_id;
         let mut vb_cnt = 0;
+        for vbind in &r.0.variable_bindings {
+            let roid = vbind.name.clone();
+
+            let opt_set: Result<usize, usize> = oid_map.search(&roid);
+            match opt_set {
+                Err(_) => debug!("Miss gathering handlers"),
+                Ok(indx) => {
+                    //let okeep = oid_map.idx(indx);
+                    keeps.insert(indx);
+                }
+            }
+        }
+        for indx in &keeps {
+            let okeep = oid_map.idx(*indx);
+            let _ = okeep.begin_transaction();
+        }
         for vbind in r.0.variable_bindings {
             let roid = vbind.name.clone();
 
             if !perm.check(flags, true, &roid) {
                 error_status = Pdu::ERROR_STATUS_NO_ACCESS;
                 error_index = vb_cnt;
-                return (error_status, error_index, request_id);
+                break; //return (error_status, error_index, request_id);
             }
             let opt_set: Result<usize, usize> = oid_map.search(&roid);
             match opt_set {
@@ -556,6 +577,14 @@ impl Agent {
                         });
                     }
                 }
+            }
+        }
+        for indx in &keeps {
+            let keep = oid_map.idx(*indx);
+            if error_status == Pdu::ERROR_STATUS_NO_ERROR {
+                let _ = keep.commit();
+            } else {
+                let _ = keep.rollback();
             }
         }
         (error_status, error_index, request_id)
@@ -918,6 +947,20 @@ mod tests {
         };
         GetNextRequest(pdu)
     }
+
+    fn set_pdu(arg: &'static [u32], val: ObjectSyntax) -> SetRequest {
+        let vb = vec![VarBind {
+            name: ObjectIdentifier::new(arg).unwrap(),
+            value: VarBindValue::Value(val),
+        }];
+        let pdu = Pdu {
+            request_id: 1,
+            error_status: 0,
+            error_index: 0,
+            variable_bindings: vb,
+        };
+        SetRequest(pdu)
+    }
     fn simple_from_int(value: i32) -> ObjectSyntax {
         ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(value)))
     }
@@ -927,7 +970,7 @@ mod tests {
     }
 
     const ARC2: [u32; 2] = [1, 6];
-    //const ARC3: [u32; 5] = [1, 6, 1, 2, 1];
+    // const ARC3: [u32; 5] = [1, 6, 1, 2, 1];
 
     fn tab_fixture() -> Box<dyn OidKeeper> {
         let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap();
@@ -1015,7 +1058,30 @@ mod tests {
         assert_eq!(vb[0].value, VarBindValue::Value(simple_from_int(41)));
     }
 
-    // FIXME add tests for set and bulk, and maybe do at least some through do_scoped_pdu.
+    #[test]
+    fn test_set() {
+        let agent = make_agent("3163");
+        let sp = set_pdu(&[1, 6, 1, 3, 3, 120, 121, 122, 5], simple_from_int(4));
+        let mut vb: Vec<VarBind> = vec![];
+        let mut oid_map = make_oid_map();
+        let (status, idx, r_id) = agent.set(&mut oid_map, sp, &mut vb, &perms()[0], 3);
+        println!("{status} {idx} {r_id}");
+        assert_eq!(r_id, 1);
+        assert_eq!(idx, 0);
+        assert_eq!(status, Pdu::ERROR_STATUS_NO_ERROR);
+        assert_eq!(vb.len(), 1);
+        /*  vb.clear();
+        let gp = get_next_pdu(&[1, 6, 1, 2, 3, 120, 121, 122, 5]);
+        let (status, idx, r_id) = agent.getnext(&mut oid_map, gp, &mut vb, &perms()[0], 3);
+        println!("{status} {idx} {r_id}");
+        assert_eq!(r_id, 1);
+        assert_eq!(idx, 0);
+        assert_eq!(status, Pdu::ERROR_STATUS_NO_ERROR);
+        assert_eq!(vb.len(), 1);
+        assert_eq!(vb[0].value, VarBindValue::Value(simple_from_int(41))); */
+    }
+
+    // FIXME add tests for more set cases and bulk, and maybe do at least some through do_scoped_pdu.
     // Maybe do some cfg[test] to allow testing of main loop code? Or refactor into small loop
     // and handle_packet?
 }

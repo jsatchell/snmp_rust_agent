@@ -2,10 +2,10 @@
 //!
 //! Module contains the OidKeep trait and three utility enums.
 //!
-
 use rasn::types::ObjectIdentifier;
 use rasn_smi::v2::{ApplicationSyntax, ObjectSyntax, SimpleSyntax};
 use rasn_snmp::v3::{VarBind, VarBindValue};
+use std::hash::Hash;
 // Constants for table row management
 /* const ROW_STATUS_ACTIVE: Integer = Integer::Primitive(1);
 const ROW_STATUS_NOT_IN_SERVICE: Integer = Integer::Primitive(2);

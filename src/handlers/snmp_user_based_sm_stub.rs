@@ -56,6 +56,7 @@ const ARC_USM_AES_CFB_128_PRIV_PROTOCOL: [u32; 10] = [1, 3, 6, 1, 6, 3, 10, 1, 2
 // user that was not known to the SNMP engine.
 //
 
+#[derive(PartialEq, Eq, Hash)]
 struct KeepUsmStatsUnknownUserNames {
     bad_users: u32,
 }
@@ -104,6 +105,7 @@ impl OidKeeper for KeepUsmStatsUnknownUserNames {
 // usmUserTable.
 //
 
+#[derive(PartialEq, Eq, Hash)]
 struct KeepUsmUserSpinLock {
     scalar: PersistentScalar,
 }
@@ -158,6 +160,7 @@ impl OidKeeper for KeepUsmUserSpinLock {
 // contain the expected digest value.
 //
 
+#[derive(PartialEq, Eq, Hash)]
 struct KeepUsmStatsWrongDigests {
     wrong: u32,
 }
@@ -205,6 +208,7 @@ impl OidKeeper for KeepUsmStatsWrongDigests {
 // decrypted.
 //
 
+#[derive(PartialEq, Eq, Hash)]
 struct KeepUsmStatsDecryptionErrors {
     err_cnt: u32,
 }
@@ -252,6 +256,7 @@ impl OidKeeper for KeepUsmStatsDecryptionErrors {
 // snmpEngineID that was not known to the SNMP engine.
 //
 
+#[derive(PartialEq, Eq, Hash)]
 struct KeepUsmStatsUnknownEngineIDs {
     scalar: ScalarMemOid,
 }
@@ -295,6 +300,7 @@ impl OidKeeper for KeepUsmStatsUnknownEngineIDs {
 // outside of the authoritative SNMP engine's window.
 //
 
+#[derive(PartialEq, Eq, Hash)]
 struct KeepUsmStatsNotInTimeWindows {
     not_in_window: u32,
 }
@@ -327,7 +333,7 @@ impl OidKeeper for KeepUsmStatsNotInTimeWindows {
     ) -> Result<VarBindValue, OidErr> {
         Err(OidErr::NotWritable)
     }
-        fn begin_transaction(&mut self) -> Result<(), OidErr> {
+    fn begin_transaction(&mut self) -> Result<(), OidErr> {
         Ok(())
     }
     fn commit(&mut self) -> Result<(), OidErr> {
@@ -343,6 +349,7 @@ impl OidKeeper for KeepUsmStatsNotInTimeWindows {
 // or otherwise unavailable.
 //
 
+#[derive(PartialEq, Eq, Hash)]
 struct KeepUsmStatsUnsupportedSecLevels {
     scalar: ScalarMemOid,
 }
@@ -390,6 +397,7 @@ impl OidKeeper for KeepUsmStatsUnsupportedSecLevels {
 // Security Model.
 //
 
+#[derive(PartialEq, Eq, Hash)]
 struct KeepUsmUserTable {
     //users: &'a Users<'a>,
     table: TableMemOid,

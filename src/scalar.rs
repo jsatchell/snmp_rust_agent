@@ -10,6 +10,7 @@ use log::{debug, error};
 
 /// Simplistic scalar stored in memory.
 /// Initialized in constructor.
+#[derive(PartialEq, Eq, Hash)]
 pub struct ScalarMemOid {
     value: ObjectSyntax,
     otype: OType,
@@ -77,7 +78,7 @@ impl OidKeeper for ScalarMemOid {
 
     fn set(&mut self, _oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
         if self.access == Access::ReadCreate || self.access == Access::ReadWrite {
-            if ! self.transaction {
+            if !self.transaction {
                 return Err(OidErr::WrongType);
             }
             if let VarBindValue::Value(new_value) = value.clone() {
@@ -120,6 +121,7 @@ impl OidKeeper for ScalarMemOid {
     }
 }
 
+#[derive(PartialEq, Eq, Hash)]
 pub struct PersistentScalar {
     scalar: ScalarMemOid,
     file_name: String,
@@ -171,7 +173,6 @@ impl OidKeeper for PersistentScalar {
 
     fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
         self.scalar.set(oid, value)
-
     }
 
     fn rollback(&mut self) -> Result<(), OidErr> {
@@ -179,7 +180,7 @@ impl OidKeeper for PersistentScalar {
     }
 
     fn commit(&mut self) -> Result<(), OidErr> {
-        let comm_res =  self.scalar.commit();
+        let comm_res = self.scalar.commit();
         let bytes_res = encode::<ObjectSyntax>(&self.scalar.value);
         match bytes_res {
             Ok(bytes) => {
@@ -258,6 +259,7 @@ mod tests {
         let set_rs = pscl.set(oid2.clone(), vb);
         assert!(set_rs.is_ok());
         let c_res = pscl.commit();
+        assert!(c_res.is_ok());
         let res = pscl.get(oid2.clone());
         assert!(res.is_ok());
         assert_eq!(res.unwrap(), VarBindValue::Value(s17.clone()));

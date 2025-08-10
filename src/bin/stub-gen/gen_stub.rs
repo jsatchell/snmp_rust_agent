@@ -409,6 +409,15 @@ fn set(
         value: VarBindValue,
     ) -> Result<VarBindValue, OidErr> {{
     self.table.set(oid, value) }}
+fn begin_transaction(&mut self) -> Result<(), OidErr> {{
+        self.table.begin_transaction()
+    }}
+fn commit(&mut self) -> Result<(), OidErr> {{
+        self.table.commit()
+    }}
+fn rollback(&mut self) -> Result<(), OidErr> {{
+        self.table.rollback()
+    }}
 }}
 "
         )
@@ -466,6 +475,15 @@ impl OidKeeper for {struct_name} {{
     }}
     fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {{
         self.scalar.set(oid, value)
+    }}
+    fn begin_transaction(&mut self) -> Result<(), OidErr> {{
+        self.scalar.begin_transaction()
+    }}
+    fn commit(&mut self) -> Result<(), OidErr> {{
+        self.scalar.commit()
+    }}
+    fn rollback(&mut self) -> Result<(), OidErr> {{
+        self.scalar.rollback()
     }}
 }}
 "

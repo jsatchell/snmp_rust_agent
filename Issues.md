@@ -23,12 +23,12 @@
     * Create and Wait - Done
     * Create and Go - After MVP
   * Extra errors - done except for permissions / read-only
-* Transaction model for SET
+* Transaction model for SET - nearly done
   * Change to OidKeep Trait - begin_transaction, commit, rollback - Done
-  * commitfail, undofail errors
-  * sample implementations for ScalarMemOid and TableMemOid - Started
-  * Compiler support
-  * snmp_agent use new API
+  * commitfail, undofail errors - ToDo
+  * sample implementations for ScalarMemOid and TableMemOid - Done
+  * Compiler support - Done for Rust
+  * snmp_agent use new API - Done
 * Rough outline of MiB compiler / code generator - Started, both python and rust.
 * Simplistic permissions model - Done, maybe too simple!
 * Get-bulk - Done, but error handling is hope and wishful thinking
