@@ -6,6 +6,8 @@ use rasn::types::ObjectIdentifier;
 use rasn_smi::v2::{ApplicationSyntax, ObjectSyntax, SimpleSyntax};
 use rasn_snmp::v3::{VarBind, VarBindValue};
 use std::hash::Hash;
+
+use crate::config::ComplianceStatements;
 // Constants for table row management
 /* const ROW_STATUS_ACTIVE: Integer = Integer::Primitive(1);
 const ROW_STATUS_NOT_IN_SERVICE: Integer = Integer::Primitive(2);
@@ -99,4 +101,14 @@ pub trait OidKeeper {
 
     /// Rollback the transaction
     fn rollback(&mut self) -> Result<(), OidErr>;
+
+    /// Is table empty? Always return false for scalars in default impl
+    fn is_empty(&self) -> bool {
+        false
+    }
+
+    /// Never call this, except override implementation for sysORTable
+    fn load_compliances(&mut self, comp: &ComplianceStatements) {
+        panic!("Only call overridden method on sysOrTable");
+    }
 }

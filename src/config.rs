@@ -117,6 +117,20 @@ impl Config {
     }
 }
 
+pub struct ComplianceStatements {
+    pub claims: Vec<(&'static [u32], &'static str)>,
+}
+
+impl ComplianceStatements {
+    pub fn new() -> Self {
+        ComplianceStatements { claims: vec![] }
+    }
+
+    pub fn register_compliance(&mut self, arc: &'static [u32], text: &'static str) {
+        self.claims.push((arc, text));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

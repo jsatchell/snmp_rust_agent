@@ -6,6 +6,7 @@
 //pub use crate::engine_id;
 use crate::keeper::OidErr;
 //use crate::keeper::OidKeeper;
+use crate::notifier;
 use crate::oidmap::OidMap;
 use crate::perms::Perm;
 use crate::privacy;
@@ -22,8 +23,7 @@ use rasn_snmp::v3::{Response, ScopedPduData};
 use std::collections::HashSet;
 use std::fmt::Display;
 use std::fs::{read_to_string, write};
-use std::net::SocketAddr;
-use std::net::UdpSocket;
+use std::net::{SocketAddr, UdpSocket};
 use std::str::FromStr;
 use std::time::Instant;
 
@@ -34,12 +34,20 @@ const ZB: OctetString = OctetString::from_static(b"");
 
 /// Get the boot count from non-volatile storage, creating file if it does not exist.
 /// Panic if the file cannot be parsed or updated, as that indicates tampering or hardware failure.
-/// This function is not thread safe - should add some sort of exclusion locking
+/// This function is not really thread safe, but the retry makes it robust in practice for testing
+/// and actual normal use is strictly single threaded.
 fn get_increment_boot_cnt() -> isize {
     let mut boots: isize = 0;
-    let cnt_res: Result<String, std::io::Error> = read_to_string(BOOT_CNT_FILENAME);
-    if let Ok(string) = cnt_res {
-        boots = isize::from_str(string.trim()).unwrap();
+    loop {
+        let cnt_res: Result<String, std::io::Error> = read_to_string(BOOT_CNT_FILENAME);
+        if let Ok(string) = cnt_res {
+            if let Ok(parse) = isize::from_str(string.trim()) {
+                boots = parse;
+                break;
+            }
+        } else {
+            break;
+        }
     }
     boots += 1;
     write(BOOT_CNT_FILENAME, boots.to_string().as_bytes()).unwrap();
@@ -85,6 +93,13 @@ impl Agent {
             decode_error_cnt: 0u32,
             decryption_errors: 0u32,
         }
+    }
+
+    /// Create a notifier thread.
+    pub fn start_notifier(&mut self, sink: &str) -> () {
+        let notifier = notifier::Notifier::new(sink, self.engine_id.clone(), self.start_time);
+        notifier.sender.send(137).expect("Send failure");
+        ()
     }
 
     /// Internal method for supporting engine ID discovery by managers
@@ -160,7 +175,7 @@ impl Agent {
             name: ZB,
             data: Pdus::Response(resp),
         };
-        let user_name = OctetString::copy_from_slice(&user.name);
+        let user_name = OctetString::from_slice(&user.name);
 
         let mut spd: ScopedPduData = ScopedPduData::CleartextPdu(scpd);
         let run_time: isize = self
@@ -301,83 +316,13 @@ impl Agent {
                         value: VarBindValue::EndOfMibView,
                     });
                 } else {
-                    debug!("Insert point in map");
-                    let oid1 = &oid_map.oid(insert_point - 1).clone();
-                    let last_keep = &mut oid_map.idx(insert_point - 1);
-                    debug!("last_keep oid {oid1:?}");
-                    if last_keep.is_scalar(oid1.clone()) {
-                        match last_keep.get(oid1.clone()) {
-                            Ok(value) => vb.push(VarBind {
-                                name: oid1.clone(),
-                                value,
-                            }),
-                            Err(e) => {
-                                debug!("Error on scalar get {e:?}");
-                                vb.push(VarBind {
-                                    name: oid1.clone(),
-                                    value: VarBindValue::Unspecified,
-                                })
-                            }
-                        }
-                    } else {
-                        // Table
-                        debug!("table case {insert_point}");
-                        let next_res = last_keep.get_next(roid.clone());
-                        match next_res {
-                            Ok(next) => vb.push(next),
-                            Err(bad) => match bad {
-                                OidErr::OutOfRange => {
-                                    debug!("Out of range {insert_point}");
-                                    if insert_point == oid_map.len() {
-                                        vb.push(VarBind {
-                                            name: roid.clone(),
-                                            value: VarBindValue::EndOfMibView,
-                                        });
-                                    } else {
-                                        debug!("handle case following table end");
-                                        let next_oid = oid_map.oid(insert_point).clone();
-                                        let next_keep = &mut oid_map.idx(insert_point);
-                                        if next_keep.is_scalar(next_oid.clone()) {
-                                            let value = next_keep.get(next_oid.clone()).unwrap();
-                                            vb.push(VarBind {
-                                                name: next_oid.clone(),
-                                                value,
-                                            });
-                                        } else {
-                                            vb.push(next_keep.get_next(next_oid.clone()).unwrap());
-                                        }
-                                    }
-                                }
-                                OidErr::NoSuchInstance => {
-                                    *error_index = vb_cnt;
-                                    *error_status = Pdu::ERROR_STATUS_NO_ACCESS;
-                                    vb.push(VarBind {
-                                        name: roid,
-                                        value: VarBindValue::NoSuchObject,
-                                    });
-                                }
-                                OidErr::NoSuchName => {
-                                    *error_index = vb_cnt;
-                                    *error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
-                                    vb.push(VarBind {
-                                        name: roid,
-                                        value: VarBindValue::NoSuchObject,
-                                    });
-                                }
-                                OidErr::GenErr => {
-                                    *error_index = vb_cnt;
-                                    *error_status = Pdu::ERROR_STATUS_GEN_ERR;
-                                    vb.push(VarBind {
-                                        name: roid,
-                                        value: VarBindValue::Unspecified,
-                                    });
-                                }
-                                _ => {
-                                    warn!("unexpected response from get_next {bad:?}")
-                                }
-                            },
-                        }
-                    }
+                    warn!("Insert point in map, but is a miss, should never happen.");
+                    *error_index = vb_cnt;
+                    *error_status = Pdu::ERROR_STATUS_GEN_ERR;
+                    vb.push(VarBind {
+                        name: roid,
+                        value: VarBindValue::Unspecified,
+                    });
                 }
             }
             Ok(which) => {
@@ -405,11 +350,22 @@ impl Agent {
                             }),
                         }
                     } else {
-                        vb.push(okeep.get_next(roid.clone()).unwrap());
+                        // This is table case!
+                        let mut gn_res = okeep.get_next(roid.clone());
+                        let mut which2 = which;
+                        while gn_res.is_err() {
+                            which2 += 1;
+                            let next_oid = oid_map.oid(which2).clone();
+                            debug!("in gn_res loop, which2 {which2}, {next_oid:?}");
+                            let okeep = &mut oid_map.idx(which2);
+                            gn_res = okeep.get_next(next_oid.clone());
+                        }
+                        vb.push(gn_res.unwrap());
                     };
                 } else {
+                    // Last oid was table.
                     let okeep = &mut oid_map.idx(which);
-                    debug!("Trying okeep ");
+                    debug!("Last item was table. Trying okeep ");
                     let gn_res = okeep.get_next(roid.clone());
                     debug!("gn_res {gn_res:?}");
                     match gn_res {
@@ -433,7 +389,12 @@ impl Agent {
                                         }),
                                     }
                                 } else {
-                                    vb.push(okeep.get_next(roid.clone()).unwrap());
+                                    let n_res = okeep.get_next(next_oid.clone());
+                                    if let Ok(var_b) = n_res {
+                                        vb.push(var_b);
+                                    } else {
+                                        panic!("Fault in next_oid");
+                                    }
                                 };
                             } else {
                                 vb.push(VarBind {
@@ -582,9 +543,16 @@ impl Agent {
         for indx in &keeps {
             let keep = oid_map.idx(*indx);
             if error_status == Pdu::ERROR_STATUS_NO_ERROR {
-                let _ = keep.commit();
+                let cres = keep.commit();
+                if cres.is_err() {
+                    error_status = Pdu::ERROR_STATUS_COMMIT_FAILED;
+                    break;
+                }
             } else {
-                let _ = keep.rollback();
+                let rres = keep.rollback();
+                if rres.is_err() {
+                    error_status = Pdu::ERROR_STATUS_UNDO_FAILED;
+                }
             }
         }
         (error_status, error_index, request_id)
@@ -862,7 +830,7 @@ impl Agent {
         let buf = rasn::ber::encode(message).unwrap();
 
         let auth = usr.auth_from_bytes(&buf);
-        usp.authentication_parameters = OctetString::copy_from_slice(&auth);
+        usp.authentication_parameters = OctetString::from_slice(&auth);
         let _ = message.encode_security_parameters(rasn::Codec::Ber, &usp);
         auth
     }
@@ -966,7 +934,7 @@ mod tests {
     }
 
     fn simple_from_str(value: &[u8]) -> ObjectSyntax {
-        ObjectSyntax::Simple(SimpleSyntax::String(OctetString::copy_from_slice(value)))
+        ObjectSyntax::Simple(SimpleSyntax::String(OctetString::from_slice(value)))
     }
 
     const ARC2: [u32; 2] = [1, 6];
@@ -982,11 +950,8 @@ mod tests {
         let s41 = simple_from_int(41);
         let s4 = simple_from_int(4);
         let s5 = simple_from_int(5);
-        Box::new(TableMemOid::new(
-            vec![
-                vec![first.clone(), s4.clone(), s41.clone()],
-                vec![last.clone(), s5.clone(), s42.clone()],
-            ],
+        let mut tab = Box::new(TableMemOid::new(
+            /*    */
             vec![blank.clone(), s0.clone(), s0.clone()],
             3,
             &oid2,
@@ -994,7 +959,12 @@ mod tests {
             vec![Access::ReadOnly, Access::ReadOnly, Access::ReadWrite],
             vec![1usize, 2usize],
             false,
-        ))
+        ));
+        tab.set_data(vec![
+            vec![first.clone(), s4.clone(), s41.clone()],
+            vec![last.clone(), s5.clone(), s42.clone()],
+        ]);
+        tab
     }
 
     fn make_oid_map() -> OidMap {

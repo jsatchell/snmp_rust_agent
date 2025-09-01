@@ -30,7 +30,7 @@ pub fn static_engine_id(enterprise_number: u32, octets: &[u8]) -> OctetString {
     let enterprise_bytes = enterprise_number.to_be_bytes();
     buf[..4].copy_from_slice(&enterprise_bytes);
     buf[4..12].copy_from_slice(octets);
-    OctetString::copy_from_slice(&buf)
+    OctetString::from_slice(&buf)
 }
 
 /// IPv4 dynamic Scheme.
@@ -49,7 +49,7 @@ pub fn ipv4_engine_id(enterprise_number: u32, address: &str) -> OctetString {
     buf[0] |= 128;
     buf[4] = 1;
     buf[5..9].copy_from_slice(&ipv4.octets());
-    OctetString::copy_from_slice(&buf)
+    OctetString::from_slice(&buf)
 }
 
 /// IPv6 dynamic Scheme.
@@ -68,7 +68,7 @@ pub fn ipv6_engine_id(enterprise_number: u32, address: &str) -> OctetString {
     buf[0] |= 128;
     buf[4] = 2;
     buf[5..21].copy_from_slice(&ipv6.octets());
-    OctetString::copy_from_slice(&buf)
+    OctetString::from_slice(&buf)
 }
 
 fn mac_to_bytes(s: &str) -> Option<Vec<u8>> {
@@ -100,7 +100,7 @@ pub fn mac_engine_id(enterprise_number: u32, address: &str) -> OctetString {
     buf[0] |= 128;
     buf[4] = 3;
     buf[5..11].copy_from_slice(&bytes[..6]);
-    OctetString::copy_from_slice(&buf)
+    OctetString::from_slice(&buf)
 }
 
 /// Text dynamic Scheme.
@@ -126,7 +126,7 @@ pub fn text_engine_id(enterprise_number: u32, text: &str) -> OctetString {
     buf[5..(byte_len + 5)].copy_from_slice(&bytes[..byte_len]);
     let buf_len = 5 + byte_len;
     let buf = &buf[..buf_len];
-    OctetString::copy_from_slice(buf)
+    OctetString::from_slice(buf)
 }
 
 /// Byte dynamic Scheme.
@@ -147,7 +147,7 @@ pub fn byte_engine_id(enterprise_number: u32, bytes: &[u8]) -> OctetString {
     buf[5..(byte_len + 5)].copy_from_slice(&bytes[..byte_len]);
     let buf_len = 5 + byte_len;
     let buf = &buf[..buf_len];
-    OctetString::copy_from_slice(buf)
+    OctetString::from_slice(buf)
 }
 
 /// Local Engine ID "magic" value

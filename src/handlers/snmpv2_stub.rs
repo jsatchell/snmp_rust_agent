@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use crate::config::Config;
+use crate::config::{ComplianceStatements, Config};
 use crate::keeper::{Access, OType, OidErr, OidKeeper};
 use crate::oidmap::OidMap;
 use crate::scalar::ScalarMemOid;
@@ -17,7 +17,7 @@ fn simple_from_int(value: i32) -> ObjectSyntax {
 }
 
 fn simple_from_str(value: &[u8]) -> ObjectSyntax {
-    ObjectSyntax::Simple(SimpleSyntax::String(OctetString::copy_from_slice(value)))
+    ObjectSyntax::Simple(SimpleSyntax::String(OctetString::from_slice(value)))
 }
 
 fn simple_from_vec(value: &'static [u32]) -> ObjectSyntax {
@@ -75,6 +75,8 @@ const ARC_SNMP_IN_SET_REQUESTS: [u32; 8] = [1, 3, 6, 1, 2, 1, 11, 17];
 const ARC_SYS_NAME: [u32; 8] = [1, 3, 6, 1, 2, 1, 1, 5];
 const ARC_SNMP_PROXY_DROPS: [u32; 8] = [1, 3, 6, 1, 2, 1, 11, 32];
 const ARC_SNMP_OUT_TRAPS: [u32; 8] = [1, 3, 6, 1, 2, 1, 11, 29];
+const COMPLIANCE_SNMP_BASIC_COMPLIANCE: [u32; 10] = [1, 3, 6, 1, 6, 3, 1, 2, 1, 2];
+const COMPLIANCE_SNMP_BASIC_COMPLIANCE_REV2: [u32; 10] = [1, 3, 6, 1, 6, 3, 1, 2, 1, 3];
 
 // Now the OBJECT-TYPES. These need actual code added to the stubs
 
@@ -686,34 +688,33 @@ struct KeepSysORTable {
 impl KeepSysORTable {
     fn new() -> Self {
         let base_oid: ObjectIdentifier = ObjectIdentifier::new(&ARC_SYS_OR_TABLE).unwrap();
-
-        KeepSysORTable {
-            table: TableMemOid::new(
-                vec![vec![
-                    simple_from_int(1),
-                    simple_from_vec(&[1, 3, 6, 1, 2, 1]),
-                    simple_from_str(b"SNMPv2-MIB"),
-                    ticks_from_int(0),
-                ]],
-                vec![
-                    simple_from_int(4),
-                    simple_from_vec(&[1, 3, 6, 1]),
-                    simple_from_str(b"b"),
-                    ticks_from_int(0),
-                ],
-                4,
-                &base_oid,
-                vec![OType::Integer, OType::ObjectId, OType::String, OType::Ticks],
-                vec![
-                    Access::NoAccess,
-                    Access::ReadOnly,
-                    Access::ReadOnly,
-                    Access::ReadOnly,
-                ],
-                vec![1],
-                false,
-            ),
-        }
+        let mut tab = TableMemOid::new(
+            vec![
+                simple_from_int(4),
+                simple_from_vec(&[1, 3, 6, 1]),
+                simple_from_str(b"b"),
+                ticks_from_int(0),
+            ],
+            4,
+            &base_oid,
+            vec![OType::Integer, OType::ObjectId, OType::String, OType::Ticks],
+            vec![
+                Access::NoAccess,
+                Access::ReadOnly,
+                Access::ReadOnly,
+                Access::ReadOnly,
+            ],
+            vec![1],
+            false,
+        );
+        // Add extra compliance OIDs as they are achieved.
+        tab.set_data(vec![vec![
+            simple_from_int(1),
+            simple_from_vec(&[1, 3, 6, 1, 6, 3, 1, 2, 1, 3]),
+            simple_from_str(b"snmpBasicComplianceRev2 - not really, just an example"),
+            ticks_from_int(0),
+        ]]);
+        KeepSysORTable { table: tab }
     }
 }
 
@@ -741,6 +742,22 @@ impl OidKeeper for KeepSysORTable {
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         Ok(())
+    }
+
+    fn load_compliances(&mut self, comp: &ComplianceStatements) {
+        let mut data = vec![];
+        let mut cnt = 0;
+        for (arc, text) in &comp.claims {
+            cnt += 1;
+
+            data.push(vec![
+                simple_from_int(cnt),
+                simple_from_vec(arc),
+                simple_from_str(text.as_bytes()),
+                ticks_from_int(0),
+            ])
+        }
+        self.table.set_data(data);
     }
 }
 // The textual identification of the contact person for
@@ -1927,7 +1944,22 @@ impl OidKeeper for KeepSnmpOutTraps {
     }
 }
 
-pub fn load_stub(oid_map: &mut OidMap, config: &Config, agent: &Agent) {
+pub fn load_stub(
+    oid_map: &mut OidMap,
+    config: &Config,
+    agent: &Agent,
+    comp: &mut ComplianceStatements,
+) {
+    // Module Compliance values, uncomment when implemented
+
+    // let comp_snmp_basic_compliance: [u32; 10] = [1, 3, 6, 1, 6, 3, 1, 2, 1, 2];
+    comp.register_compliance(&COMPLIANCE_SNMP_BASIC_COMPLIANCE, "snmpBasicCompliance");
+    //let comp_snmp_basic_compliance_rev2: [u32; 10] = [1, 3, 6, 1, 6, 3, 1, 2, 1, 3];
+    comp.register_compliance(
+        &COMPLIANCE_SNMP_BASIC_COMPLIANCE_REV2,
+        "snmpBasicComplianceRev2",
+    );
+
     let oid_snmp_in_get_nexts: ObjectIdentifier =
         ObjectIdentifier::new(&ARC_SNMP_IN_GET_NEXTS).unwrap();
     let k_snmp_in_get_nexts: Box<dyn OidKeeper> = Box::new(KeepSnmpInGetNexts::new());
@@ -1979,7 +2011,9 @@ pub fn load_stub(oid_map: &mut OidMap, config: &Config, agent: &Agent) {
     let k_sys_object_id: Box<dyn OidKeeper> = Box::new(KeepSysObjectID::new());
     oid_map.push(oid_sys_object_id, k_sys_object_id);
     let oid_sys_or_table: ObjectIdentifier = ObjectIdentifier::new(&ARC_SYS_OR_TABLE).unwrap();
-    let k_sys_or_table: Box<dyn OidKeeper> = Box::new(KeepSysORTable::new());
+    let sys_or_table = KeepSysORTable::new();
+    let mut k_sys_or_table: Box<dyn OidKeeper> = Box::new(sys_or_table);
+    k_sys_or_table.load_compliances(comp);
     oid_map.push(oid_sys_or_table, k_sys_or_table);
     let oid_sys_contact: ObjectIdentifier = ObjectIdentifier::new(&ARC_SYS_CONTACT).unwrap();
     let k_sys_contact: Box<dyn OidKeeper> = Box::new(KeepSysContact::new(config));

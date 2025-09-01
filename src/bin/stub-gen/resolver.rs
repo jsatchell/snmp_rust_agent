@@ -42,9 +42,9 @@ impl Resolver {
         Resolver { store }
     }
 
-    /*   pub fn check_parent(&self, parent: &str) -> bool {
-        self.store.contains_key(parent)
-    } */
+    pub fn check_name(&self, name: &str) -> bool {
+        self.store.contains_key(name)
+    }
 
     pub fn lookup(&self, name: &str) -> &[u32] {
         if !self.store.contains_key(name) {

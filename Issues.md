@@ -6,12 +6,12 @@
   * Permission Errors (in some cases)
   * Wrong encoding / size
 * Tests - Started
-  * Table - 5
+  * Table - 6
   * Scalar - 4
   * Usm - 6
   * Config - 1
   * Privacy - no test cases in RFCs.
-  * Agent -  2 Hardest, needs mocks etc.
+  * Agent -  4 Hardest, needs mocks etc.
   * Engine ID - 4
 * Table model
   * Text-Convention range checking (lookup done for DEFVAL)
@@ -44,4 +44,4 @@
 * View model and user mapping to views
 * Multiple contexts - separate Oid maps?
 * Traps / Informs
-* Augments support in compiler and Rust code
+* Augments / foreign indices support in compiler and Rust code

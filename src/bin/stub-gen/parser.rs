@@ -14,8 +14,8 @@ use std::cmp::min;
 pub struct TextConvention<'a> {
     hint: &'a str,
     pub name: &'a str,
-    status: &'a str,
-    descr: &'a str,
+    pub status: &'a str,
+    description: &'a str,
     reference: &'a str,
     pub syntax: &'a str,
 }
@@ -34,7 +34,6 @@ impl ParentNum<'_> {
         for num in self.num {
             new_arc.push(num);
         }
-        //  let arc_ref: &'static mut Vec<u32> = Box::leak(new_arc);
         let name_ref: &'static mut String = Box::leak(name_copy);
         ParentNum {
             parent: name_ref,
@@ -47,7 +46,7 @@ impl ParentNum<'_> {
 pub struct ObjectIdentity<'a> {
     pub name: &'a str,
     pub status: &'a str,
-    pub descr: &'a str,
+    pub description: &'a str,
     pub refer: &'a str,
     pub val: ParentNum<'a>,
 }
@@ -65,7 +64,7 @@ pub struct ObjectType<'a> {
     pub units: &'a str,
     pub access: &'a str,
     pub status: &'a str,
-    pub descr: &'a str,
+    pub description: &'a str,
     reference: &'a str,
     pub index: &'a str,
     pub augments: &'a str,
@@ -77,8 +76,12 @@ pub struct ObjectType<'a> {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct NotificationType<'a> {
-    name: &'a str,
-    syntax: &'a str,
+    pub name: &'a str,
+    pub objects: Vec<&'a str>,
+    pub status: &'a str,
+    description: &'a str,
+    reference: &'a str,
+    pub val: ParentNum<'a>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -102,8 +105,9 @@ pub struct ModuleIdentity<'a> {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ModuleCompliance<'a> {
-    name: &'a str,
+    pub name: &'a str,
     syntax: &'a str,
+    pub val: ParentNum<'a>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -150,7 +154,7 @@ impl<'a> MibNode<'a> {
         match self {
             MibNode::Tc(x) => MibNode::Tc(TextConvention {
                 hint: MibNode::mk_static_str(x.hint),
-                descr: MibNode::mk_static_str(x.descr),
+                description: MibNode::mk_static_str(x.description),
                 name: MibNode::mk_static_str(x.name),
                 status: MibNode::mk_static_str(x.status),
                 reference: MibNode::mk_static_str(x.reference),
@@ -160,7 +164,7 @@ impl<'a> MibNode<'a> {
                 name: MibNode::mk_static_str(x.name),
                 status: MibNode::mk_static_str(x.status),
                 refer: MibNode::mk_static_str(x.refer),
-                descr: MibNode::mk_static_str(x.descr),
+                description: MibNode::mk_static_str(x.description),
                 val: x.val.copy(),
             }),
             MibNode::ObIdf(x) => MibNode::ObIdf(ObjectIdentifier {
@@ -172,7 +176,7 @@ impl<'a> MibNode<'a> {
                 status: MibNode::mk_static_str(x.status),
                 reference: MibNode::mk_static_str(x.reference),
                 syntax: MibNode::mk_static_str(x.syntax),
-                descr: MibNode::mk_static_str(x.descr),
+                description: MibNode::mk_static_str(x.description),
                 units: MibNode::mk_static_str(x.units),
                 access: MibNode::mk_static_str(x.access),
                 index: MibNode::mk_static_str(x.index),
@@ -274,6 +278,24 @@ fn parse_description(input: &str) -> IResult<&str, &str> {
     .parse(input)
 }
 
+/// Used by NOTIFICATION-TYPE and OBJECT-GROUP
+fn parse_objects(input: &str) -> IResult<&str, Vec<&str>> {
+    preceded(
+        pair(strip_ws_comment, tag("OBJECTS")),
+        preceded(
+            multispace1,
+            delimited(
+                tag("{"),
+                separated_list1(
+                    tag(","),
+                    delimited(strip_ws_comment, alphanumeric1, multispace0),
+                ),
+                tag("}"),
+            ),
+        ),
+    )
+    .parse(input)
+}
 fn parse_hint(input: &str) -> IResult<&str, &str> {
     preceded(
         pair(strip_ws_comment, tag("DISPLAY-HINT")),
@@ -588,7 +610,7 @@ pub fn parse_obj_type(input: &str) -> IResult<&str, MibNode<'_>> {
                 unit_opt,
                 access,
                 status,
-                descr,
+                description,
                 ref_opt,
                 idx_opt,
                 aug_opt,
@@ -609,7 +631,7 @@ pub fn parse_obj_type(input: &str) -> IResult<&str, MibNode<'_>> {
                 units,
                 access,
                 status,
-                descr,
+                description,
                 reference,
                 index,
                 augments,
@@ -630,9 +652,28 @@ pub fn parse_notification_type(input: &str) -> IResult<&str, MibNode<'_>> {
                 delimited(strip_ws_comment, alphanumeric1, multispace1),
                 tag("NOTIFICATION-TYPE"),
             ),
-            recognize(pair(take_until("::="), pair(tag("::="), parse_sbraces))),
+            (
+                opt(parse_objects),
+                parse_status,
+                opt(parse_description),
+                opt(parse_reference),
+                preceded(strip_ws_comment, tag("::=")),
+                parse_braces,
+            ),
         ),
-        |(name, syntax)| MibNode::NtTy(NotificationType { name, syntax }),
+        |(name, (opt_objects, status, opt_descr, opt_ref, _tag, val))| {
+            let objects = opt_objects.unwrap_or(vec![]);
+            let description = opt_descr.unwrap_or("");
+            let reference = opt_ref.unwrap_or("");
+            MibNode::NtTy(NotificationType {
+                name,
+                objects,
+                status,
+                description,
+                reference,
+                val,
+            })
+        },
     )
     .parse(input)
 }
@@ -653,14 +694,14 @@ pub fn parse_tc(input: &str) -> IResult<&str, MibNode<'_>> {
                 pair(opt(parse_reference), parse_syntax),
             ),
         ),
-        |(name, ((hint_opt, status, descr), (refer_opt, syntax)))| {
+        |(name, ((hint_opt, status, description), (refer_opt, syntax)))| {
             let reference = refer_opt.unwrap_or("");
             let hint = hint_opt.unwrap_or("");
             MibNode::Tc(TextConvention {
                 hint,
                 name,
                 status,
-                descr,
+                description,
                 reference,
                 syntax: uncom(syntax),
             })
@@ -676,9 +717,9 @@ fn parse_mod_comp(input: &str) -> IResult<&str, MibNode<'_>> {
                 delimited(strip_ws_comment, alphanumeric1, multispace1),
                 tag("MODULE-COMPLIANCE"),
             ),
-            recognize(pair(take_until("::="), pair(tag("::="), parse_sbraces))),
+            pair(take_until("::="), preceded(tag("::="), parse_braces)),
         ),
-        |(name, syntax)| MibNode::ModCp(ModuleCompliance { name, syntax }),
+        |(name, (syntax, val))| MibNode::ModCp(ModuleCompliance { name, syntax, val }),
     )
     .parse(input)
 }
@@ -694,12 +735,12 @@ pub fn parse_object_identity(input: &str) -> IResult<&str, MibNode<'_>> {
             preceded(strip_ws_comment, tag("::=")),
             parse_braces,
         ),
-        |(name, _, status, descr, ref_opt, _, val)| {
+        |(name, _, status, description, ref_opt, _, val)| {
             let refer = ref_opt.unwrap_or("");
             MibNode::ObIdy(ObjectIdentity {
                 name,
                 status,
-                descr,
+                description,
                 refer,
                 val,
             })

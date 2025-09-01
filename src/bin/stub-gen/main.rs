@@ -19,9 +19,30 @@ struct Cli {
     )]
     out_dir: String,
 
+    /// include deprecated
+    #[argh(switch, short = 'd')]
+    deprecated: bool,
+
+    /// include obsolete
+    #[argh(switch)]
+    obsolete: bool,
+
     /// names of MIBs to process
     #[argh(positional)]
     mib_names: Vec<String>,
+}
+
+impl Cli {
+    fn check_status(&self, status: &str) -> bool {
+        let status = status.trim();
+        if self.deprecated && status == "deprecated" {
+            return true;
+        }
+        if self.obsolete && status == "obsolete" {
+            return true;
+        }
+        status == "current"
+    }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -66,7 +87,8 @@ fn main() -> Result<(), Box<dyn Error>> {
        let path = entry.path();
        //if !path.ends_with("UDPF-MIB") {continue;}
        let text = //fs::read_to_string(&path).unwrap(); */
-    for argument in &cli.mib_names {
+    let out_dir = cli.out_dir.to_string();
+    for argument in &cli.mib_names.clone() {
         if argument.ends_with("mib-compiler-rs") {
             continue;
         }
@@ -155,6 +177,32 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 error!("Unknown identifier parent {parent}")
                             }
                         }
+                        parser::MibNode::ModCp(o) => {
+                            let v = &o.val;
+                            let parent = v.parent;
+                            let added = res.try_add(o.name, v.parent, &v.num);
+                            if good_parent && !added && pass > 1 {
+                                error!("Unknown compliance parent {parent}")
+                            }
+                        }
+                        parser::MibNode::NtTy(o) => {
+                            /*let v = &o.val;
+                            let parent = v.parent;
+                            let added = res.try_add(o.name, v.parent, &v.num);
+                            if good_parent && !added && pass > 1 {
+                                error!("Unknown compliance parent {parent}")
+                            }*/
+                            if pass > 1 {
+                                for obj in &o.objects {
+                                    if !res.check_name(obj) {
+                                        warn!(
+                                            "Unresolved object name {0} in NOTIFICATION-TYPE {1}",
+                                            obj, o.name
+                                        );
+                                    }
+                                }
+                            }
+                        }
                         _ => (),
                     }
                 }
@@ -163,19 +211,29 @@ fn main() -> Result<(), Box<dyn Error>> {
             let mut tcs: HashMap<&str, parser::TextConvention> = HashMap::new();
             let mut entries: HashMap<&str, parser::Entry<'_>> = HashMap::new();
             let mut object_ids: Vec<parser::ObjectIdentity<'_>> = vec![];
+            let mut mod_comps: Vec<parser::ModuleCompliance<'_>> = vec![];
             let gnodes = nodes.clone();
             for node in gnodes {
                 match node {
                     parser::MibNode::ObTy(x) => {
-                        object_types.insert(x.name, x);
+                        if cli.check_status(x.status) {
+                            object_types.insert(x.name, x);
+                        }
                     }
                     parser::MibNode::Tc(x) => {
-                        tcs.insert(x.name, x);
+                        if cli.check_status(x.status) {
+                            tcs.insert(x.name, x);
+                        }
                     }
                     parser::MibNode::Ent(x) => {
                         entries.insert(x.name, x);
                     }
-                    parser::MibNode::ObIdy(x) => object_ids.push(x),
+                    parser::MibNode::ObIdy(x) => {
+                        if cli.check_status(x.status) {
+                            object_ids.push(x)
+                        }
+                    }
+                    parser::MibNode::ModCp(x) => mod_comps.push(x),
                     _ => {}
                 }
             }
@@ -194,8 +252,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 &tcs,
                 &entries,
                 &object_ids,
+                &mod_comps,
                 mib_name,
-                &cli.out_dir,
+                &out_dir,
             );
             if compile_res.is_ok() {
                 success += 1;

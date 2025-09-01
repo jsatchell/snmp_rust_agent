@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::config::{ComplianceStatements, Config};
 use crate::keeper::{Access, OType, OidErr, OidKeeper};
 use crate::oidmap::OidMap;
 use crate::scalar::{PersistentScalar, ScalarMemOid};
@@ -15,7 +15,7 @@ fn simple_from_int(value: i32) -> ObjectSyntax {
 }
 
 fn simple_from_str(value: &[u8]) -> ObjectSyntax {
-    ObjectSyntax::Simple(SimpleSyntax::String(OctetString::copy_from_slice(value)))
+    ObjectSyntax::Simple(SimpleSyntax::String(OctetString::from_slice(value)))
 }
 
 fn simple_from_vec(value: &'static [u32]) -> ObjectSyntax {
@@ -48,6 +48,8 @@ const ARC_SNMP_PRIV_PROTOCOLS: [u32; 9] = [1, 3, 6, 1, 6, 3, 10, 1, 2];
 
 // From RFC 3826
 const ARC_USM_AES_CFB_128_PRIV_PROTOCOL: [u32; 10] = [1, 3, 6, 1, 6, 3, 10, 1, 2, 4];
+
+const COMPLIANCE_USM_MIB_COMPLIANCE: [u32; 10] = [1, 3, 6, 1, 6, 3, 15, 2, 1, 1];
 
 // Now the OBJECT-TYPES. These need actual code added to the stubs
 
@@ -429,9 +431,9 @@ impl KeepUsmUserTable {
             ];
             data.push(row);
         }
-        KeepUsmUserTable {
+        let mut tab = KeepUsmUserTable {
             table: TableMemOid::new(
-                data,
+                // data,
                 vec![
                     ObjectSyntax::Simple(SimpleSyntax::String(engine_id.clone())),
                     simple_from_str(b"b"),
@@ -482,7 +484,9 @@ impl KeepUsmUserTable {
                 vec![1, 2],
                 false,
             ),
-        }
+        };
+        tab.table.set_data(data);
+        tab
     }
 }
 
@@ -513,7 +517,13 @@ impl OidKeeper for KeepUsmUserTable {
     }
 }
 
-pub fn load_stub(oid_map: &mut OidMap, config: &Config, agent: &Agent, users: &Users) {
+pub fn load_stub(
+    oid_map: &mut OidMap,
+    config: &Config,
+    agent: &Agent,
+    users: &Users,
+    comp: &mut ComplianceStatements,
+) {
     // The next group is for OBJECT-IDENTITY.
 
     // These may be used as values rather than MIB addresses
@@ -596,4 +606,6 @@ pub fn load_stub(oid_map: &mut OidMap, config: &Config, agent: &Agent, users: &U
     let k_usm_user_table: Box<dyn OidKeeper> =
         Box::new(KeepUsmUserTable::new(users, config.engine_id.clone()));
     oid_map.push(oid_usm_user_table, k_usm_user_table);
+
+    comp.register_compliance(&COMPLIANCE_USM_MIB_COMPLIANCE, "usmMIBCompliance");
 }
