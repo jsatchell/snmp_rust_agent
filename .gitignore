@@ -3,4 +3,5 @@
 users.txt
 boot-cnt.txt
 Cargo.lock
+src/stubs/*.rs
 tools/__pycache__/
