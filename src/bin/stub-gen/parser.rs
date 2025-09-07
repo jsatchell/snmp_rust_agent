@@ -1,4 +1,4 @@
-use log::error;
+use log::{error, info};
 use nom::{
     branch::alt,
     bytes::complete::{is_not, tag, take_until},
@@ -288,7 +288,7 @@ fn parse_objects(input: &str) -> IResult<&str, Vec<&str>> {
                 tag("{"),
                 separated_list1(
                     tag(","),
-                    delimited(strip_ws_comment, alphanumeric1, multispace0),
+                    delimited(strip_ws_comment, alphanumeric1, strip_ws_comment),
                 ),
                 tag("}"),
             ),
@@ -448,6 +448,11 @@ pub fn parse_syntax(input: &str) -> IResult<&str, &str> {
                 ),
                 delimited(
                     preceded(strip_ws_comment, tag("(")),
+                    delimited(is_not("()"), tag("("), take_until(") )")),
+                    tag(") )"),
+                ),
+                delimited(
+                    preceded(strip_ws_comment, tag("(")),
                     take_until(")"),
                     tag(")"),
                 ),
@@ -478,7 +483,7 @@ pub fn parse_braces(input: &str) -> IResult<&str, ParentNum<'_>> {
         delimited(
             preceded(strip_ws_comment, tag("{")),
             pair(
-                preceded(strip_ws_comment, cap_name),
+                preceded(strip_ws_comment, alt((cap_name, tag("0")))),
                 many0(alt((
                     preceded(multispace1, digit1),
                     delimited(delimited(multispace1, cap_name, tag("(")), digit1, tag(")")),
@@ -594,7 +599,7 @@ pub fn parse_obj_type(input: &str) -> IResult<&str, MibNode<'_>> {
                 opt(parse_unit),
                 parse_access,
                 parse_status,
-                parse_description,
+                opt(parse_description),
                 opt(parse_reference),
                 opt(parse_index),
                 opt(parse_augments),
@@ -610,7 +615,7 @@ pub fn parse_obj_type(input: &str) -> IResult<&str, MibNode<'_>> {
                 unit_opt,
                 access,
                 status,
-                description,
+                desc_opt,
                 ref_opt,
                 idx_opt,
                 aug_opt,
@@ -620,6 +625,7 @@ pub fn parse_obj_type(input: &str) -> IResult<&str, MibNode<'_>> {
             ),
         )| {
             let units = unit_opt.unwrap_or("");
+            let description = desc_opt.unwrap_or("");
             let augments = aug_opt.unwrap_or("");
             let index = idx_opt.unwrap_or("");
             let defval = defv_opt.unwrap_or("");
@@ -850,7 +856,11 @@ pub fn parse_mib<'a>(input: &'a str, nodes: &mut Vec<MibNode<'a>>) -> (bool, u32
     }
     let (leftover_input, _mod_name) = cap_res.unwrap();
 
-    let (abc, _def) = parse_def(leftover_input).unwrap();
+    let parse_res = parse_def(leftover_input);
+    if parse_res.is_err() {
+        return (false, 4);
+    }
+    let (abc, _def) = parse_res.unwrap();
 
     let imp_res = parse_imports(abc);
     let body;
@@ -877,8 +887,14 @@ pub fn parse_mib<'a>(input: &'a str, nodes: &mut Vec<MibNode<'a>>) -> (bool, u32
 
     let end_ok = parse_end(end);
     if end_ok.is_err() {
-        let l = min(32, end.len());
+        let tcs: Vec<&MibNode> = defs
+            .iter()
+            .filter(|&x| matches!(*x, MibNode::Tc(_)))
+            .collect();
+        info!("TCS {tcs:?}");
+        let l = min(64, end.len());
         let deb = &end[0..l];
+
         error!("{deb}\n------------------------");
         (false, 4)
     } else {

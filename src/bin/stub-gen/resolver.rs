@@ -20,15 +20,21 @@ const ARC_SNMP_PROXYS: [u32; 6] = [1, 3, 6, 1, 6, 2];
 const ARC_SNMP_MODULES: [u32; 6] = [1, 3, 6, 1, 6, 3];
 const ARC_SNMP_MIB: [u32; 7] = [1, 3, 6, 1, 6, 3, 1];
 const ARC_SNMP_FRAMEWORK_MIB: [u32; 7] = [1, 3, 6, 1, 6, 3, 10];
+const ARC_ZERO: [u32; 1] = [0];
+const ARC_ZERO_DOT_ZERO: [u32; 2] = [0, 0];
+const ARC_MPLS_STD_MIB: [u32; 8] = [1, 3, 6, 1, 2, 1, 10, 166];
 
 impl Resolver {
     pub fn new() -> Self {
         let mut store: HashMap<&str, &[u32]> = HashMap::new();
+        store.insert("0", &ARC_ZERO);
+        store.insert("zeroDotZero", &ARC_ZERO_DOT_ZERO);
         store.insert("internet", &ARC_INTERNET);
         store.insert("mgmt", &ARC_MGMT);
         store.insert("mib-2", &ARC_MIB_2);
         store.insert("system", &ARC_SYSTEM);
         store.insert("transmission", &ARC_TRANSMISSION);
+        store.insert("mplsStdMIB", &ARC_MPLS_STD_MIB);
         store.insert("internet", &ARC_INTERNET);
         store.insert("private", &ARC_PRIVATE);
         store.insert("experimental", &ARC_EXPERIMENTAL);

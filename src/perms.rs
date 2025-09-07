@@ -1,81 +1,177 @@
-//! Minimal interim permissions model
+//! Permissions model
 //!
-//! Radically simpler than the full VACM model!
+//! Simpler than the full VACM model from RFC3415!
 //!
-//! The permissions are read in from the file "groups.txt".
+//! The permissions are read in from the file "groups.toml".
 //!
-//! This has a line per group. There are four entries per line:
-//! * read permission ("t" or "f")
-//! * write permission ("t" or "f")
-//! * security level (1-3), where 1 is noAuth, 2 is AuthNoPriv, and 3 is AuthPriv
-//! * group name
+//! This has a table per user group. The table has three entries,
+//! * name, a string, used to correlate groups with users.
+//! * level, a string, one of three permitted values: noAuthNoPriv, authNoPriv or authPriv
+//! * rules, an array of rule tables. Usefully, you should have at least one rule.
+//!
+//! The inner rule table has the four entries:
+//! * read, a boolean
+//! * write, a boolean
+//! * include, an array of strings. The strings are OID prefixes, in dotted notation, like "1.3.6.1". The rule applies to everything that starts with at least one of the entries.
+//! * exclude, an array of strings, which could be empty. The strings are OID prefixes, in dotted notation, like "1.3.6.1". Anything that matches at least one will be excluded from matching the rule. The prefixes need to lie within an inclusion prefix to have any effect.
 //!
 //! The big difference from the VACM model is these permissions are global, rather than confined
-//! to specific OIDs, and there is no provision to change them, except by editing groups.txt
+//! to specific contexts, and there is no provision to change them, except by editing groups.toml.
+//!
+//! If people need separate permissions for multiple contexts, this could be extended, but somebody
+//! would need to show a convincing use case.
+//!
+//! Not being able to attack them on the wire is a deliberate security feature, not a bug.
+use log::warn;
 use rasn::types::ObjectIdentifier;
-use regex::Regex;
 use std::fs::read_to_string;
-use std::str::FromStr;
+use toml;
 
-/// Associates a group name with read and write permissions for a
-/// given security level.
 #[derive(Debug, PartialEq, Eq)]
+/// Permissions to apply to a group.
 pub struct Perm {
-    pub read: bool,
-    pub write: bool,
-    pub security_level: u8, // Just flags
+    /// The group name is used to identify which users this applies to.
     pub group_name: Vec<u8>,
+    /// The minimum security level that the user's connection must have. 1 = noAuthNoPriv, 2 = authNoPriv, 3 = authPriv
+    pub security_level: u8,
+    /// There can be multiple Rules that apply for this group of users.
+    pub rules: Vec<Rule>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Rule {
+    /// Are read operations permitted? Needed for Get, GetNext, BulkGet PDUs
+    pub read: bool,
+    /// Are write operations permitted? Set PDU
+    pub write: bool,
+    /// OID prefixes that match this rule. You need at least one entry here; if nothing else try vec![1, 3, 6, 1]
+    pub include: Vec<Vec<u32>>,
+    /// Possibly empty vector of OID prefixes that are excluded from matching - each should lie wholly within an inclusion prefix.
+    pub exclude: Vec<Vec<u32>>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ParsePermError;
-/// Returns a Perm struct from string data.
-///
-/// Panics on error.
-///
-/// Only executed at agent startup, and would indicate mis-configuration or file-system corruption.
-impl FromStr for Perm {
-    type Err = ParsePermError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let re =
-            Regex::new(r"^(?<read>[tf]) (?<write>[tf]) (?<level>[1-3]) (?<name>[^ ]+)$").unwrap();
-
-        let captures = re.captures(s).ok_or(ParsePermError)?;
-
-        Ok(Perm {
-            read: captures["read"] == *"t",
-            write: captures["write"] == *"t",
-            security_level: captures["level"].parse().expect("Regex should have caught"),
-            group_name: captures["name"].as_bytes().to_vec(),
-        })
-    }
-}
 
 impl Perm {
-    pub fn check(&self, flags: u8, set: bool, _oid: &ObjectIdentifier) -> bool {
-        // Ignore OID for now, but allow for a future version
-        // to use it.
+    /// Check if the operation is permitted.
+    ///
+    /// flags is the value ultimately from the Message header.
+    ///
+    /// set is true for Set operations, and false otherwise.
+    ///
+    /// The oid should be the OID for the associated object that will perform the operation.
+    pub fn check(&self, flags: u8, set: bool, oid: &ObjectIdentifier) -> bool {
         let sec_level = 1 + (flags & 1) + (flags & 2);
         if sec_level < self.security_level {
             return false;
         }
-        if set {
-            self.write
-        } else {
-            self.read
-        }
+        for rule in &self.rules {
+            if set && !rule.write {
+                //No point examining if rule matches, if it doesn't give permission anyway
+                continue;
+            }
+            if !set && !rule.read {
+                //No point examining if rule matches, if it doesn't give permission anyway
+                continue;
+            }
+            let mut excluded = false;
+            for exc in &rule.exclude {
+                excluded = excluded || oid.starts_with(exc.as_slice());
+            }
+            if excluded {
+                continue;
+            }
+            let mut included = false;
+            for inc in &rule.include {
+                included = included || oid.starts_with(inc.as_slice());
+            }
+            if included {
+                return true;
+            }
+        } // If we get to the end of the loop and no Rule provided the permission, return false.
+        false
     }
 }
 
-/// Read "groups.txt" and return group definitions.
+/// Read "groups.toml" and return group definitions.
 ///
-/// Panics if read fails - this is during startup so indicates a configuration error,
+/// Panics if read or parse fails - this is during startup so indicates a configuration error,
 /// or file system corruption.
+///
+/// FIXME - setup serde stuff, including wrappers, so deserialize just works, rather than doing
+/// it by hand.
 pub fn load_perms() -> Vec<Perm> {
     let mut perms = Vec::new();
-    for line in read_to_string("groups.txt").unwrap().lines() {
-        perms.push(Perm::from_str(line).expect("Parse error reading groups.txt"));
+    let toml_text = read_to_string("groups.toml").unwrap();
+    let data = toml_text.parse::<toml::Table>().unwrap();
+    let groups = data.get("groups").unwrap().as_array().unwrap();
+    for group in groups {
+        let group_name = group
+            .get("name")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let level = group.get("level").unwrap().as_str().unwrap();
+        let trules = group.get("rules").unwrap().as_array().unwrap();
+        let mut rules = vec![];
+        for rule in trules {
+            let read = rule.get("read").unwrap().as_bool().unwrap();
+            let write = rule.get("write").unwrap().as_bool().unwrap();
+            let tinclude = rule.get("include").unwrap().as_array().unwrap();
+            let texclude = rule.get("exclude").unwrap().as_array().unwrap();
+            let mut include = vec![];
+            let mut exclude = vec![];
+            for arc in tinclude {
+                let dots: Vec<u32> = arc
+                    .as_str()
+                    .unwrap()
+                    .split(".")
+                    .map(|s| {
+                        let u: u32 = s.parse().unwrap();
+                        u
+                    })
+                    .collect();
+                include.push(dots);
+            }
+            for arc in texclude {
+                let dots: Vec<u32> = arc
+                    .as_str()
+                    .unwrap()
+                    .split(".")
+                    .map(|s| {
+                        let u: u32 = s.parse().unwrap();
+                        u
+                    })
+                    .collect();
+                exclude.push(dots);
+            }
+            let prule = Rule {
+                read,
+                write,
+                include,
+                exclude,
+            };
+            rules.push(prule);
+        }
+        let security_level = match level {
+            "noAuthNoPriv" => 1,
+            "authNoPriv" => 2,
+            "authPriv" => 3,
+            _ => {
+                warn!("Unrecognized security level name {level}, denying all access");
+                0
+            }
+        };
+
+        let perm = Perm {
+            group_name,
+            security_level,
+            rules,
+        };
+        perms.push(perm);
     }
     perms
 }

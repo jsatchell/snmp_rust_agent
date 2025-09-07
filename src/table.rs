@@ -67,6 +67,7 @@ impl TableMemOid {
     }
 
     /// Alternate data load for foreign indexed cases
+    #[allow(dead_code)]
     pub fn set_indexed_data(&mut self, data: Vec<(Vec<u32>, Vec<ObjectSyntax>)>) {
         let mut row_data = Vec::new();
         for row in data {
@@ -118,9 +119,12 @@ impl TableMemOid {
                     }
                     ApplicationSyntax::Counter(_) => {}
                     ApplicationSyntax::BigCounter(_) => {}
+                    ApplicationSyntax::Ticks(t) => {
+                        ret.push(t.0);
+                    }
                     _ => {
                         // Could be timeTicks or Unsigned, which I haven't met yet
-                        panic!("Unsupported type in ApplicationWide index construction")
+                        panic!("Unsupported type in ApplicationWide index construction {os:?}")
                     }
                 },
             }
@@ -553,17 +557,10 @@ impl OidKeeper for TableMemOid {
 mod tests {
     use super::*;
     use super::{Access, OidErr, TableMemOid};
+    use crate::utils::*;
     use rasn::types::{Integer, ObjectIdentifier};
     use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
     use rasn_snmp::v3::VarBindValue;
-
-    fn simple_from_int(value: i32) -> ObjectSyntax {
-        ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(value)))
-    }
-
-    fn simple_from_str(value: &[u8]) -> ObjectSyntax {
-        ObjectSyntax::Simple(SimpleSyntax::String(OctetString::from_slice(value)))
-    }
 
     const ARC2: [u32; 2] = [1, 6];
     const ARC3: [u32; 5] = [1, 6, 1, 2, 1];

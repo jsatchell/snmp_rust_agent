@@ -36,11 +36,12 @@ pub fn process_one(
     let mut extra = vec![];
     let (good, _site) = parser::parse_mib(raw, &mut nodes);
     if !good {
+        error!("parse failure processing import of {mib_name}");
         return vec![];
     }
     let missl = miss.len();
     let mut hit = 0;
-    for _pass in 0..1 {
+    for _pass in 0..2 {
         let _res_cnt = res.try_nodes(&nodes);
     }
     for node in nodes {

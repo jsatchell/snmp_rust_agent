@@ -1,5 +1,5 @@
 use crate::parser::{Entry, ModuleCompliance, ObjectIdentity, ObjectType, TextConvention};
-use crate::resolver;
+use crate::resolver::{self, Resolver};
 use log::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::fs;
@@ -109,7 +109,7 @@ fn slash_b(description: &str) -> String {
     ret
 }
 
-static NAME_OTYPES: [(&str, &str); 27] = [
+static NAME_OTYPES: [(&str, &str); 34] = [
     ("INTEGER", "OType::Integer"),
     ("TruthValue", "OType::Integer"),
     ("TimeStamp", "OType::Ticks"),
@@ -125,11 +125,14 @@ static NAME_OTYPES: [(&str, &str); 27] = [
     ("SnmpAdminString", "OType::String"),
     ("DisplayString", "OType::String"),
     ("OwnerString", "OType::String"),
+    ("MacAddress", "OType::String"),
     ("EntryStatus", "OType::Integer"),
     ("InterfaceIndexOrZero", "OType::Integer"),
     ("PhysAddress", "OType::String"),
     ("Integer32", "OType::Integer"),
     ("Unsigned32", "OType::Integer"),
+    ("TimeInterval", "OType::Integer"),
+    ("RowStatus", "OType::Integer"),
     ("Gauge32", "OType::Counter"),
     ("OCTET", "OType::String"),
     ("BITS", "OType::String"),
@@ -137,16 +140,20 @@ static NAME_OTYPES: [(&str, &str); 27] = [
     ("OBJECT", "OType::ObjectId"),
     ("Counter32", "OType::Counter"),
     ("IpAddress", "OType::Address"),
+    ("InetAddress", "OType::Address"),
+    ("InetAddressType", "OType::Integer"),
+    ("InetPortNumber", "OType::Integer"),
+    ("InterfaceIndexOrZero", "OType::Integer"),
 ];
 
 fn name_otype(text: &str) -> &str {
-    let mut parts = text.split(" ");
-    let val = parts.next().unwrap();
+    let text = text.trim();
     for (key, value) in NAME_OTYPES.iter() {
-        if val == *key {
+        if text.starts_with(*key) {
             return value;
         }
     }
+    warn!("Otype lookup failed for {text}");
     "OType::ObjectId"
 }
 
@@ -254,103 +261,158 @@ fn value_from_syntax(syntax: &str) -> String {
         "OType::Counter" => "counter_from_int(0)",
         "OType::BigCounter" => "big_counter_from_int(0)",
         "OType::Ticks" => "ticks_from_int(0)",
-        "OType::Address" => {
-            "ObjectSyntax::ApplicationWide(ApplicationSyntax::Address(IpAddress([0,0,0,0].into())))"
-        }
+        "OType::Address" => "address_from_zeros()",
         _ => "simple_from_int(4)",
     }
     .to_string()
 }
 
-fn fix_def(arg: &str, syntax: &str, tcs: &HashMap<&str, TextConvention>) -> String {
-    //Generate default value"""
-    if arg.trim().ends_with("'H") {
-        let tend = arg.len() - 3;
-        let txt = &arg[1..tend];
-        return format!("simple_from_str(b\"{txt}\")").to_string();
+fn lookup_int_syntax(arg: &str, syntax: &str) -> String {
+    if arg.parse::<i32>().is_ok() {
+        return format!("simple_from_int({arg})");
     }
-    if tcs.contains_key(syntax) {
-        let tc = tcs[syntax].clone();
-        debug!("arg {} syntax {} tc {:?}", arg, syntax, tc);
-        let tcsyn = tc.syntax.trim();
-        if tcsyn.starts_with("INTEGER") || tcsyn.starts_with("Integer32") {
-            if tcsyn.contains("{") {
-                let mut tc_bits = tcsyn.split("{");
-                tc_bits.next();
-                let body = tc_bits.next().unwrap().split("}").next().unwrap();
-                let parts = body.split(",");
-                for part in parts {
-                    let mut part_itr = part.split("(");
-                    let name = part_itr.next().unwrap().trim();
-                    if arg.trim() == name {
-                        let valb = part_itr.next().unwrap();
-                        let val = valb.split(")").next().unwrap();
-                        return format!("simple_from_int({val})").to_string();
-                    }
-                }
-                warn!("Not found name match for TC syntax, {arg}");
-            } else {
-                return format!("simple_from_int({arg})").to_string();
-            }
-        }
-        if tc.syntax.starts_with("Unsigned") {
-            return format!("simple_from_int({arg})").to_string();
-            /*let mut tc_bits = tc.syntax.split("{");
-            tc_bits.next();
-            let body = tc_bits.next().unwrap().split("}").next().unwrap();
-            let parts = body.split(",");
-            for part in parts {
-                let mut part_itr = part.split("(");
-                let name = part_itr.next().unwrap();
-                if arg == name.trim() {
-                    let valb = part_itr.next().unwrap();
-                    let val = valb.split(")").next().unwrap();
-                    return format!("simple_from_int(0)").to_string();
-                }
-            }*/
-        }
-        if tc.syntax == "OBJECT IDENTIFIER" {
-            let uarg = upper_snake(arg);
-            let uarg_tr = uarg.trim();
-            return format!("simple_from_vec(&ARC_{uarg_tr})");
-        }
-        if tc.syntax.starts_with("OCTET STRING") {
-            let tend = arg.len() - 3;
-            let txt = &arg[1..tend];
-            return format!("simple_from_str(b\"{txt}\")");
-        }
-        panic!("Unsupported TC type for DEFVAL {tc:?}");
-    }
-    if syntax.starts_with("INTEGER") && syntax.contains("{") {
-        let mut syn_itr = syntax.split("{");
-        syn_itr.next();
-        let body = syn_itr.next().unwrap().split("}").next().unwrap();
+    if syntax.contains("{") {
+        let mut syn_bits = syntax.split("{");
+        syn_bits.next();
+        let body = syn_bits.next().unwrap().split("}").next().unwrap();
         let parts = body.split(",");
         for part in parts {
-            let mut splits = part.split("(");
-            let name = splits.next().unwrap();
-            let val = splits.next().unwrap();
-            //println!("DEFVAL processing {1}", syntax);
-
-            if arg.trim() == name.trim() {
-                let val = val.split(")").next().unwrap();
-                return format!("simple_from_int({val})");
+            let mut part_itr = part.split("(");
+            let name = part_itr.next().unwrap().trim();
+            let new_name;
+            if name.starts_with("--") && name.contains("\n") {
+                let mut nsplit = name.split("\n");
+                let _ = nsplit.next();
+                new_name = nsplit.next().unwrap().trim();
+            } else {
+                new_name = name;
+            }
+            if arg.trim() == new_name {
+                let valb = part_itr.next().unwrap();
+                let val = valb.split(")").next().unwrap();
+                return format!("simple_from_int({val})").to_string();
             }
         }
+    }
+    warn!("Not found name match for syntax, {arg}, returning 0");
+    "simple_from_int(0)".to_string()
+}
+
+fn fix_def(
+    arg: &str,
+    syntax: &str,
+    tcs: &HashMap<&str, TextConvention>,
+    resolver: &Resolver,
+) -> String {
+    //Generate default value"""
+    let arg = arg.trim();
+    if syntax.trim() == "RowPointer" || syntax.trim() == "VariablePointer" {
+        if resolver.check_name(arg) {
+            let arc = resolver.lookup(arg);
+            return format!("simple_from_vec(&{arc:?})").to_string();
+        }
+        if arg.trim() == "zeroDotZero" {
+            return "simple_from_vec(&[0, 0])".to_string();
+        }
+    }
+    if arg.ends_with("'H") || arg.ends_with("'h") {
+        let tend = arg.len() - 3;
+        let txt = if tend > 1 { &arg[1..tend] } else { "" };
+        return format!("simple_from_str(b\"{txt}\")").to_string();
+    }
+
+    if let Some(tcsyn) = tc_find_syntax(syntax, tcs) {
+        if tcsyn.starts_with("INTEGER")
+            || tcsyn.starts_with("Integer32")
+            || tcsyn.starts_with("Unsigned")
+            || tcsyn.starts_with("Gauge")
+            || tcsyn.starts_with("TimeInterval")
+        {
+            return lookup_int_syntax(arg, tcsyn);
+        }
+        if tcsyn == "OBJECT IDENTIFIER" {
+            if resolver.check_name(arg) {
+                let arc = resolver.lookup(arg);
+                return format!("simple_from_vec(&{arc:?})").to_string();
+            }
+            if arg == "zeroDotZero" {
+                return "simple_from_vec(&[0, 0])".to_string();
+            }
+            let uarg = upper_snake(arg);
+            return format!("simple_from_vec(&ARC_{uarg})");
+        }
+        if tcsyn.starts_with("OCTET STRING") {
+            let txt = if arg.len() > 3 {
+                let tend = arg.len() - 3;
+                &arg[1..tend]
+            } else {
+                ""
+            };
+            return format!("simple_from_str(b\"{txt}\")");
+        }
+        if tcsyn.starts_with("BITS") {
+            // FIXME should look at args, but setting to a byte of zero should be OK for now
+            let txt = "\x00";
+            return format!("simple_from_str(b\"{txt}\")");
+        }
+        if tcsyn.starts_with("TimeTicks") {
+            // FIXME should look at args, but setting to value of zero should be OK for now
+            return format!("simple_from_int(0)").to_string();
+        }
+        panic!("Unsupported TC type for DEFVAL {tcsyn:?} {syntax}");
     }
     if syntax.starts_with("Integer32")
         || syntax.starts_with("Unsigned32")
+        || syntax.starts_with("Gauge")
         || syntax.starts_with("INTEGER")
+        || syntax.starts_with("TimeInterval")
+        || syntax.starts_with("TimeTicks")
     {
-        return format!("simple_from_int({arg})");
+        return lookup_int_syntax(arg, syntax);
     }
     if syntax == "OBJECT IDENTIFIER" {
-        let uarg_t = upper_snake(arg);
-        let uarg = uarg_t.trim();
-        return "simple_from_vec(&ARC_".to_owned() + uarg + ")";
+        if resolver.check_name(arg) {
+            let arc = resolver.lookup(arg);
+            return format!("simple_from_vec(&{arc:?})").to_string();
+        }
+        if arg == "zeroDotZero" {
+                return "simple_from_vec(&[0, 0])".to_string();
+        }
+        let uarg = upper_snake(arg);
+        return "simple_from_vec(&ARC_".to_owned() + &uarg + ")";
+    }
+    if syntax.starts_with("BITS") {
+        let txt = "\x00";
+        return format!("simple_from_str(b\"{txt}\")");
+    }
+    if syntax.starts_with("DisplayString")
+        || syntax.starts_with("SnmpAdminString")
+        || syntax.starts_with("OCTET STRING")
+        || syntax.starts_with("OwnerString")
+    {
+        let txt = if arg.len() > 3 {
+            let tend = arg.len() - 3;
+            &arg[1..tend]
+        } else {
+            ""
+        };
+        return format!("simple_from_str(b\"{txt}\")");
     }
     warn!("Return DEFVAL {arg} {syntax} literal");
     arg.to_string()
+}
+
+fn tc_find_syntax<'a>(text: &str, tcs: &HashMap<&str, TextConvention<'a>>) -> Option<&'a str> {
+    if tcs.contains_key(text) {
+        return Some(tcs[text].syntax.trim());
+    }
+    if text.contains(" ") {
+        let key = text.split_once(" ").unwrap().0;
+        if tcs.contains_key(key) {
+            return Some(tcs[key].syntax.trim());
+        }
+    }
+    None
 }
 
 fn write_table_struct(
@@ -360,6 +422,7 @@ fn write_table_struct(
     child: ObjectType,
     raw_entry: Vec<(&str, &str)>,
     tcs: &HashMap<&str, TextConvention>,
+    resolver: &Resolver,
 ) -> Result<(), Error> {
     //Write struct for single table"""
     let index_list = child.index;
@@ -392,7 +455,13 @@ fn write_table_struct(
         .collect();
     let acols = acols_vec.join(", ");
     //", ".join([ACCESS[object_types[name].access]  for (name, _) in entry.syntax]);
-    let cols: Vec<&str> = entry.iter().map(|(_, x)| name_otype(x)).collect();
+    let cols: Vec<&str> = entry
+        .iter()
+        .map(|(_, x)| {
+            let y = tc_find_syntax(x, tcs).unwrap_or(x);
+            name_otype(y)
+        })
+        .collect();
     let cols_txt = cols.join(", ");
     //cols = [NAME_OTYPE[_[1].split()[0]] for _ in entry]
     let mut icol_data = vec![];
@@ -402,9 +471,11 @@ fn write_table_struct(
                 object_types[ent.0].defval,
                 object_types[ent.0].syntax,
                 tcs,
+                resolver,
             ))
         } else {
-            icol_data.push(value_from_syntax(name_otype(ent.1)));
+            let syn = tc_find_syntax(ent.1, tcs).unwrap_or(ent.1);
+            icol_data.push(value_from_syntax(name_otype(syn)));
         }
     }
     let idat = icol_data.join(", ");
@@ -497,9 +568,7 @@ fn write_scalar_struct(
     //Write struct for scalar"""
     let acc = access_lookup(data.access);
     let mut syntax = data.syntax;
-    if tcs.contains_key(syntax) {
-        syntax = tcs[syntax].syntax;
-    }
+    let syntax = tc_find_syntax(syntax, tcs).unwrap_or(syntax);
     let otype = name_otype(syntax);
     let val = value_from_syntax(otype);
     let tname = title(name);
@@ -561,6 +630,7 @@ fn write_ot_structs(
     tcs: &HashMap<&str, TextConvention>,
     entries: &HashMap<&str, Entry>,
     names: &Vec<&str>,
+    resolver: &Resolver,
 ) -> Result<(), Error> {
     // Heavy lifting
     out.write_all(b"\n// Now the OBJECT-TYPES.")?;
@@ -576,9 +646,8 @@ fn write_ot_structs(
             let entry_name = en_itr.last().unwrap();
             debug!("entry_name is |{entry_name}|");
             let entry = entries[entry_name].syntax.clone();
-            let child_name = un_title(entry_name);
-            if object_types.contains_key(&child_name[..]) {
-                let child = object_types[&child_name[..]].clone();
+            let child_opt = object_types.values().filter(|o|o.syntax.trim() == entry_name).next();
+            if let Some(child) = child_opt {
                 if child.augments.len() > 2 {
                     warn!("Buggy AUGMENTS behavior, needs fixing");
                     //panic!("Don't support AUGMENTS yet")
@@ -593,9 +662,9 @@ fn write_ot_structs(
                     master_e.extend(entry);
                     let new_child = master.copy();
                     new_child.update(child);*/
-                    write_table_struct(out, name, object_types, child, entry, tcs)?;
+                    write_table_struct(out, name, object_types, child.clone(), entry, tcs, resolver)?;
                 } else {
-                    write_table_struct(out, name, object_types, child, entry, tcs)?;
+                    write_table_struct(out, name, object_types, child.clone(), entry, tcs, resolver)?;
                 }
             } else {
                 error!("Table definition not found {}", entry_name);
@@ -643,7 +712,7 @@ fn write_module_compliances(
         let name = mod_c.name;
         let uname = upper_snake(name);
         out.write_all(
-            format!("    // comp.register_compliance(COMPLIANCE_{uname}, \"{name}\");\n")
+            format!("    // _comp.register_compliance(COMPLIANCE_{uname}, \"{name}\");\n")
                 .as_bytes(),
         )?;
     }
@@ -685,98 +754,20 @@ use crate::keeper::{Access, OidErr, OidKeeper, OType};
 use crate::scalar::ScalarMemOid;
 use crate::table::TableMemOid;
 use crate::oidmap::OidMap;
+use crate::utils::*;
 use rasn::types::{Integer, ObjectIdentifier, OctetString};
-";
 
-    let stub_1;
-
-    if counts {
-        if ticks {
-            stub_1 = r"
-use rasn_smi::v2::{ObjectSyntax, SimpleSyntax, ApplicationSyntax,
-          Counter32, TimeTicks};
-";
-        } else {
-            stub_1 = r"
-use rasn_smi::v2::{ApplicationSyntax, Counter32, ObjectSyntax, SimpleSyntax};
-";
-        }
-    } else if ticks {
-        stub_1 = r"
-    use rasn_smi::v2::{ObjectSyntax, SimpleSyntax, ApplicationSyntax,
-              TimeTicks};
-    ";
-    } else {
-        stub_1 = r"
-    use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
-    ";
-    }
-    if big_counts {
-        let big = "
-use rasn_smi::v2::Counter64;
-";
-        out.write_all(big.as_bytes())?;
-    }
-    let stub_2 = r"
 use rasn_snmp::v3::{VarBind, VarBindValue};
-
-fn simple_from_int(value: i32) -> ObjectSyntax {
-    ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(value)))
-}
-
-fn simple_from_str(value: &'static [u8]) -> ObjectSyntax {
-    ObjectSyntax::Simple(SimpleSyntax::String(OctetString::from_static(value)))
-}
-
-fn simple_from_vec(value: &'static [u32]) -> ObjectSyntax {
-    ObjectSyntax::Simple(SimpleSyntax::ObjectId(
-        ObjectIdentifier::new(value).unwrap(),
-    ))
-}
-
 ";
+
     out.write_all(stub_start.as_bytes())?;
-    out.write_all(stub_1.as_bytes())?;
-    out.write_all(stub_2.as_bytes())?;
-    if addr {
-        let stub_a = r"
-use rasn_smi::v1::IpAddress;
-";
-        out.write_all(stub_a.as_bytes())?;
-    }
-    if counts {
-        let counts_stub = r"
 
-fn counter_from_int(value:u32) -> ObjectSyntax {
-  ObjectSyntax::ApplicationWide(ApplicationSyntax::Counter(Counter32{0:value}))
-}
-";
-        out.write_all(counts_stub.as_bytes())?;
-    }
-    if big_counts {
-        let counts_stub = r"
-
-fn big_counter_from_int(value:u64) -> ObjectSyntax {
-  ObjectSyntax::ApplicationWide(ApplicationSyntax::BigCounter(Counter64{0:value}))
-}
-";
-        out.write_all(counts_stub.as_bytes())?;
-    }
-    if ticks {
-        let ticks_stub = r"
-
-fn ticks_from_int(value:u32) -> ObjectSyntax {
-  ObjectSyntax::ApplicationWide(ApplicationSyntax::Ticks(TimeTicks { 0: value }))
-}
-";
-        out.write_all(ticks_stub.as_bytes())?;
-    }
     let names = ordered_names(object_types, &resolve);
     write_arcs(&mut out, object_ids, &resolve, &names, mod_comps)?;
-    write_ot_structs(&mut out, object_types, tcs, entries, &names)?;
+    write_ot_structs(&mut out, object_types, tcs, entries, &names, &resolve)?;
     let ot = r"
 
-pub fn load_stub(oid_map: &mut OidMap, comp: &mut ComplianceStatements) {
+pub fn load_stub(oid_map: &mut OidMap, _comp: &mut ComplianceStatements) {
 ";
     out.write_all(ot.as_bytes())?;
     write_object_ids(&mut out, object_ids)?;

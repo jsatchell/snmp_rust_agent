@@ -205,9 +205,7 @@ mod tests {
     use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
     use rasn_snmp::v3::VarBindValue;
 
-    fn simple_from_int(value: i32) -> ObjectSyntax {
-        ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(value)))
-    }
+    use crate::utils::simple_from_int;
 
     const ARC2: [u32; 2] = [1, 6];
 

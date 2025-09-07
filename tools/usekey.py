@@ -1,7 +1,7 @@
 """Utility to bootstrap password file"""
 import sys
 import ipaddress
-from hashlib import sha1   # , sha224, sha256, sha384, sha512
+from hashlib import sha1, sha224, sha256, sha384, sha512
 
 LEN = 1048576  # Size of expanded key
 
@@ -51,7 +51,7 @@ def get_engine_id(path: str) -> bytes:
 
 def localise_key(pass_word: bytes, engine_id: bytes,
                  hasher=sha1, trunc=20) -> bytes:
-    "Apply RFC3414 key derivation AKA localization. This is the SHA1 version."
+    "Apply RFC3414 key derivation AKA localization. This is the parameterized version."
     pwlen = len(pass_word)
 
     cnt = LEN // pwlen
@@ -60,26 +60,38 @@ def localise_key(pass_word: bytes, engine_id: bytes,
     m = hasher()
     m.update(big)
 
-    d = m.digest()[:trunc]
+    d = m.digest() # [:trunc]
+    assert len(d) == trunc
     k2 = d + engine_id + d
     m1 = hasher()
     m1.update(k2)
     return m1.hexdigest()
 
 
-if len(sys.argv) not in [4, 5]:
-    print("Usage:\npython3 usekey.py <group> <user> <password> [<password2>]")
+if len(sys.argv) not in [4, 5, 6]:
+    print("Usage:\npython3 usekey.py <group> <user> <password> [<password2> [hash]]")
     print("<group> should be a group name in groups.txt")
+    print("hash (if present) should be one of sha1 sha224 sha256")
     sys.exit(1)
+
+HMAP = {"sha1": (sha1, 20),
+        "sha224": (sha224, 28),
+        "sha256": (sha256, 32),
+        "sha384": (sha384, 48),
+        "sha512": (sha512, 64)
+        }
+
 
 group = sys.argv[1]
 username = sys.argv[2]
 password = sys.argv[3].encode()
-password2 = sys.argv[4].encode() if len(sys.argv) == 5 else password
+password2 = sys.argv[4].encode() if len(sys.argv) >= 5 else password
+hashname = sys.argv[5] if len(sys.argv) >= 6 else "sha1"
 # engine_id = b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02'
 # ENGINE_ID = b"\x80\x00\x4e\x2c\x03\x34\x48\xed\x2d\xe2\x88"
 conf_engine_id = get_engine_id(".snmp-agent.conf")
 
+hasher, trunc = HMAP[hashname]
 
-print(username, group, "sha1", localise_key(password, conf_engine_id),
-      "aes", localise_key(password2, conf_engine_id))
+print(username, group, hashname, localise_key(password, conf_engine_id, hasher, trunc),
+      "aes", localise_key(password2, conf_engine_id, hasher, trunc))

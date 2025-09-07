@@ -87,7 +87,9 @@ fn main() -> Result<(), Box<dyn Error>> {
        let path = entry.path();
        //if !path.ends_with("UDPF-MIB") {continue;}
        let text = //fs::read_to_string(&path).unwrap(); */
+
     let out_dir = cli.out_dir.to_string();
+    let mut stub_ok = vec![];
     for argument in &cli.mib_names.clone() {
         if argument.ends_with("mib-compiler-rs") {
             continue;
@@ -141,7 +143,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             let mut good_parent = false;
             let inodes = nodes.clone();
-            for pass in 0..2 {
+            for pass in 0..3 {
                 for node in &inodes {
                     match node {
                         parser::MibNode::ModId(o) => {
@@ -149,7 +151,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                             let parent = v.parent;
                             let added = res.try_add(o.name, parent, &v.num);
                             good_parent = added;
-                            if !added && pass > 1 {
+                            if !added && pass > 2 {
                                 error!("Unknown module parent {parent} {mib_name}")
                             }
                         }
@@ -158,7 +160,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                             let parent = v.parent;
                             let added = res.try_add(o.name, parent, &v.num);
                             if good_parent && !added && pass > 1 {
-                                error!("Unknown type parent {parent} {mib_name}")
+                                error!("Unknown type parent {0} {1} {2}", o.name, parent, mib_name);
                             }
                         }
                         parser::MibNode::ObIdy(o) => {
@@ -257,6 +259,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 &out_dir,
             );
             if compile_res.is_ok() {
+                stub_ok.push(argument.clone());
                 success += 1;
             }
         } else {
@@ -264,7 +267,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     info!("{success} read out of {total}");
-    if gen_stub::loader(cli.mib_names).is_ok() {
+    if gen_stub::loader(stub_ok).is_ok() {
         info!("Wrote stub loader");
     }
     Ok(())

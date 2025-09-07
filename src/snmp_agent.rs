@@ -28,8 +28,9 @@ use std::str::FromStr;
 use std::time::Instant;
 
 const BOOT_CNT_FILENAME: &str = "boot-cnt.txt";
-const B12: [u8; 12] = [0; 12];
-const Z12: OctetString = OctetString::from_static(&B12);
+const Z12: OctetString = OctetString::from_static(&[0u8; 12]);
+const Z16: OctetString = OctetString::from_static(&[0u8; 16]);
+const Z24: OctetString = OctetString::from_static(&[0u8; 24]);
 const ZB: OctetString = OctetString::from_static(b"");
 
 /// Get the boot count from non-volatile storage, creating file if it does not exist.
@@ -273,15 +274,34 @@ impl Agent {
         error_status: &mut u32,
         error_index: &mut u32,
         vb_cnt: u32,
+        perm: &Perm,
+        flags: u8,
     ) {
+        if !perm.check(flags, false, &roid) {
+            *error_status = Pdu::ERROR_STATUS_NO_ACCESS;
+            *error_index = vb_cnt;
+            vb.push(VarBind {
+                name: roid.clone(),
+                value: VarBindValue::Unspecified,
+            });
+            return;
+        }
         let opt_get: Result<usize, usize> = oid_map.search(&roid);
         match opt_get {
             Err(insert_point) => {
                 debug!("Get next miss case {insert_point}");
                 if insert_point == 0 {
-                    // Off the front of our range - give the first thing
-                    let oid1 = oid_map.oid(0).clone();
-                    let okeep = &mut oid_map.idx(0);
+                    // Off the front of our range - give the first thing we can access
+                    let mut first = 0;
+                    let mut oid1;
+                    loop {
+                        oid1 = oid_map.oid(first).clone();
+                        if perm.check(flags, false, &oid1) {
+                            break;
+                        }
+                        first += 1;
+                    }
+                    let okeep = &mut oid_map.idx(first);
                     if okeep.is_scalar(oid1.clone()) {
                         let value_res = okeep.get(oid1.clone());
                         match value_res {
@@ -303,6 +323,7 @@ impl Agent {
                     } else {
                         match okeep.get_next(oid1.clone()) {
                             Ok(bind) => vb.push(bind),
+                            // FIXME, map errors here - could be empty table!
                             Err(_) => vb.push(VarBind {
                                 name: oid1.clone(),
                                 value: VarBindValue::EndOfMibView,
@@ -316,13 +337,85 @@ impl Agent {
                         value: VarBindValue::EndOfMibView,
                     });
                 } else {
-                    warn!("Insert point in map, but is a miss, should never happen.");
-                    *error_index = vb_cnt;
-                    *error_status = Pdu::ERROR_STATUS_GEN_ERR;
-                    vb.push(VarBind {
-                        name: roid,
-                        value: VarBindValue::Unspecified,
-                    });
+                    warn!("Insert point in map, but is a miss, should never happen. {} {}",
+                          insert_point, oid_map.len());
+                    debug!("Insert point in map");
+                    let oid1 = &oid_map.oid(insert_point).clone();
+                    let last_keep = &mut oid_map.idx(insert_point);
+                    debug!("last_keep oid {oid1:?}");
+                    if last_keep.is_scalar(oid1.clone()) {
+                        match last_keep.get(oid1.clone()) {
+                            Ok(value) => vb.push(VarBind {
+                                name: oid1.clone(),
+                                value,
+                            }),
+                            Err(e) => {
+                                debug!("Error on scalar get {e:?}");
+                                vb.push(VarBind {
+                                    name: oid1.clone(),
+                                    value: VarBindValue::Unspecified,
+                                })
+                            }
+                        }
+                    } else {
+                        // Table
+                        debug!("table case {insert_point}");
+                        let next_res = last_keep.get_next(roid.clone());
+                        match next_res {
+                            Ok(next) => vb.push(next),
+                            Err(bad) => match bad {
+                                OidErr::OutOfRange => {
+                                    debug!("Out of range {insert_point}");
+                                    if insert_point == oid_map.len() {
+                                        vb.push(VarBind {
+                                            name: roid.clone(),
+                                            value: VarBindValue::EndOfMibView,
+                                        });
+                                    } else {
+                                        debug!("handle case following table end");
+                                        let next_oid = oid_map.oid(insert_point).clone();
+                                        let next_keep = &mut oid_map.idx(insert_point);
+                                        if next_keep.is_scalar(next_oid.clone()) {
+                                            let value = next_keep.get(next_oid.clone()).unwrap();
+                                            vb.push(VarBind {
+                                                name: next_oid.clone(),
+                                                value,
+                                            });
+                                        } else {
+                                            vb.push(next_keep.get_next(next_oid.clone()).unwrap());
+                                        }
+                                    }
+                                }
+                                OidErr::NoSuchInstance => {
+                                    *error_index = vb_cnt;
+                                    *error_status = Pdu::ERROR_STATUS_NO_ACCESS;
+                                    vb.push(VarBind {
+                                        name: roid,
+                                        value: VarBindValue::NoSuchObject,
+                                    });
+                                }
+                                OidErr::NoSuchName => {
+                                    *error_index = vb_cnt;
+                                    *error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
+                                    vb.push(VarBind {
+                                        name: roid,
+                                        value: VarBindValue::NoSuchObject,
+                                    });
+                                }
+                                OidErr::GenErr => {
+                                    *error_index = vb_cnt;
+                                    *error_status = Pdu::ERROR_STATUS_GEN_ERR;
+                                    vb.push(VarBind {
+                                        name: roid,
+                                        value: VarBindValue::Unspecified,
+                                    });
+                                }
+                                _ => {
+                                    warn!("unexpected response from get_next {bad:?}")
+                                }
+                            },
+                        }
+                    }
                 }
             }
             Ok(which) => {
@@ -423,11 +516,6 @@ impl Agent {
         let request_id = r.0.request_id;
         for (vb_cnt, vbind) in r.0.variable_bindings.iter().enumerate() {
             let roid = vbind.name.clone();
-            if !perm.check(flags, false, &roid) {
-                error_status = Pdu::ERROR_STATUS_NO_ACCESS;
-                error_index = vb_cnt as u32;
-                return (error_status, error_index, request_id);
-            }
             self.do_next(
                 roid,
                 oid_map,
@@ -435,6 +523,8 @@ impl Agent {
                 &mut error_status,
                 &mut error_index,
                 vb_cnt.try_into().unwrap(),
+                perm,
+                flags,
             );
             if error_status != Pdu::ERROR_STATUS_NO_ERROR {
                 break;
@@ -445,7 +535,9 @@ impl Agent {
 
     /// Make changes!
     ///
-    /// Current implementation is not transactional, and does not return full set of errors.
+    /// Current implementation does not return full set of errors.
+    ///
+    /// Changes are performed in a transaction.
     ///
     fn set(
         &self,
@@ -455,8 +547,6 @@ impl Agent {
         perm: &Perm,
         flags: u8,
     ) -> (u32, u32, i32) {
-        // FIXME need to do two passes - validation, error return if need be and then actually apply the changes.
-        //let mut keeps = HashSet::<&mut Box<dyn OidKeeper>>::new();
         let mut keeps = HashSet::<usize>::new();
         let mut error_status = Pdu::ERROR_STATUS_NO_ERROR;
         let mut error_index = 0;
@@ -464,12 +554,10 @@ impl Agent {
         let mut vb_cnt = 0;
         for vbind in &r.0.variable_bindings {
             let roid = vbind.name.clone();
-
             let opt_set: Result<usize, usize> = oid_map.search(&roid);
             match opt_set {
                 Err(_) => debug!("Miss gathering handlers"),
                 Ok(indx) => {
-                    //let okeep = oid_map.idx(indx);
                     keeps.insert(indx);
                 }
             }
@@ -484,7 +572,7 @@ impl Agent {
             if !perm.check(flags, true, &roid) {
                 error_status = Pdu::ERROR_STATUS_NO_ACCESS;
                 error_index = vb_cnt;
-                break; //return (error_status, error_index, request_id);
+                break;
             }
             let opt_set: Result<usize, usize> = oid_map.search(&roid);
             match opt_set {
@@ -576,11 +664,6 @@ impl Agent {
         for (n, vbind) in r.0.variable_bindings.iter().enumerate() {
             if n < non_repeaters {
                 let roid = vbind.name.clone();
-                if !perm.check(flags, false, &roid) {
-                    error_status = Pdu::ERROR_STATUS_NO_ACCESS;
-                    error_index = vb_cnt;
-                    return (error_status, error_index, request_id);
-                }
                 self.do_next(
                     roid,
                     oid_map,
@@ -588,6 +671,8 @@ impl Agent {
                     &mut error_status,
                     &mut error_index,
                     vb_cnt,
+                    perm,
+                    flags,
                 );
                 if error_status != Pdu::ERROR_STATUS_NO_ERROR {
                     return (error_status, error_index, request_id);
@@ -603,11 +688,6 @@ impl Agent {
         for i in 0..max_repeats {
             let mut new_oids: Vec<ObjectIdentifier> = vec![];
             for roid in &rep_oids {
-                if !perm.check(flags, false, roid) {
-                    error_status = Pdu::ERROR_STATUS_NO_ACCESS;
-                    error_index = vb_cnt;
-                    return (error_status, error_index, request_id);
-                }
                 self.do_next(
                     roid.clone(),
                     oid_map,
@@ -615,6 +695,8 @@ impl Agent {
                     &mut error_status,
                     &mut error_index,
                     vb_cnt,
+                    perm,
+                    flags,
                 );
                 if error_status != Pdu::ERROR_STATUS_NO_ERROR {
                     return (error_status, error_index, request_id);
@@ -770,12 +852,12 @@ impl Agent {
             if flags & 1 == 1 {
                 // FIXME
                 // Both these cases should send Authentication Failure, rather
-                // than silently dropping the packet. Maybe some
-                // other auth types have different lengths, so logic
-                // may be more complex. Probably have to look up user,
-                // and take authentication length from the required method.
-                if usp.authentication_parameters.len() != 12 {
-                    warn!("Authentication parameters must be 12 bytes");
+                // than silently dropping the packet.
+                if usp.authentication_parameters.len() != user.auth_length {
+                    warn!(
+                        "Authentication parameters must be {} bytes",
+                        user.auth_length
+                    );
                     continue;
                 }
                 if self.wrong_auth(&mut message, user, usp.clone()) {
@@ -825,7 +907,11 @@ impl Agent {
             return vec![];
         }
         let mut usp: USMSecurityParameters = r_sp.ok().expect("Errors caught above");
-        usp.authentication_parameters = Z12;
+        usp.authentication_parameters = match usr.auth_length {
+            12 => Z12,
+            16 => Z16,
+            _ => Z24,
+        };
         let _ = message.encode_security_parameters(rasn::Codec::Ber, &usp);
         let buf = rasn::ber::encode(message).unwrap();
 
@@ -880,6 +966,7 @@ mod tests {
     use super::*;
     use crate::keeper::{Access, OType, OidKeeper};
     use crate::oidmap;
+    use crate::perms::Rule;
     use crate::table::TableMemOid;
 
     fn make_agent(port: &str) -> Agent {
@@ -976,9 +1063,14 @@ mod tests {
     }
 
     fn perms() -> Vec<Perm> {
-        vec![Perm {
+        let rules = vec![Rule {
             read: true,
             write: true,
+            include: vec![vec![1u32]],
+            exclude: vec![],
+        }];
+        vec![Perm {
+            rules,
             security_level: 1u8, // Just flags
             group_name: "test".as_bytes().to_vec(),
         }]

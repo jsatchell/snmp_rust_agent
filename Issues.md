@@ -8,7 +8,7 @@
 * Tests - Started
   * Table - 6
   * Scalar - 4
-  * Usm - 6
+  * Usm - 8
   * Config - 1
   * Privacy - no test cases in RFCs.
   * Agent -  4 Hardest, needs mocks etc.
@@ -30,7 +30,7 @@
   * Compiler support - Done for Rust
   * snmp_agent use new API - Done
 * Rough outline of MiB compiler / code generator - Started, both python and rust.
-* Simplistic permissions model - Done, maybe too simple!
+* Improved permissions model - Done
 * Get-bulk - Done, but error handling is hope and wishful thinking
 * At least two MIB fairly complete implementations that are not just stubs:
   * SNMPv2  - started, mostly done
