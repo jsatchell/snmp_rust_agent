@@ -23,7 +23,7 @@ fn main() -> std::io::Result<()> {
     let conf = Config::load();
     // Populate oid_map for stubs
     load_stubs(&mut oid_map, &mut comp);
-    let mut agent: Agent = Agent::build(conf.engine_id.clone(), &conf.listen);
+    let mut agent: Agent = Agent::build(conf.engine_id.clone(), &conf.listen, conf.send_auth_fails);
     if conf.trap_sink.is_empty() {
         debug!("No Trapsink defined in config, won't start notifier");
     } else {

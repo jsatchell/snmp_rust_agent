@@ -686,7 +686,7 @@ struct KeepSysORTable {
 }
 
 impl KeepSysORTable {
-    fn new() -> Self {
+    fn new(comp: &ComplianceStatements) -> Self {
         let base_oid: ObjectIdentifier = ObjectIdentifier::new(&ARC_SYS_OR_TABLE).unwrap();
         let mut tab = TableMemOid::new(
             vec![
@@ -708,12 +708,16 @@ impl KeepSysORTable {
             false,
         );
         // Add extra compliance OIDs as they are achieved.
-        tab.set_data(vec![vec![
-            simple_from_int(1),
-            simple_from_vec(&[1, 3, 6, 1, 6, 3, 1, 2, 1, 3]),
-            simple_from_str(b"snmpBasicComplianceRev2 - not really, just an example"),
-            ticks_from_int(0),
-        ]]);
+        let mut data = vec![];
+        for (n, compline) in comp.claims.iter().enumerate() {
+            data.push(vec![
+                simple_from_int(n.try_into().unwrap()), // Startup
+                simple_from_vec(compline.0),
+                simple_from_str(compline.1.as_bytes()),
+                ticks_from_int(0),
+            ]);
+        }
+        tab.set_data(data);
         KeepSysORTable { table: tab }
     }
 }
@@ -742,22 +746,6 @@ impl OidKeeper for KeepSysORTable {
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         Ok(())
-    }
-
-    fn load_compliances(&mut self, comp: &ComplianceStatements) {
-        let mut data = vec![];
-        let mut cnt = 0;
-        for (arc, text) in &comp.claims {
-            cnt += 1;
-
-            data.push(vec![
-                simple_from_int(cnt),
-                simple_from_vec(arc),
-                simple_from_str(text.as_bytes()),
-                ticks_from_int(0),
-            ])
-        }
-        self.table.set_data(data);
     }
 }
 // The textual identification of the contact person for
@@ -1953,11 +1941,16 @@ pub fn load_stub(
     // Module Compliance values, uncomment when implemented
 
     // let comp_snmp_basic_compliance: [u32; 10] = [1, 3, 6, 1, 6, 3, 1, 2, 1, 2];
-    comp.register_compliance(&COMPLIANCE_SNMP_BASIC_COMPLIANCE, "snmpBasicCompliance");
+    comp.register_compliance(
+        &COMPLIANCE_SNMP_BASIC_COMPLIANCE,
+        "snmpBasicCompliance",
+        true,
+    );
     //let comp_snmp_basic_compliance_rev2: [u32; 10] = [1, 3, 6, 1, 6, 3, 1, 2, 1, 3];
     comp.register_compliance(
         &COMPLIANCE_SNMP_BASIC_COMPLIANCE_REV2,
         "snmpBasicComplianceRev2",
+        true,
     );
 
     let oid_snmp_in_get_nexts: ObjectIdentifier =
@@ -2011,9 +2004,9 @@ pub fn load_stub(
     let k_sys_object_id: Box<dyn OidKeeper> = Box::new(KeepSysObjectID::new());
     oid_map.push(oid_sys_object_id, k_sys_object_id);
     let oid_sys_or_table: ObjectIdentifier = ObjectIdentifier::new(&ARC_SYS_OR_TABLE).unwrap();
-    let sys_or_table = KeepSysORTable::new();
-    let mut k_sys_or_table: Box<dyn OidKeeper> = Box::new(sys_or_table);
-    k_sys_or_table.load_compliances(comp);
+    let sys_or_table = KeepSysORTable::new(comp);
+    let k_sys_or_table: Box<dyn OidKeeper> = Box::new(sys_or_table);
+
     oid_map.push(oid_sys_or_table, k_sys_or_table);
     let oid_sys_contact: ObjectIdentifier = ObjectIdentifier::new(&ARC_SYS_CONTACT).unwrap();
     let k_sys_contact: Box<dyn OidKeeper> = Box::new(KeepSysContact::new(config));

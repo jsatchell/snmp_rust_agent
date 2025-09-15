@@ -28,8 +28,8 @@ enum WhatHash {
     Sha1,
     Sha224,
     Sha256,
-    /*Sha384,
-    Sha512, */
+    Sha384,
+    Sha512,
 }
 
 /// User struct holds data about user.
@@ -45,8 +45,8 @@ pub struct User<'a> {
     auth_key: Vec<u8>,
     pub priv_key: Vec<u8>,
     pub auth_length: usize,
-    k1: [u8; 64],
-    k2: [u8; 64],
+    k1: Vec<u8>, //[u8; 64],
+    k2: Vec<u8>, //[u8; 64],
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -57,13 +57,13 @@ impl<'a> User<'a> {
     ///
     /// Will throw ParseUserError on problems.
     /// User group name (the second item on the line) must match a group in perms
-    fn from_str(s: &str, perms: &'a Vec<Perm>) -> Result<Self, ParseUserError> {
+    pub fn from_str(s: &str, perms: &'a Vec<Perm>) -> Result<Self, ParseUserError> {
         if perms.is_empty() {
             return Err(ParseUserError);
         }
         let re =
             Regex::new(r"^(?<name>[^ ]+) (?<group>[^ ]+) (?<hash>[^ ]+) (?<ak>[^ ]+) (?<priv>[^ ]+) (?<pk>[^ ]+)$")
-                .unwrap();
+                .unwrap(); // Checked - regex compiles
 
         let captures = re.captures(s).ok_or(ParseUserError)?;
 
@@ -72,13 +72,15 @@ impl<'a> User<'a> {
             "sha1" => (WhatHash::Sha1, 20, 12),
             "sha224" => (WhatHash::Sha224, 28, 16),
             "sha256" => (WhatHash::Sha256, 32, 24),
+            "sha384" => (WhatHash::Sha384, 48, 32),
+            "sha512" => (WhatHash::Sha512, 64, 48),
             _ => return Err(ParseUserError),
         };
 
         if captures["priv"] != *"aes" {
             return Err(ParseUserError);
         }
-        let akb = hex::decode(&captures["ak"]).unwrap();
+        let akb = hex::decode(&captures["ak"]).unwrap(); // Startup, who cares?
         let group = captures["group"].as_bytes().to_vec();
 
         for perm_entry in perms {
@@ -89,10 +91,18 @@ impl<'a> User<'a> {
                     perm: perm_entry,
                     name: captures["name"].as_bytes().to_vec(),
                     auth_key: akb.clone(),
-                    priv_key: hex::decode(&captures["pk"]).unwrap(),
+                    priv_key: hex::decode(&captures["pk"]).unwrap(), // Startup, who cares?
                     auth_length,
-                    k1: k1_from_ak(&akb, trunc),
-                    k2: k2_from_ak(&akb, trunc),
+                    k1: if trunc < 40 {
+                        k1_from_ak(&akb, trunc)
+                    } else {
+                        k1_128_from_ak(&akb, trunc)
+                    },
+                    k2: if trunc < 40 {
+                        k2_from_ak(&akb, trunc)
+                    } else {
+                        k2_128_from_ak(&akb, trunc)
+                    },
                 });
             }
         }
@@ -113,7 +123,13 @@ impl<'a> User<'a> {
                 out.extend(b" sha224 ");
             }
             WhatHash::Sha256 => {
-                out.extend(b" sha226 ");
+                out.extend(b" sha256 ");
+            }
+            WhatHash::Sha384 => {
+                out.extend(b" sha384 ");
+            }
+            WhatHash::Sha512 => {
+                out.extend(b" sha512 ");
             }
         };
         out.extend(hex::encode(self.auth_key.clone()).as_bytes());
@@ -128,12 +144,14 @@ impl<'a> User<'a> {
             WhatHash::Sha1 => Box::new(sha1::Sha1::default()),
             WhatHash::Sha224 => Box::new(sha2::Sha224::default()),
             WhatHash::Sha256 => Box::new(sha2::Sha256::default()),
+            WhatHash::Sha384 => Box::new(sha2::Sha384::default()),
+            WhatHash::Sha512 => Box::new(sha2::Sha512::default()),
         }
     }
 
     /// Calculate the HMAC checksum from the data.
     ///
-    /// Will need to be templated or parameterized to support RFC7630
+    /// Parameterized to support RFC7630
     pub fn auth_from_bytes(&self, data: &[u8]) -> Vec<u8> {
         let mut hasher = self.choose_hasher();
         hasher.update(&self.k1);
@@ -146,6 +164,8 @@ impl<'a> User<'a> {
             WhatHash::Sha1 => 12,
             WhatHash::Sha224 => 16,
             WhatHash::Sha256 => 24,
+            WhatHash::Sha384 => 32,
+            WhatHash::Sha512 => 48,
         };
         hash2.finalize()[0..trunc].to_owned()
     }
@@ -154,9 +174,16 @@ impl<'a> User<'a> {
     /// In this case, L=20, K=20. data must be 40 bytes.
     pub fn key_change(&self, data: &[u8]) -> Vec<u8> {
         let mut temp = self.auth_key.clone();
+        let l = match self.what {
+            WhatHash::Sha1 => 20,
+            WhatHash::Sha224 => 28,
+            WhatHash::Sha256 => 32,
+            WhatHash::Sha384 => 48,
+            WhatHash::Sha512 => 64,
+        };
 
         // append random bytes
-        for item in data.iter().take(20) {
+        for item in data.iter().take(l) {
             temp.push(*item);
         }
         let mut hasher = self.choose_hasher();
@@ -164,31 +191,51 @@ impl<'a> User<'a> {
         let next = hasher.finalize();
         let mut new_key = vec![];
         // Only 20 for sha1!
-        for i in 0..20 {
-            new_key.push(next[i] ^ data[20 + i]);
+        for i in 0..l {
+            new_key.push(next[i] ^ data[l + i]);
         }
         new_key
     }
 }
 
-fn k1_from_ak(ak: &[u8], trunc: usize) -> [u8; 64] {
+fn k1_from_ak(ak: &[u8], trunc: usize) -> Vec<u8> {
     let mut eak: [u8; 64] = [0; 64];
     eak[..trunc].copy_from_slice(&ak[..trunc]);
     for i in &mut eak {
         // XOR with 0x36
         *i ^= 0x36;
     }
-    eak
+    eak.to_vec()
 }
 
-fn k2_from_ak(ak: &[u8], trunc: usize) -> [u8; 64] {
+fn k2_from_ak(ak: &[u8], trunc: usize) -> Vec<u8> {
     let mut eak: [u8; 64] = [0; 64];
     eak[..trunc].copy_from_slice(&ak[..trunc]);
     for i in &mut eak {
         // XOR with 0x5C
         *i ^= 0x5C;
     }
-    eak
+    eak.to_vec()
+}
+
+fn k1_128_from_ak(ak: &[u8], trunc: usize) -> Vec<u8> {
+    let mut eak: [u8; 128] = [0; 128];
+    eak[..trunc].copy_from_slice(&ak[..trunc]);
+    for i in &mut eak {
+        // XOR with 0x36
+        *i ^= 0x36;
+    }
+    eak.to_vec()
+}
+
+fn k2_128_from_ak(ak: &[u8], trunc: usize) -> Vec<u8> {
+    let mut eak: [u8; 128] = [0; 128];
+    eak[..trunc].copy_from_slice(&ak[..trunc]);
+    for i in &mut eak {
+        // XOR with 0x5C
+        *i ^= 0x5C;
+    }
+    eak.to_vec()
 }
 
 pub struct Users<'a> {
@@ -224,6 +271,7 @@ impl<'a> Users<'a> {
 
     pub fn load_from_file(&mut self, perms: &'a Vec<Perm>) {
         for line in read_to_string(self.filename.clone()).unwrap().lines() {
+            // Startup, who cares?
             self.users
                 .push(User::from_str(line, perms).expect("Parse error reading users.txt"));
         }
@@ -277,10 +325,20 @@ mod tests {
     }
 
     #[test]
+    fn test_bytes() {
+        let s ="test test sha1 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
+        let pv = perms();
+        let u = User::from_str(s, &pv).unwrap(); // Checked #test
+        let b = u.to_bytes();
+        let l = s.len();
+        assert_eq!(&b[..l], s.as_bytes()); // Trim last byte, as output from to_bytes has \n added.
+    }
+
+    #[test]
     fn rfc2202_case1_test() {
         let s ="test test sha1 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
         let pv = perms();
-        let u = User::from_str(s, &pv).unwrap();
+        let u = User::from_str(s, &pv).unwrap(); // Checked #test
 
         assert_eq!(
             u.auth_from_bytes(b"Hi There"),
@@ -292,10 +350,10 @@ mod tests {
     fn roundtrip_case1_test() {
         let s ="test test sha1 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
         let pv = perms();
-        let u = User::from_str(s, &pv).unwrap();
+        let u = User::from_str(s, &pv).unwrap(); // Checked #test
         let b = u.to_bytes();
         // Strip newline off end
-        let a = b.split_last().unwrap().1;
+        let a = b.split_last().unwrap().1; // Checked #test
         assert_eq!(s.as_bytes(), a);
     }
 
@@ -303,7 +361,7 @@ mod tests {
     fn rfc2202_case3_test() {
         let s ="test test sha1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
         let pv = perms();
-        let u = User::from_str(s, &pv).unwrap();
+        let u = User::from_str(s, &pv).unwrap(); // Checked #test
         assert_eq!(
             u.auth_from_bytes(b"\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd"),
             b"\x12\x5d\x73\x42\xb9\xac\x11\xcd\x91\xa3\x9a\xf4"
@@ -314,7 +372,7 @@ mod tests {
     fn rfc4231_224_case1_test() {
         let s ="test test sha224 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0000000000000000 aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
         let pv = perms();
-        let u = User::from_str(s, &pv).unwrap();
+        let u = User::from_str(s, &pv).unwrap(); // Checked #test
 
         assert_eq!(
             u.auth_from_bytes(b"Hi There"),
@@ -326,11 +384,23 @@ mod tests {
     fn rfc4231_256_case1_test() {
         let s ="test test sha256 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b00000000000000000000000000000000 aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
         let pv = perms();
-        let u = User::from_str(s, &pv).unwrap();
+        let u = User::from_str(s, &pv).unwrap(); // Checked #test
 
         assert_eq!(
             u.auth_from_bytes(b"Hi There"),
             b"\xb0\x34\x4c\x61\xd8\xdb\x38\x53\x5c\xa8\xaf\xce\xaf\x0b\xf1\x2b\x88\x1d\xc2\x00\xc9\x83\x3d\xa7"
+        );
+    }
+
+    #[test]
+    fn rfc4231_384_case1_test() {
+        let s ="test test sha384 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b00000000000000000000000000000000000000000000000000000000 aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
+        let pv = perms();
+        let u = User::from_str(s, &pv).unwrap();
+
+        assert_eq!(
+            u.auth_from_bytes(b"Hi There"),
+            b"\xaf\xd0\x39\x44\xd8\x48\x95\x62\x6b\x08\x25\xf4\xab\x46\x90\x7f\x15\xf9\xda\xdb\xe4\x10\x1e\xc6\x82\xaa\x03\x4c\x7c\xeb\xc5\x9c"
         );
     }
 
@@ -347,9 +417,10 @@ mod tests {
             auth_key:
                 b"\x66\x95\xfe\xbc\x92\x88\xe3\x62\x82\x23\x5f\xc7\x15\x1f\x12\x84\x97\xb3\x8f\x3f"
                     .to_vec(),
+            auth_length: 12,
             priv_key: vec![],
-            k1: [0; 64],
-            k2: [0; 64],
+            k1: [0; 64].to_vec(),
+            k2: [0; 64].to_vec(),
         };
         let new_k = u.key_change(hex_data);
         assert_eq!(
@@ -358,5 +429,10 @@ mod tests {
                 .to_vec()
         );
     }
-    // When we do rfc7630, there are HMAC test cases in RFC 4231 for the other hashes
+
+    #[test]
+    fn test_empty_users() {
+        let u = Users::default();
+        assert!(u.users.is_empty());
+    }
 }

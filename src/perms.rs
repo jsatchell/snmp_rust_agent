@@ -103,34 +103,34 @@ impl Perm {
 /// it by hand.
 pub fn load_perms() -> Vec<Perm> {
     let mut perms = Vec::new();
-    let toml_text = read_to_string("groups.toml").unwrap();
-    let data = toml_text.parse::<toml::Table>().unwrap();
-    let groups = data.get("groups").unwrap().as_array().unwrap();
+    let toml_text = read_to_string("groups.toml").unwrap(); // Startup
+    let data = toml_text.parse::<toml::Table>().unwrap(); // Startup
+    let groups = data.get("groups").unwrap().as_array().unwrap(); // Startup
     for group in groups {
         let group_name = group
             .get("name")
-            .unwrap()
+            .unwrap() // Startup
             .as_str()
-            .unwrap()
+            .unwrap() // Startup
             .as_bytes()
             .to_vec();
-        let level = group.get("level").unwrap().as_str().unwrap();
-        let trules = group.get("rules").unwrap().as_array().unwrap();
+        let level = group.get("level").unwrap().as_str().unwrap(); // Startup
+        let trules = group.get("rules").unwrap().as_array().unwrap(); // Startup
         let mut rules = vec![];
         for rule in trules {
-            let read = rule.get("read").unwrap().as_bool().unwrap();
-            let write = rule.get("write").unwrap().as_bool().unwrap();
-            let tinclude = rule.get("include").unwrap().as_array().unwrap();
-            let texclude = rule.get("exclude").unwrap().as_array().unwrap();
+            let read = rule.get("read").unwrap().as_bool().unwrap(); // Startup
+            let write = rule.get("write").unwrap().as_bool().unwrap(); // Startup
+            let tinclude = rule.get("include").unwrap().as_array().unwrap(); // Startup
+            let texclude = rule.get("exclude").unwrap().as_array().unwrap(); // Startup
             let mut include = vec![];
             let mut exclude = vec![];
             for arc in tinclude {
                 let dots: Vec<u32> = arc
                     .as_str()
-                    .unwrap()
+                    .unwrap() // Startup
                     .split(".")
                     .map(|s| {
-                        let u: u32 = s.parse().unwrap();
+                        let u: u32 = s.parse().unwrap(); // Startup
                         u
                     })
                     .collect();
@@ -139,10 +139,10 @@ pub fn load_perms() -> Vec<Perm> {
             for arc in texclude {
                 let dots: Vec<u32> = arc
                     .as_str()
-                    .unwrap()
+                    .unwrap() // Startup
                     .split(".")
                     .map(|s| {
-                        let u: u32 = s.parse().unwrap();
+                        let u: u32 = s.parse().unwrap(); // Startup
                         u
                     })
                     .collect();
@@ -174,4 +174,75 @@ pub fn load_perms() -> Vec<Perm> {
         perms.push(perm);
     }
     perms
+}
+
+pub struct FlagPerm<'a> {
+    perm: &'a Perm,
+    flags: u8,
+}
+
+impl<'a> FlagPerm<'a> {
+    pub fn new(flags: u8, perm: &'a Perm) -> Self {
+        FlagPerm { perm, flags }
+    }
+
+    pub fn check(&self, set: bool, oid: &ObjectIdentifier) -> bool {
+        self.perm.check(self.flags, set, oid)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rasn::types::ObjectIdentifier;
+
+    const ARC_IN: [u32; 2] = [1, 1];
+    const ARC_OUT: [u32; 2] = [2, 1];
+
+    fn perms() -> Vec<Perm> {
+        let rules = vec![
+            Rule {
+                read: false,
+                write: false,
+                include: vec![vec![1u32]],
+                exclude: vec![],
+            },
+            Rule {
+                read: true,
+                write: true,
+                include: vec![vec![1u32]],
+                exclude: vec![vec![1u32, 3u32]],
+            },
+        ];
+        vec![Perm {
+            rules,
+            security_level: 2u8, // Just flags
+            group_name: "test".as_bytes().to_vec(),
+        }]
+    }
+
+    #[test]
+    fn test_check() {
+        let o_in = ObjectIdentifier::new(&ARC_IN).unwrap();
+        let o_out = ObjectIdentifier::new(&ARC_OUT).unwrap();
+        let p = &perms()[0];
+        assert!(p.check(2, true, &o_in));
+        assert!(p.check(2, false, &o_in));
+        assert!(!p.check(0, false, &o_in));
+        assert!(!p.check(2, false, &o_out));
+    }
+
+    #[test]
+    fn test_flag_check() {
+        let o_in = ObjectIdentifier::new(&ARC_IN).unwrap();
+        let o_out = ObjectIdentifier::new(&ARC_OUT).unwrap();
+        let p = &perms()[0];
+        let f = FlagPerm {
+            perm: p,
+            flags: 2u8,
+        };
+        assert!(f.check(true, &o_in));
+        assert!(f.check(false, &o_in));
+        assert!(!f.check(false, &o_out));
+    }
 }

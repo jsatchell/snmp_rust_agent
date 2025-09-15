@@ -864,14 +864,13 @@ pub fn parse_mib<'a>(input: &'a str, nodes: &mut Vec<MibNode<'a>>) -> (bool, u32
 
     let imp_res = parse_imports(abc);
     let body;
-    let imps;
-    if imp_res.is_err() {
+    if let Ok((ibody, imps)) = imp_res {
+        nodes.push(imps);
+        body = ibody;
+    } else {
         //let deb = &abc[0..128];
         return (false, 2);
         // body = abc;
-    } else {
-        (body, imps) = imp_res.unwrap();
-        nodes.push(imps);
     }
 
     let (end, mut defs) = parse_defs(body).unwrap();

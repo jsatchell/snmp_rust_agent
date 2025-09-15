@@ -3,12 +3,10 @@
 //! Agent is the basic run time service.  See main.rs for a simple example of how
 //! it might be used.
 
-//pub use crate::engine_id;
 use crate::keeper::OidErr;
-//use crate::keeper::OidKeeper;
 use crate::notifier;
 use crate::oidmap::OidMap;
-use crate::perms::Perm;
+use crate::perms::FlagPerm;
 use crate::privacy;
 use crate::usm;
 use log::{debug, error, warn};
@@ -25,14 +23,19 @@ use std::fmt::Display;
 use std::fs::{read_to_string, write};
 use std::net::{SocketAddr, UdpSocket};
 use std::str::FromStr;
+use std::sync::mpsc::Sender;
 use std::time::Instant;
 
 const BOOT_CNT_FILENAME: &str = "boot-cnt.txt";
 const Z12: OctetString = OctetString::from_static(&[0u8; 12]);
 const Z16: OctetString = OctetString::from_static(&[0u8; 16]);
 const Z24: OctetString = OctetString::from_static(&[0u8; 24]);
+const Z32: OctetString = OctetString::from_static(&[0u8; 32]);
+const Z48: OctetString = OctetString::from_static(&[0u8; 48]);
 const ZB: OctetString = OctetString::from_static(b"");
 
+const ARC_COLD_START: [u32; 10] = [1, 3, 6, 1, 6, 3, 1, 1, 5, 1];
+const ARC_AUTHENTICATION_FAILURE: [u32; 10] = [1, 3, 6, 1, 6, 3, 1, 1, 5, 5];
 /// Get the boot count from non-volatile storage, creating file if it does not exist.
 /// Panic if the file cannot be parsed or updated, as that indicates tampering or hardware failure.
 /// This function is not really thread safe, but the retry makes it robust in practice for testing
@@ -51,8 +54,15 @@ fn get_increment_boot_cnt() -> isize {
         }
     }
     boots += 1;
-    write(BOOT_CNT_FILENAME, boots.to_string().as_bytes()).unwrap();
+    write(BOOT_CNT_FILENAME, boots.to_string().as_bytes()).unwrap(); // Startup, panic if write fails
     boots
+}
+
+/// Utility struct used to group related arguments together
+struct PduArg {
+    error_index: u32,
+    error_status: u32,
+    vb_cnt: u32,
 }
 
 /// Main Agent object.
@@ -68,6 +78,8 @@ pub struct Agent {
     pub unknown_engine_ids: u32,
     pub decode_error_cnt: u32,
     pub decryption_errors: u32,
+    notifier: Option<Sender<notifier::Notification>>,
+    send_auth_fails: bool,
 }
 
 impl Agent {
@@ -78,7 +90,7 @@ impl Agent {
     /// addr_str is the address to listen on - often "0.0.0.0:161" can be a good choice
     /// But systems with multiple interfaces (like a firewall, router or crypto) might only listen
     /// on an internal address.
-    pub fn build(eid: OctetString, addr_str: &str) -> Self {
+    pub fn build(eid: OctetString, addr_str: &str, send_auth_fails: bool) -> Self {
         let sock = UdpSocket::bind(addr_str).expect("Couldn't bind to address");
 
         Agent {
@@ -93,25 +105,55 @@ impl Agent {
             unknown_engine_ids: 0u32,
             decode_error_cnt: 0u32,
             decryption_errors: 0u32,
+            notifier: None,
+            send_auth_fails,
         }
     }
 
     /// Create a notifier thread.
-    pub fn start_notifier(&mut self, sink: &str) -> () {
-        let notifier = notifier::Notifier::new(sink, self.engine_id.clone(), self.start_time);
-        notifier.sender.send(137).expect("Send failure");
-        ()
+    pub fn start_notifier(&mut self, sink: &str) {
+        let not = notifier::Notification {
+            name: ObjectIdentifier::new(&ARC_COLD_START).unwrap(), // Checked , known good ARC
+            vb: vec![],
+        };
+        let notifier = notifier::Notifier::start(sink, self.engine_id.clone(), self.start_time);
+        notifier.send(not).expect("Send failure"); // ??? should we fail, or just warn and carry on??
+        self.notifier = Some(notifier);
     }
 
     /// Internal method for supporting engine ID discovery by managers
     fn id_response(&self, request_id: i32, message_id: Integer) -> Message {
         let vb: Vec<VarBind> = vec![VarBind {
             name: ObjectIdentifier::new_unchecked(vec![1, 3, 6, 1, 6, 3, 15, 1, 1, 4].into()),
+            value: VarBindValue::Unspecified,
+        }];
+        self.report(request_id, message_id, vb)
+    }
+
+    /// Internal method for supporting engine ID discovery by managers
+    fn unknown_user(&self, request_id: i32, message_id: Integer) -> Message {
+        let vb: Vec<VarBind> = vec![VarBind {
+            name: ObjectIdentifier::new_unchecked(vec![1, 3, 6, 1, 6, 3, 15, 1, 1, 3, 0].into()),
             value: VarBindValue::Value(ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(
-                self.unknown_engine_ids,
+                1,
             )))),
         }];
+        self.report(request_id, message_id, vb)
+    }
 
+    /// Internal method for supporting engine ID discovery by managers
+    fn auth_failure(&self, request_id: i32, message_id: Integer) -> Message {
+        let vb: Vec<VarBind> = vec![VarBind {
+            name: ObjectIdentifier::new_unchecked(vec![1, 3, 6, 1, 6, 3, 15, 1, 1, 5, 0].into()),
+            value: VarBindValue::Value(ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(
+                1,
+            )))),
+        }];
+        self.report(request_id, message_id, vb)
+    }
+    /// Utility method for sending reports
+    ///
+    fn report(&self, request_id: i32, message_id: Integer, vb: Vec<VarBind>) -> Message {
         let pdu = Pdu {
             request_id,
             error_index: 0,
@@ -196,7 +238,7 @@ impl Agent {
         if encrypted {
             usm.privacy_parameters = usp.privacy_parameters.clone();
             let key = &user.priv_key;
-            let enc_octs = rasn::ber::encode(&spd).unwrap();
+            let enc_octs = rasn::ber::encode(&spd).unwrap(); // Checked spd constructed by safe rust code, so should encode
             let value: Vec<u8> = privacy::encrypt(&mut enc_octs.to_vec(), usp, key);
             spd = ScopedPduData::EncryptedPdu(OctetString::from(value));
         }
@@ -207,7 +249,7 @@ impl Agent {
             security_parameters: ZB,
         };
 
-        _ = output.encode_security_parameters(rasn::Codec::Ber, &usm);
+        _ = output.encode_security_parameters(rasn::Codec::Ber, &usm); // FIXME Should check return value
         output
     }
 
@@ -216,8 +258,7 @@ impl Agent {
         oid_map: &mut OidMap,
         r: GetRequest,
         vb: &mut Vec<VarBind>,
-        perm: &Perm,
-        flags: u8,
+        perm: &FlagPerm,
     ) -> (u32, u32, i32) {
         let mut error_status = Pdu::ERROR_STATUS_NO_ERROR;
         let mut error_index = 0;
@@ -225,7 +266,7 @@ impl Agent {
         let mut vb_cnt = 0;
         for vbind in r.0.variable_bindings {
             let roid = vbind.name.clone();
-            if !perm.check(flags, false, &roid) {
+            if !perm.check(false, &roid) {
                 error_status = Pdu::ERROR_STATUS_NO_ACCESS;
                 error_index = vb_cnt;
                 return (error_status, error_index, request_id);
@@ -266,26 +307,34 @@ impl Agent {
         (error_status, error_index, request_id)
     }
 
+    /// This internal method is used for GetNext and Bulk,
+    ///
+    /// It is a steaming mess, and does not handle all cases correctly - there must be a better way!
     fn do_next(
         &self,
         roid: ObjectIdentifier,
         oid_map: &mut OidMap,
         vb: &mut Vec<VarBind>,
-        error_status: &mut u32,
-        error_index: &mut u32,
-        vb_cnt: u32,
-        perm: &Perm,
-        flags: u8,
+        //error_status: &mut u32,
+        //error_index: &mut u32,
+        //vb_cnt: u32,
+        parg: &mut PduArg,
+        perm: &FlagPerm,
     ) {
-        if !perm.check(flags, false, &roid) {
-            *error_status = Pdu::ERROR_STATUS_NO_ACCESS;
-            *error_index = vb_cnt;
-            vb.push(VarBind {
-                name: roid.clone(),
-                value: VarBindValue::Unspecified,
-            });
-            return;
-        }
+        // From RFC3416:
+        //
+        // The variable is located which is in the lexicographically
+        //  ordered list of the names of all variables which are
+        // accessible by this request and whose name is the first
+        // lexicographic successor of the variable binding's name in
+        // the incoming GetNextRequest-PDU.  The corresponding variable
+        // binding's name and value fields in the Response-PDU are set
+        // to the name and value of the located variable.
+        //
+        // In other words, we need to look at permissions and the object access,
+        // and skip over anything we cannot read. The complication arises for tables,
+        // which have internal content and access.
+
         let opt_get: Result<usize, usize> = oid_map.search(&roid);
         match opt_get {
             Err(insert_point) => {
@@ -296,7 +345,7 @@ impl Agent {
                     let mut oid1;
                     loop {
                         oid1 = oid_map.oid(first).clone();
-                        if perm.check(flags, false, &oid1) {
+                        if perm.check(false, &oid1) {
                             break;
                         }
                         first += 1;
@@ -311,8 +360,8 @@ impl Agent {
                             }),
                             Err(_err) => {
                                 // FIXME map errors
-                                *error_index = vb_cnt;
-                                *error_status = Pdu::ERROR_STATUS_GEN_ERR;
+                                parg.error_index = parg.vb_cnt;
+                                parg.error_status = Pdu::ERROR_STATUS_GEN_ERR;
                                 vb.push(VarBind {
                                     name: oid1.clone(),
                                     value: VarBindValue::Unspecified,
@@ -337,11 +386,22 @@ impl Agent {
                         value: VarBindValue::EndOfMibView,
                     });
                 } else {
-                    warn!("Insert point in map, but is a miss, should never happen. {} {}",
-                          insert_point, oid_map.len());
+                    warn!(
+                        "Insert point in map, but is a miss, should never happen. {} {}",
+                        insert_point,
+                        oid_map.len()
+                    );
                     debug!("Insert point in map");
-                    let oid1 = &oid_map.oid(insert_point).clone();
-                    let last_keep = &mut oid_map.idx(insert_point);
+                    let mut oid1;
+                    let mut first = insert_point;
+                    loop {
+                        oid1 = oid_map.oid(first).clone();
+                        if perm.check(false, &oid1) {
+                            break;
+                        }
+                        first += 1;
+                    }
+                    let last_keep = &mut oid_map.idx(first);
                     debug!("last_keep oid {oid1:?}");
                     if last_keep.is_scalar(oid1.clone()) {
                         match last_keep.get(oid1.clone()) {
@@ -387,24 +447,24 @@ impl Agent {
                                     }
                                 }
                                 OidErr::NoSuchInstance => {
-                                    *error_index = vb_cnt;
-                                    *error_status = Pdu::ERROR_STATUS_NO_ACCESS;
+                                    parg.error_index = parg.vb_cnt;
+                                    parg.error_status = Pdu::ERROR_STATUS_NO_ACCESS;
                                     vb.push(VarBind {
                                         name: roid,
                                         value: VarBindValue::NoSuchObject,
                                     });
                                 }
                                 OidErr::NoSuchName => {
-                                    *error_index = vb_cnt;
-                                    *error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
+                                    parg.error_index = parg.vb_cnt;
+                                    parg.error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
                                     vb.push(VarBind {
                                         name: roid,
                                         value: VarBindValue::NoSuchObject,
                                     });
                                 }
                                 OidErr::GenErr => {
-                                    *error_index = vb_cnt;
-                                    *error_status = Pdu::ERROR_STATUS_GEN_ERR;
+                                    parg.error_index = parg.vb_cnt;
+                                    parg.error_status = Pdu::ERROR_STATUS_GEN_ERR;
                                     vb.push(VarBind {
                                         name: roid,
                                         value: VarBindValue::Unspecified,
@@ -420,14 +480,30 @@ impl Agent {
             }
             Ok(which) => {
                 debug!("hit case {which}");
+
+                let mut oid1;
+                let mut first = which;
+                loop {
+                    if first == oid_map.len() - 1 {
+                        break;
+                    }
+
+                    oid1 = oid_map.oid(first).clone();
+                    if perm.check(false, &oid1) {
+                        break;
+                    }
+                    first += 1;
+                }
+                let which = first;
                 if which == oid_map.len() - 1 && oid_map.idx(which).is_scalar(roid.clone()) {
                     debug!("End of oids, ");
-                    // This should error and generate a report?
                     vb.push(VarBind {
                         name: roid.clone(),
                         value: VarBindValue::EndOfMibView,
                     });
-                } else if oid_map.idx(which).is_scalar(roid.clone()) {
+                    return;
+                };
+                if oid_map.idx(which).is_scalar(roid.clone()) {
                     let next_oid: ObjectIdentifier = oid_map.oid(which + 1).clone();
                     let okeep = &mut oid_map.idx(which + 1);
                     if okeep.is_scalar(next_oid.clone()) {
@@ -508,26 +584,21 @@ impl Agent {
         oid_map: &mut OidMap,
         r: GetNextRequest,
         vb: &mut Vec<VarBind>,
-        perm: &Perm,
-        flags: u8,
+        perm: &FlagPerm,
     ) -> (u32, u32, i32) {
-        let mut error_status = Pdu::ERROR_STATUS_NO_ERROR;
-        let mut error_index = 0u32;
+        let error_status = Pdu::ERROR_STATUS_NO_ERROR;
+        let error_index = 0u32;
         let request_id = r.0.request_id;
         for (vb_cnt, vbind) in r.0.variable_bindings.iter().enumerate() {
             let roid = vbind.name.clone();
-            self.do_next(
-                roid,
-                oid_map,
-                vb,
-                &mut error_status,
-                &mut error_index,
-                vb_cnt.try_into().unwrap(),
-                perm,
-                flags,
-            );
-            if error_status != Pdu::ERROR_STATUS_NO_ERROR {
-                break;
+            let mut parg = PduArg {
+                error_index,
+                error_status,
+                vb_cnt: vb_cnt.try_into().unwrap(),
+            }; // Checked Packet is 65K max, so at most a few thousand Varbinds, easily fits in u32
+            self.do_next(roid, oid_map, vb, &mut parg, perm);
+            if parg.error_status != Pdu::ERROR_STATUS_NO_ERROR {
+                return (parg.error_status, parg.error_index, request_id);
             }
         }
         (error_status, error_index, request_id)
@@ -544,8 +615,7 @@ impl Agent {
         oid_map: &mut OidMap,
         r: SetRequest,
         vb: &mut Vec<VarBind>,
-        perm: &Perm,
-        flags: u8,
+        perm: &FlagPerm,
     ) -> (u32, u32, i32) {
         let mut keeps = HashSet::<usize>::new();
         let mut error_status = Pdu::ERROR_STATUS_NO_ERROR;
@@ -569,7 +639,7 @@ impl Agent {
         for vbind in r.0.variable_bindings {
             let roid = vbind.name.clone();
 
-            if !perm.check(flags, true, &roid) {
+            if !perm.check(true, &roid) {
                 error_status = Pdu::ERROR_STATUS_NO_ACCESS;
                 error_index = vb_cnt;
                 break;
@@ -618,8 +688,8 @@ impl Agent {
                             value: vbind.value,
                         });
                     } else {
-                        let svalue = set_result.unwrap();
-                        // Need to catch size, data type etc
+                        let svalue = set_result.unwrap(); // FIXME
+                                                          // Need to catch size, data type etc
                         vb.push(VarBind {
                             name: roid.clone(),
                             value: svalue,
@@ -651,31 +721,26 @@ impl Agent {
         oid_map: &mut OidMap,
         r: GetBulkRequest,
         vb: &mut Vec<VarBind>,
-        perm: &Perm,
-        flags: u8,
+        perm: &FlagPerm,
     ) -> (u32, u32, i32) {
-        let mut error_status = Pdu::ERROR_STATUS_NO_ERROR;
-        let mut error_index = 0;
+        let error_status = Pdu::ERROR_STATUS_NO_ERROR;
+        let error_index = 0;
         let mut vb_cnt = 0u32;
         let request_id = r.0.request_id;
-        let non_repeaters: usize = r.0.non_repeaters.try_into().unwrap();
+        let non_repeaters: usize = r.0.non_repeaters.try_into().unwrap(); // FIXME should error if unreasonably big -
         let max_repeats = r.0.max_repetitions;
         let mut rep_oids: Vec<ObjectIdentifier> = vec![];
         for (n, vbind) in r.0.variable_bindings.iter().enumerate() {
             if n < non_repeaters {
                 let roid = vbind.name.clone();
-                self.do_next(
-                    roid,
-                    oid_map,
-                    vb,
-                    &mut error_status,
-                    &mut error_index,
+                let mut parg = PduArg {
+                    error_index,
+                    error_status,
                     vb_cnt,
-                    perm,
-                    flags,
-                );
-                if error_status != Pdu::ERROR_STATUS_NO_ERROR {
-                    return (error_status, error_index, request_id);
+                }; // Checked Packet is 65K max, so at most a few thousand Varbinds, easily fits in u32
+                self.do_next(roid, oid_map, vb, &mut parg, perm);
+                if parg.error_status != Pdu::ERROR_STATUS_NO_ERROR {
+                    return (parg.error_status, parg.error_index, request_id);
                 }
                 vb_cnt += 1;
             } else {
@@ -687,19 +752,15 @@ impl Agent {
         // Now do repeating rows
         for i in 0..max_repeats {
             let mut new_oids: Vec<ObjectIdentifier> = vec![];
+            let mut parg = PduArg {
+                error_index,
+                error_status,
+                vb_cnt,
+            }; // Checked Packet is 65K max, so at most a few thousand Varbinds, easily fits in u32
             for roid in &rep_oids {
-                self.do_next(
-                    roid.clone(),
-                    oid_map,
-                    vb,
-                    &mut error_status,
-                    &mut error_index,
-                    vb_cnt,
-                    perm,
-                    flags,
-                );
-                if error_status != Pdu::ERROR_STATUS_NO_ERROR {
-                    return (error_status, error_index, request_id);
+                self.do_next(roid.clone(), oid_map, vb, &mut parg, perm);
+                if parg.error_status != Pdu::ERROR_STATUS_NO_ERROR {
+                    return (parg.error_status, parg.error_index, request_id);
                 }
                 let last = vb.last().unwrap();
                 new_oids.push(last.name.clone());
@@ -732,24 +793,20 @@ impl Agent {
         let mut error_index = 0;
         let mut request_id = 0;
         let _context_name = scoped_pdu.name;
-        let perm = user.perm;
+        let fperm = FlagPerm::new(flags, user.perm);
 
         match scoped_pdu.data {
             Pdus::GetRequest(r) => {
-                (error_status, error_index, request_id) =
-                    self.get(oid_map, r, &mut vb, perm, flags);
+                (error_status, error_index, request_id) = self.get(oid_map, r, &mut vb, &fperm);
             }
             Pdus::GetNextRequest(r) => {
-                (error_status, error_index, request_id) =
-                    self.getnext(oid_map, r, &mut vb, perm, flags);
+                (error_status, error_index, request_id) = self.getnext(oid_map, r, &mut vb, &fperm);
             }
             Pdus::SetRequest(r) => {
-                (error_status, error_index, request_id) =
-                    self.set(oid_map, r, &mut vb, perm, flags);
+                (error_status, error_index, request_id) = self.set(oid_map, r, &mut vb, &fperm);
             }
             Pdus::GetBulkRequest(r) => {
-                (error_status, error_index, request_id) =
-                    self.bulk(oid_map, r, &mut vb, perm, flags);
+                (error_status, error_index, request_id) = self.bulk(oid_map, r, &mut vb, &fperm);
             }
             _ => skip_pdu = true,
         }
@@ -796,7 +853,7 @@ impl Agent {
             }
 
             self.in_pkts += 1;
-            let (amt, src) = recv_res.unwrap();
+            let (amt, src) = recv_res.unwrap(); // Checked OK, error handled above
 
             // Redeclare `buf` as slice of the received data
             let buf = &mut buf[..amt];
@@ -807,7 +864,7 @@ impl Agent {
                 self.decode_error_cnt += 1;
                 continue;
             }
-            let mut message: Message = decode_res.unwrap();
+            let mut message: Message = decode_res.unwrap(); // Checked - error case handled above
             let resp_opt: Option<Response>;
             let mut out_message: Message;
             let message_id = message.global_data.message_id.to_owned();
@@ -828,7 +885,26 @@ impl Agent {
                 opt_user = users.lookup_user(usp.user_name.to_vec());
                 if opt_user.is_none() {
                     self.unknown_users += 1;
-                    // FIXME should send auth failure back.
+                    if self.send_auth_fails {
+                        if let Some(sender) = &self.notifier {
+                            let auth_fail = notifier::Notification {
+                                name: ObjectIdentifier::new(&ARC_AUTHENTICATION_FAILURE).unwrap(), // Checked ARC is OK
+                                vb: vec![],
+                            };
+                            let _ = sender.send(auth_fail);
+                        }
+                    }
+                    if let ScopedPduData::CleartextPdu(scp) = message.scoped_data {
+                        let request_id = match scp.data {
+                            Pdus::GetRequest(r) => r.0.request_id,
+                            Pdus::GetNextRequest(r) => r.0.request_id,
+                            Pdus::SetRequest(r) => r.0.request_id,
+                            Pdus::GetBulkRequest(r) => r.0.request_id,
+                            _ => 1,
+                        };
+                        self.send(src, self.unknown_user(request_id, message_id));
+                    }
+
                     continue;
                 }
             } else {
@@ -847,23 +923,30 @@ impl Agent {
                 }
                 continue;
             }
-            let user = opt_user.unwrap();
-            // Check the authentication
-            if flags & 1 == 1 {
-                // FIXME
-                // Both these cases should send Authentication Failure, rather
-                // than silently dropping the packet.
-                if usp.authentication_parameters.len() != user.auth_length {
-                    warn!(
-                        "Authentication parameters must be {} bytes",
-                        user.auth_length
-                    );
-                    continue;
+            let user = opt_user.unwrap(); // Checked - None case handled above
+                                          // Check the authentication
+            if flags & 1 == 1 && self.wrong_auth(&mut message, user, usp.clone()) {
+                warn!("Wrong auth, dropping");
+                if self.send_auth_fails {
+                    if let Some(sender) = &self.notifier {
+                        let auth_fail = notifier::Notification {
+                            name: ObjectIdentifier::new(&ARC_AUTHENTICATION_FAILURE).unwrap(), // Checked, ARC is OK
+                            vb: vec![],
+                        };
+                        let _ = sender.send(auth_fail);
+                    }
                 }
-                if self.wrong_auth(&mut message, user, usp.clone()) {
-                    warn!("Wrong auth, dropping");
-                    continue;
+                if let ScopedPduData::CleartextPdu(scp) = message.scoped_data {
+                    let request_id = match scp.data {
+                        Pdus::GetRequest(r) => r.0.request_id,
+                        Pdus::GetNextRequest(r) => r.0.request_id,
+                        Pdus::SetRequest(r) => r.0.request_id,
+                        Pdus::GetBulkRequest(r) => r.0.request_id,
+                        _ => 1,
+                    };
+                    self.send(src, self.auth_failure(request_id, message_id));
                 }
+                continue;
             }
 
             match message.scoped_data {
@@ -871,7 +954,7 @@ impl Agent {
                     resp_opt = self.do_scoped_pdu(flags, user, scoped_pdu, oid_map);
                 }
                 ScopedPduData::EncryptedPdu(enc_octs) => {
-                    let key = &opt_user.unwrap().priv_key;
+                    let key = &user.priv_key;
                     let buf2: Vec<u8> = privacy::decrypt(&mut enc_octs.to_vec(), usp.clone(), key);
                     let pdu_decode_res: Result<ScopedPdu, rasn::error::DecodeError> =
                         rasn::ber::decode(&buf2);
@@ -881,7 +964,7 @@ impl Agent {
                         warn!("Decode error {pdu_decode_res:?}");
                         continue;
                     }
-                    let scoped_pdu: ScopedPdu = pdu_decode_res.unwrap();
+                    let scoped_pdu: ScopedPdu = pdu_decode_res.unwrap(); // Checked Error case above
                     resp_opt = self.do_scoped_pdu(flags, user, scoped_pdu, oid_map);
                 }
             }
@@ -890,7 +973,7 @@ impl Agent {
                 warn!("No response, discarding");
                 continue;
             }
-            let resp = resp_opt.unwrap();
+            let resp = resp_opt.unwrap(); // Checked None case above
             out_message = self.prepare_back(message_id, resp, user, usp, flags & 2 == 2);
             out_message.global_data.flags = message.global_data.flags;
             if flags & 1 == 1 {
@@ -901,6 +984,7 @@ impl Agent {
     }
 
     fn set_auth(&self, message: &mut Message, usr: &usm::User) -> Vec<u8> {
+        // FIXME this should be a Result
         let r_sp: Result<USMSecurityParameters, Box<dyn Display>> =
             message.decode_security_parameters(rasn::Codec::Ber);
         if r_sp.is_err() {
@@ -910,10 +994,12 @@ impl Agent {
         usp.authentication_parameters = match usr.auth_length {
             12 => Z12,
             16 => Z16,
-            _ => Z24,
+            24 => Z24,
+            32 => Z32,
+            _ => Z48,
         };
-        let _ = message.encode_security_parameters(rasn::Codec::Ber, &usp);
-        let buf = rasn::ber::encode(message).unwrap();
+        let _ = message.encode_security_parameters(rasn::Codec::Ber, &usp); // FIXME change to ? or return vec![]
+        let buf = rasn::ber::encode(message).unwrap(); // FIXME change to ? or return vec![]
 
         let auth = usr.auth_from_bytes(&buf);
         usp.authentication_parameters = OctetString::from_slice(&auth);
@@ -928,6 +1014,14 @@ impl Agent {
         user: &usm::User,
         usp: USMSecurityParameters,
     ) -> bool {
+        if usp.authentication_parameters.len() != user.auth_length {
+            // In this case, no point checking anything else.
+            warn!(
+                "Authentication parameters must be {} bytes",
+                user.auth_length
+            );
+            return true;
+        }
         let boots: isize = usp
             .authoritative_engine_boots
             .try_into()
@@ -963,21 +1057,26 @@ impl Agent {
 
 #[cfg(test)]
 mod tests {
+    use rasn_snmp::v2::BulkPdu;
+
     use super::*;
+    use crate::engine_id::static_engine_id;
     use crate::keeper::{Access, OType, OidKeeper};
     use crate::oidmap;
-    use crate::perms::Rule;
+    use crate::perms::{Perm, Rule};
     use crate::table::TableMemOid;
+    use crate::usm::User;
+    use crate::utils::*;
 
     fn make_agent(port: &str) -> Agent {
         let eid = OctetString::from_static(b"test");
         let addr = "127.0.0.1:".to_owned() + port;
-        Agent::build(eid, &addr)
+        Agent::build(eid, &addr, false)
     }
 
     fn get_pdu(arg: &'static [u32]) -> GetRequest {
         let vb = vec![VarBind {
-            name: ObjectIdentifier::new(arg).unwrap(),
+            name: ObjectIdentifier::new(arg).unwrap(), // Checked cfg Test
             value: VarBindValue::Unspecified,
         }];
         let pdu = Pdu {
@@ -991,7 +1090,7 @@ mod tests {
 
     fn get_next_pdu(arg: &'static [u32]) -> GetNextRequest {
         let vb = vec![VarBind {
-            name: ObjectIdentifier::new(arg).unwrap(),
+            name: ObjectIdentifier::new(arg).unwrap(), // Checked cfg Test
             value: VarBindValue::Unspecified,
         }];
         let pdu = Pdu {
@@ -1005,7 +1104,7 @@ mod tests {
 
     fn set_pdu(arg: &'static [u32], val: ObjectSyntax) -> SetRequest {
         let vb = vec![VarBind {
-            name: ObjectIdentifier::new(arg).unwrap(),
+            name: ObjectIdentifier::new(arg).unwrap(), // Checked cfg Test
             value: VarBindValue::Value(val),
         }];
         let pdu = Pdu {
@@ -1016,12 +1115,19 @@ mod tests {
         };
         SetRequest(pdu)
     }
-    fn simple_from_int(value: i32) -> ObjectSyntax {
-        ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(value)))
-    }
 
-    fn simple_from_str(value: &[u8]) -> ObjectSyntax {
-        ObjectSyntax::Simple(SimpleSyntax::String(OctetString::from_slice(value)))
+    fn get_bulk_pdu(arg: &'static [u32]) -> GetBulkRequest {
+        let vb = vec![VarBind {
+            name: ObjectIdentifier::new(arg).unwrap(), // Checked cfg Test
+            value: VarBindValue::Unspecified,
+        }];
+        let pdu = BulkPdu {
+            non_repeaters: 1,
+            max_repetitions: 1,
+            request_id: 1,
+            variable_bindings: vb,
+        };
+        GetBulkRequest(pdu)
     }
 
     const ARC2: [u32; 2] = [1, 6];
@@ -1076,20 +1182,28 @@ mod tests {
         }]
     }
 
+    fn user_fixture<'a>(pv: &'a Vec<Perm>) -> User<'a> {
+        let s ="test test sha1 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
+        let u = User::from_str(s, pv).unwrap(); // Checked #test
+        u
+    }
+
     #[test]
     fn test_get() {
         let agent = make_agent("3161");
         let gp = get_pdu(&ARC2);
         let mut vb: Vec<VarBind> = vec![];
         let mut oid_map = make_oid_map();
-        let (status, idx, r_id) = agent.get(&mut oid_map, gp, &mut vb, &perms()[0], 3);
+        let perm = &perms()[0];
+        let fperm = FlagPerm::new(3, perm);
+        let (status, idx, r_id) = agent.get(&mut oid_map, gp, &mut vb, &fperm);
         assert_eq!(r_id, 1);
         assert_eq!(idx, 1);
         assert_eq!(status, Pdu::ERROR_STATUS_NO_SUCH_NAME);
         assert_eq!(vb.len(), 1);
         vb.clear();
         let gp = get_pdu(&[1, 6, 1, 2, 3, 120, 121, 122, 5]);
-        let (status, idx, r_id) = agent.get(&mut oid_map, gp, &mut vb, &perms()[0], 3);
+        let (status, idx, r_id) = agent.get(&mut oid_map, gp, &mut vb, &fperm);
         assert_eq!(r_id, 1);
         assert_eq!(idx, 0);
         assert_eq!(status, Pdu::ERROR_STATUS_NO_ERROR);
@@ -1103,7 +1217,9 @@ mod tests {
         let gp = get_next_pdu(&ARC2);
         let mut vb: Vec<VarBind> = vec![];
         let mut oid_map = make_oid_map();
-        let (status, idx, r_id) = agent.getnext(&mut oid_map, gp, &mut vb, &perms()[0], 3);
+        let perm = &perms()[0];
+        let fperm = FlagPerm::new(3, perm);
+        let (status, idx, r_id) = agent.getnext(&mut oid_map, gp, &mut vb, &fperm);
         println!("{status} {idx} {r_id}");
         assert_eq!(r_id, 1);
         assert_eq!(idx, 0);
@@ -1111,7 +1227,7 @@ mod tests {
         assert_eq!(vb.len(), 1);
         vb.clear();
         let gp = get_next_pdu(&[1, 6, 1, 2, 3, 120, 121, 122, 5]);
-        let (status, idx, r_id) = agent.getnext(&mut oid_map, gp, &mut vb, &perms()[0], 3);
+        let (status, idx, r_id) = agent.getnext(&mut oid_map, gp, &mut vb, &fperm);
         println!("{status} {idx} {r_id}");
         assert_eq!(r_id, 1);
         assert_eq!(idx, 0);
@@ -1126,7 +1242,9 @@ mod tests {
         let sp = set_pdu(&[1, 6, 1, 3, 3, 120, 121, 122, 5], simple_from_int(4));
         let mut vb: Vec<VarBind> = vec![];
         let mut oid_map = make_oid_map();
-        let (status, idx, r_id) = agent.set(&mut oid_map, sp, &mut vb, &perms()[0], 3);
+        let perm = &perms()[0];
+        let fperm = FlagPerm::new(3, perm);
+        let (status, idx, r_id) = agent.set(&mut oid_map, sp, &mut vb, &fperm);
         println!("{status} {idx} {r_id}");
         assert_eq!(r_id, 1);
         assert_eq!(idx, 0);
@@ -1143,6 +1261,56 @@ mod tests {
         assert_eq!(vb[0].value, VarBindValue::Value(simple_from_int(41))); */
     }
 
+    #[test]
+    fn test_bulk() {
+        let agent = make_agent("3164");
+        let gp = get_bulk_pdu(&ARC2);
+        let mut vb: Vec<VarBind> = vec![];
+        let mut oid_map = make_oid_map();
+        let perm = &perms()[0];
+        let fperm = FlagPerm::new(3, perm);
+        let (status, idx, r_id) = agent.bulk(&mut oid_map, gp, &mut vb, &fperm);
+        println!("{status} {idx} {r_id}");
+        assert_eq!(r_id, 1);
+        assert_eq!(idx, 0);
+        assert_eq!(status, Pdu::ERROR_STATUS_NO_ERROR);
+        assert_eq!(vb.len(), 1);
+        vb.clear();
+        let gp = get_bulk_pdu(&[1, 6, 1, 2, 3, 120, 121, 122, 5]);
+        let (status, idx, r_id) = agent.bulk(&mut oid_map, gp, &mut vb, &fperm);
+        println!("{status} {idx} {r_id}");
+        assert_eq!(r_id, 1);
+        assert_eq!(idx, 0);
+        assert_eq!(status, Pdu::ERROR_STATUS_NO_ERROR);
+        assert_eq!(vb.len(), 1);
+        assert_eq!(vb[0].value, VarBindValue::Value(simple_from_int(41)));
+    }
+
+    #[test]
+    fn test_do_scoped_pdu_get() {
+        let pv = perms();
+        let user = user_fixture(&pv);
+        let agent = make_agent("3165");
+        let gp = get_pdu(&ARC2);
+        let scoped_pdu = ScopedPdu {
+            engine_id: static_engine_id(1, b"besttest"),
+            name: OctetString::from_static(b""),
+            data: Pdus::GetRequest(gp),
+        };
+        let mut oid_map = make_oid_map();
+        let opt_resp = agent.do_scoped_pdu(2u8, &user, scoped_pdu, &mut oid_map);
+        assert!(opt_resp.is_some());
+    }
+    #[test]
+        fn test_id_response() {
+        let agent = make_agent("3166");
+        let id_message = agent.id_response(7, Integer::from(8));
+        assert_eq!(id_message.version, Integer::from(3));
+        let auth_message = agent.auth_failure(8, Integer::from(9));
+        assert_eq!(auth_message.version, Integer::from(3));
+                let use_message= agent.unknown_user(8, Integer::from(9));
+        assert_eq!(use_message.version, Integer::from(3));
+    }
     // FIXME add tests for more set cases and bulk, and maybe do at least some through do_scoped_pdu.
     // Maybe do some cfg[test] to allow testing of main loop code? Or refactor into small loop
     // and handle_packet?

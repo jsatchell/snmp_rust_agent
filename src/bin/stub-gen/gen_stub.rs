@@ -5,41 +5,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{Error, Write};
 
-fn cnt_ticks_addr(
-    object_types: &HashMap<&str, ObjectType>,
-    tcs: &HashMap<&str, TextConvention>,
-    _entries: &HashMap<&str, Entry>,
-) -> (bool, bool, bool, bool) {
-    let mut counts = false;
-    let mut big_counts = false;
-    let mut ticks = false;
-    let mut addr = false;
-    for ot in object_types.values() {
-        // Usually, we skip column objects in tables, but here
-        // we want to see their data types.
-        let mut syntax = ot.syntax;
-        if tcs.contains_key(syntax) {
-            syntax = tcs[syntax].syntax;
-        }
-        if syntax.contains("TimeTicks") {
-            ticks = true;
-        }
-        if syntax.contains("Counter32") {
-            counts = true;
-        }
-        if syntax.contains("Counter64") {
-            big_counts = true;
-        }
-        if syntax.contains("IpAddress") {
-            addr = true;
-        }
-        if ticks && counts && big_counts && addr {
-            break;
-        }
-    }
-    (counts, big_counts, ticks, addr)
-}
-
 fn upper_snake(name: &str) -> String {
     lower_snake(name).to_uppercase()
 }
@@ -91,14 +56,6 @@ fn title(name: &str) -> String {
     match c.next() {
         None => String::new(),
         Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-    }
-}
-
-fn un_title(name: &str) -> String {
-    let mut c = name.chars();
-    match c.next() {
-        None => String::new(),
-        Some(f) => f.to_lowercase().collect::<String>() + c.as_str(),
     }
 }
 
@@ -279,14 +236,13 @@ fn lookup_int_syntax(arg: &str, syntax: &str) -> String {
         for part in parts {
             let mut part_itr = part.split("(");
             let name = part_itr.next().unwrap().trim();
-            let new_name;
-            if name.starts_with("--") && name.contains("\n") {
+            let new_name = if name.starts_with("--") && name.contains("\n") {
                 let mut nsplit = name.split("\n");
                 let _ = nsplit.next();
-                new_name = nsplit.next().unwrap().trim();
+                nsplit.next().unwrap().trim()
             } else {
-                new_name = name;
-            }
+                name
+            };
             if arg.trim() == new_name {
                 let valb = part_itr.next().unwrap();
                 let val = valb.split(")").next().unwrap();
@@ -357,7 +313,7 @@ fn fix_def(
         }
         if tcsyn.starts_with("TimeTicks") {
             // FIXME should look at args, but setting to value of zero should be OK for now
-            return format!("simple_from_int(0)").to_string();
+            return "simple_from_int(0)".to_string();
         }
         panic!("Unsupported TC type for DEFVAL {tcsyn:?} {syntax}");
     }
@@ -376,7 +332,7 @@ fn fix_def(
             return format!("simple_from_vec(&{arc:?})").to_string();
         }
         if arg == "zeroDotZero" {
-                return "simple_from_vec(&[0, 0])".to_string();
+            return "simple_from_vec(&[0, 0])".to_string();
         }
         let uarg = upper_snake(arg);
         return "simple_from_vec(&ARC_".to_owned() + &uarg + ")";
@@ -567,7 +523,7 @@ fn write_scalar_struct(
 ) -> Result<(), Error> {
     //Write struct for scalar"""
     let acc = access_lookup(data.access);
-    let mut syntax = data.syntax;
+    let syntax = data.syntax;
     let syntax = tc_find_syntax(syntax, tcs).unwrap_or(syntax);
     let otype = name_otype(syntax);
     let val = value_from_syntax(otype);
@@ -646,7 +602,9 @@ fn write_ot_structs(
             let entry_name = en_itr.last().unwrap();
             debug!("entry_name is |{entry_name}|");
             let entry = entries[entry_name].syntax.clone();
-            let child_opt = object_types.values().filter(|o|o.syntax.trim() == entry_name).next();
+            let child_opt = object_types
+                .values()
+                .find(|o| o.syntax.trim() == entry_name);
             if let Some(child) = child_opt {
                 if child.augments.len() > 2 {
                     warn!("Buggy AUGMENTS behavior, needs fixing");
@@ -662,9 +620,25 @@ fn write_ot_structs(
                     master_e.extend(entry);
                     let new_child = master.copy();
                     new_child.update(child);*/
-                    write_table_struct(out, name, object_types, child.clone(), entry, tcs, resolver)?;
+                    write_table_struct(
+                        out,
+                        name,
+                        object_types,
+                        child.clone(),
+                        entry,
+                        tcs,
+                        resolver,
+                    )?;
                 } else {
-                    write_table_struct(out, name, object_types, child.clone(), entry, tcs, resolver)?;
+                    write_table_struct(
+                        out,
+                        name,
+                        object_types,
+                        child.clone(),
+                        entry,
+                        tcs,
+                        resolver,
+                    )?;
                 }
             } else {
                 error!("Table definition not found {}", entry_name);
@@ -706,13 +680,13 @@ fn write_module_compliances(
     out: &mut fs::File,
     mod_comps: &[ModuleCompliance],
 ) -> Result<(), Error> {
-    out.write_all(b"   // Module Compliance values, uncomment when implemented\n\n")?;
+    out.write_all(b"   // Module Compliance values, change false to true when implemented\n\n")?;
 
     for mod_c in mod_comps {
         let name = mod_c.name;
         let uname = upper_snake(name);
         out.write_all(
-            format!("    // _comp.register_compliance(COMPLIANCE_{uname}, \"{name}\");\n")
+            format!("    comp.register_compliance(&COMPLIANCE_{uname}, \"{name}\", false);\n")
                 .as_bytes(),
         )?;
     }
@@ -720,17 +694,7 @@ fn write_module_compliances(
     Ok(())
 }
 
-pub fn gen_stub(
-    object_types: &HashMap<&str, ObjectType>,
-    resolve: resolver::Resolver,
-    tcs: &HashMap<&str, TextConvention>,
-    entries: &HashMap<&str, Entry>,
-    object_ids: &[ObjectIdentity],
-    mod_comps: &[ModuleCompliance],
-    mib_name: &str,
-    out_dir: &str,
-) -> Result<(), Error> {
-    //"""Actual code generation"""
+pub fn open_output(mib_name: &str, out_dir: &str) -> Result<fs::File, Error> {
     info!("MIB name is {mib_name}");
     let mut base_name = mib_name.split("-MIB").next().unwrap().to_lowercase();
 
@@ -744,10 +708,18 @@ pub fn gen_stub(
     } else {
         info!("Writing new stub to {stub_ref}");
     }
-    let mut out = fs::File::create(stub_name)?;
-    let (counts, big_counts, ticks, addr) = cnt_ticks_addr(object_types, tcs, entries);
-    info!("Counts {counts:?} {ticks:?} {addr:?}");
+    fs::File::create(stub_name)
+}
 
+pub fn gen_stub(
+    object_types: &HashMap<&str, ObjectType>,
+    resolve: resolver::Resolver,
+    tcs: &HashMap<&str, TextConvention>,
+    entries: &HashMap<&str, Entry>,
+    object_ids: &[ObjectIdentity],
+    mod_comps: &[ModuleCompliance],
+    mut out: fs::File,
+) -> Result<(), Error> {
     let stub_start = r"
 use crate::config::ComplianceStatements;
 use crate::keeper::{Access, OidErr, OidKeeper, OType};
@@ -755,7 +727,7 @@ use crate::scalar::ScalarMemOid;
 use crate::table::TableMemOid;
 use crate::oidmap::OidMap;
 use crate::utils::*;
-use rasn::types::{Integer, ObjectIdentifier, OctetString};
+use rasn::types::ObjectIdentifier;
 
 use rasn_snmp::v3::{VarBind, VarBindValue};
 ";
@@ -767,7 +739,7 @@ use rasn_snmp::v3::{VarBind, VarBindValue};
     write_ot_structs(&mut out, object_types, tcs, entries, &names, &resolve)?;
     let ot = r"
 
-pub fn load_stub(oid_map: &mut OidMap, _comp: &mut ComplianceStatements) {
+pub fn load_stub(oid_map: &mut OidMap, comp: &mut ComplianceStatements) {
 ";
     out.write_all(ot.as_bytes())?;
     write_object_ids(&mut out, object_ids)?;

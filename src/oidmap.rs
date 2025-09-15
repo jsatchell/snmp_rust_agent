@@ -43,11 +43,10 @@ impl OidMap {
         self.store.binary_search_by(|a| {
             let al = a.0.len();
             let b = if oid.len() > al {
-                oid.get(0..al).unwrap()
+                oid.get(0..al).unwrap() // Checked, because we know al is less than oid length
             } else {
                 oid
             };
-            //let ob = &ObjectIdentifier::new(b).unwrap();
             a.0.to_vec().cmp(&b.to_vec())
         })
     }
@@ -57,11 +56,10 @@ impl OidMap {
         let bin_res = self.store.binary_search_by(|a| {
             let al = a.0.len();
             let b = if oid.len() > al {
-                oid.get(0..al).unwrap()
+                oid.get(0..al).unwrap() // Checked, because we know al is less than oid length
             } else {
                 oid
             };
-            //let ob = &ObjectIdentifier::new(b).unwrap();
             a.0.to_vec().cmp(&b.to_vec())
         });
         match bin_res {
@@ -114,4 +112,42 @@ impl Default for OidMap {
     }
 }
 
-// FIXME Tests!
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::keeper;
+    use crate::scalar::ScalarMemOid;
+    use crate::utils::*;
+    use rasn::types::ObjectIdentifier;
+
+    const ARC: [u32; 1] = [1];
+    const ARC2: [u32; 2] = [2, 2];
+    //  const ARC3: [u32; 2] = [1, 3];
+
+    #[test]
+    fn test_load1() {
+        let value = simple_from_int(42);
+        let s: Box<dyn OidKeeper> = Box::new(ScalarMemOid::new(
+            value,
+            keeper::OType::Integer,
+            keeper::Access::ReadWrite,
+        ));
+        let o1 = ObjectIdentifier::new(&ARC).unwrap();
+        let o2 = ObjectIdentifier::new(&ARC2).unwrap();
+        let mut om = OidMap::new();
+        assert!(om.is_empty());
+        om.push(o1.clone(), s);
+        om.sort();
+        assert!(!om.is_empty());
+        assert_eq!(om.len(), 1);
+        let res = om.search(&o1);
+        assert!(res.is_ok());
+        let res = om.search(&o2);
+        assert!(res.is_err());
+        //assert_eq!(om.idx(0), s);
+        assert_eq!(*om.oid(0), o1);
+        let resn = om.search_next(&o1);
+        assert!(resn.is_none());
+    }
+}

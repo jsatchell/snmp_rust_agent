@@ -7,7 +7,6 @@ use rasn_smi::v2::{ApplicationSyntax, ObjectSyntax, SimpleSyntax};
 use rasn_snmp::v3::{VarBind, VarBindValue};
 use std::hash::Hash;
 
-use crate::config::ComplianceStatements;
 // Constants for table row management
 /* const ROW_STATUS_ACTIVE: Integer = Integer::Primitive(1);
 const ROW_STATUS_NOT_IN_SERVICE: Integer = Integer::Primitive(2);
@@ -106,9 +105,127 @@ pub trait OidKeeper {
     fn is_empty(&self) -> bool {
         false
     }
+}
 
-    /// Never call this, except override implementation for sysORTable
-    fn load_compliances(&mut self, comp: &ComplianceStatements) {
-        panic!("Only call overridden method on sysOrTable");
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::*;
+
+    #[test]
+    fn test_check_otype_int() {
+        let val = simple_from_int(21);
+        assert!(check_type(OType::Integer, &val));
+        assert!(check_type(OType::TestAndIncr, &val));
+        assert!(check_type(OType::RowStatus, &val));
+        assert!(!check_type(OType::String, &val));
+        assert!(!check_type(OType::ObjectId, &val));
+        assert!(!check_type(OType::Counter, &val));
+        assert!(!check_type(OType::BigCounter, &val));
+        assert!(!check_type(OType::Ticks, &val));
+        assert!(!check_type(OType::Address, &val));
+        assert!(!check_type(OType::Unsigned, &val));
+    }
+
+    #[test]
+    fn test_check_otype_str() {
+        let val = simple_from_str(b"test");
+        assert!(!check_type(OType::Integer, &val));
+        assert!(!check_type(OType::TestAndIncr, &val));
+        assert!(!check_type(OType::RowStatus, &val));
+        assert!(check_type(OType::String, &val));
+        assert!(!check_type(OType::ObjectId, &val));
+        assert!(!check_type(OType::Counter, &val));
+        assert!(!check_type(OType::BigCounter, &val));
+        assert!(!check_type(OType::Ticks, &val));
+        assert!(!check_type(OType::Address, &val));
+        assert!(!check_type(OType::Unsigned, &val));
+    }
+    #[test]
+    fn test_check_otype_objid() {
+        let val = simple_from_vec(&[0, 1, 2]);
+        assert!(!check_type(OType::Integer, &val));
+        assert!(!check_type(OType::TestAndIncr, &val));
+        assert!(!check_type(OType::RowStatus, &val));
+        assert!(!check_type(OType::String, &val));
+        assert!(check_type(OType::ObjectId, &val));
+        assert!(!check_type(OType::Counter, &val));
+        assert!(!check_type(OType::BigCounter, &val));
+        assert!(!check_type(OType::Ticks, &val));
+        assert!(!check_type(OType::Address, &val));
+        assert!(!check_type(OType::Unsigned, &val));
+    }
+
+    #[test]
+    fn test_check_otype_counter() {
+        let val = counter_from_int(42);
+        assert!(!check_type(OType::Integer, &val));
+        assert!(!check_type(OType::TestAndIncr, &val));
+        assert!(!check_type(OType::RowStatus, &val));
+        assert!(!check_type(OType::String, &val));
+        assert!(!check_type(OType::ObjectId, &val));
+        assert!(check_type(OType::Counter, &val));
+        assert!(!check_type(OType::BigCounter, &val));
+        assert!(!check_type(OType::Ticks, &val));
+        assert!(!check_type(OType::Address, &val));
+        assert!(!check_type(OType::Unsigned, &val));
+    }
+
+    #[test]
+    fn test_check_otype_big() {
+        let val = big_counter_from_int(42);
+        assert!(!check_type(OType::Integer, &val));
+        assert!(!check_type(OType::TestAndIncr, &val));
+        assert!(!check_type(OType::RowStatus, &val));
+        assert!(!check_type(OType::String, &val));
+        assert!(!check_type(OType::ObjectId, &val));
+        assert!(!check_type(OType::Counter, &val));
+        assert!(check_type(OType::BigCounter, &val));
+        assert!(!check_type(OType::Ticks, &val));
+        assert!(!check_type(OType::Address, &val));
+        assert!(!check_type(OType::Unsigned, &val));
+    }
+    #[test]
+    fn test_check_otype_ticks() {
+        let val = ticks_from_int(21);
+        assert!(!check_type(OType::Integer, &val));
+        assert!(!check_type(OType::TestAndIncr, &val));
+        assert!(!check_type(OType::RowStatus, &val));
+        assert!(!check_type(OType::String, &val));
+        assert!(!check_type(OType::ObjectId, &val));
+        assert!(!check_type(OType::Counter, &val));
+        assert!(!check_type(OType::BigCounter, &val));
+        assert!(check_type(OType::Ticks, &val));
+        assert!(!check_type(OType::Address, &val));
+        assert!(!check_type(OType::Unsigned, &val));
+    }
+
+    #[test]
+    fn test_check_otype_addr() {
+        let val = address_from_zeros();
+        assert!(!check_type(OType::Integer, &val));
+        assert!(!check_type(OType::TestAndIncr, &val));
+        assert!(!check_type(OType::RowStatus, &val));
+        assert!(!check_type(OType::String, &val));
+        assert!(!check_type(OType::ObjectId, &val));
+        assert!(!check_type(OType::Counter, &val));
+        assert!(!check_type(OType::BigCounter, &val));
+        assert!(!check_type(OType::Ticks, &val));
+        assert!(check_type(OType::Address, &val));
+        assert!(!check_type(OType::Unsigned, &val));
+    }
+    #[test]
+    fn test_check_otype_unsigned() {
+        let val = unsigned_from_value(73);
+        assert!(!check_type(OType::Integer, &val));
+        assert!(!check_type(OType::TestAndIncr, &val));
+        assert!(!check_type(OType::RowStatus, &val));
+        assert!(!check_type(OType::String, &val));
+        assert!(!check_type(OType::ObjectId, &val));
+        assert!(!check_type(OType::Counter, &val));
+        assert!(!check_type(OType::BigCounter, &val));
+        assert!(!check_type(OType::Ticks, &val));
+        assert!(!check_type(OType::Address, &val));
+        assert!(check_type(OType::Unsigned, &val));
     }
 }

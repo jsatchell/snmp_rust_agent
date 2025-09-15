@@ -13,6 +13,7 @@
 //! These keys are optional, and zero length strings will be used if they are absent.
 //! * Contact - name and email (or other) address for person responsible for system where Agent is running
 //! * TrapSink - address and port where Trap PDUs will be sent when the agent has trap support.
+//! * SendAuthenticationFailures - if "true" or "t", and TrapSink is defined, send authentication failure traps.
 //!
 //! Panics if the file cannot be found, has missing keys or on parse errors.
 //!
@@ -29,6 +30,7 @@ pub struct Config {
     pub storage_path: String,
     pub contact: String,
     pub trap_sink: String,
+    pub send_auth_fails: bool,
 }
 
 const CONF_FILES: [&str; 3] = [
@@ -45,11 +47,13 @@ impl Config {
         let mut storage_path = "".to_string();
         let mut listen = "".to_string();
         let mut trap_sink = "".to_string();
+        let mut send_auth_fails: bool = false;
         let mut got_eid = false;
         let mut got_fqdn = false;
         let mut got_listen = false;
         let mut got_path = false;
         for line in read_to_string(filename).unwrap().lines() {
+            // Startup
             let parts: Vec<&str> = line.splitn(2, ' ').collect();
             match parts[0] {
                 "EngineID" => {
@@ -70,6 +74,7 @@ impl Config {
                 }
                 "Contact" => contact = parts[1].to_string(),
                 "TrapSink" => trap_sink = parts[1].to_string(),
+                "SendAuthenticationFailures" => send_auth_fails = parts[1].contains("t"),
                 _ => {
                     debug!("Unexpected keyword in config file {0}", parts[0]);
                 }
@@ -100,6 +105,7 @@ impl Config {
             storage_path,
             contact,
             trap_sink,
+            send_auth_fails,
         }
     }
 
@@ -110,6 +116,7 @@ impl Config {
         for name in CONF_FILES {
             let good = exists(name);
             if good.is_ok() && good.unwrap() {
+                // Startup
                 return Config::from_file(name);
             }
         }
@@ -126,8 +133,16 @@ impl ComplianceStatements {
         ComplianceStatements { claims: vec![] }
     }
 
-    pub fn register_compliance(&mut self, arc: &'static [u32], text: &'static str) {
-        self.claims.push((arc, text));
+    pub fn register_compliance(&mut self, arc: &'static [u32], text: &'static str, doit: bool) {
+        if doit {
+            self.claims.push((arc, text));
+        }
+    }
+}
+
+impl Default for ComplianceStatements {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -135,8 +150,18 @@ impl ComplianceStatements {
 mod tests {
     use super::*;
 
+    const ARC: [u32; 2] = [1, 1];
     #[test]
     fn test_load() {
         let _c = Config::load();
+    }
+
+    #[test]
+    fn test_compliance() {
+        let mut c = ComplianceStatements::default();
+
+        c.register_compliance(&ARC, "test", false);
+        c.register_compliance(&ARC, "test", true);
+        assert_eq!(c.claims.len(), 1);
     }
 }

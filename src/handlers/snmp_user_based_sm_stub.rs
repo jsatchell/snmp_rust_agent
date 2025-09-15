@@ -607,5 +607,5 @@ pub fn load_stub(
         Box::new(KeepUsmUserTable::new(users, config.engine_id.clone()));
     oid_map.push(oid_usm_user_table, k_usm_user_table);
 
-    comp.register_compliance(&COMPLIANCE_USM_MIB_COMPLIANCE, "usmMIBCompliance");
+    comp.register_compliance(&COMPLIANCE_USM_MIB_COMPLIANCE, "usmMIBCompliance", true);
 }

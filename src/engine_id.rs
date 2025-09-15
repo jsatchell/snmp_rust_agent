@@ -44,7 +44,7 @@ pub fn static_engine_id(enterprise_number: u32, octets: &[u8]) -> OctetString {
 pub fn ipv4_engine_id(enterprise_number: u32, address: &str) -> OctetString {
     let mut buf: [u8; 9] = [0; 9];
     let enterprise_bytes = enterprise_number.to_be_bytes();
-    let ipv4 = Ipv4Addr::from_str(address).unwrap();
+    let ipv4 = Ipv4Addr::from_str(address).unwrap(); // Startup
     buf[..4].copy_from_slice(&enterprise_bytes);
     buf[0] |= 128;
     buf[4] = 1;
@@ -63,7 +63,7 @@ pub fn ipv4_engine_id(enterprise_number: u32, address: &str) -> OctetString {
 pub fn ipv6_engine_id(enterprise_number: u32, address: &str) -> OctetString {
     let mut buf: [u8; 21] = [0; 21];
     let enterprise_bytes = enterprise_number.to_be_bytes();
-    let ipv6 = Ipv6Addr::from_str(address).unwrap();
+    let ipv6 = Ipv6Addr::from_str(address).unwrap(); // Startup
     buf[..4].copy_from_slice(&enterprise_bytes);
     buf[0] |= 128;
     buf[4] = 2;
@@ -95,7 +95,7 @@ fn mac_to_bytes(s: &str) -> Option<Vec<u8>> {
 pub fn mac_engine_id(enterprise_number: u32, address: &str) -> OctetString {
     let mut buf: [u8; 11] = [0; 11];
     let enterprise_bytes = enterprise_number.to_be_bytes();
-    let bytes = mac_to_bytes(address).unwrap();
+    let bytes = mac_to_bytes(address).unwrap(); // Startup
     buf[..4].copy_from_slice(&enterprise_bytes);
     buf[0] |= 128;
     buf[4] = 3;
@@ -174,7 +174,7 @@ pub fn format_engine_id(engine_id: OctetString) -> String {
         if vid.len() != 12 {
             "Static ID scheme must be exactly 12 bytes".to_string()
         } else {
-            let enterprise = u32::from_be_bytes(vid[..4].try_into().unwrap());
+            let enterprise = u32::from_be_bytes(vid[..4].try_into().unwrap()); // Startup
             format!(
                 "Static ID. Enterprise Number {} Bytes {:?}",
                 enterprise,
@@ -184,7 +184,7 @@ pub fn format_engine_id(engine_id: OctetString) -> String {
     } else {
         // Set MSB to zero
         vid[0] &= 0x7F;
-        let enterprise = u32::from_be_bytes(vid[..4].try_into().unwrap());
+        let enterprise = u32::from_be_bytes(vid[..4].try_into().unwrap()); // Startup
 
         match vid[4] {
             0 => "Reserved scheme 0, should never be used".to_string(),
@@ -201,7 +201,7 @@ pub fn format_engine_id(engine_id: OctetString) -> String {
                     "IPv6 scheme must be exactly 21 bytes".to_string()
                 } else {
                     let ipv6 = Ipv6Addr::from(
-                        <&[u8] as TryInto<[u8; 16]>>::try_into(&vid[5..21]).unwrap(),
+                        <&[u8] as TryInto<[u8; 16]>>::try_into(&vid[5..21]).unwrap(), // Startup
                     );
                     format!("IPv6 Enterprise Number {} Address {}", enterprise, ipv6)
                 }
@@ -214,7 +214,7 @@ pub fn format_engine_id(engine_id: OctetString) -> String {
             }
             4 => {
                 let bytes = vid[5..].to_vec();
-                let text = from_utf8(&bytes).unwrap();
+                let text = from_utf8(&bytes).unwrap(); // Startup
                 format!("Text Enterprise Number {} Text {}", enterprise, text)
             }
             5 => {
@@ -251,10 +251,10 @@ pub fn format_engine_id(engine_id: OctetString) -> String {
 ///
 pub fn engine_id_from_str(text: &str) -> OctetString {
     let parts: Vec<&str> = text.splitn(3, ' ').collect();
-    let ent: u32 = u32::from_str(parts[0]).unwrap();
+    let ent: u32 = u32::from_str(parts[0]).unwrap(); // Startup
     match parts[1] {
         "Static" => {
-            let octets = hex::decode(parts[2]).unwrap();
+            let octets = hex::decode(parts[2]).unwrap(); // Startup
             static_engine_id(ent, &octets)
         }
         "1" => ipv4_engine_id(ent, parts[2]),
@@ -262,7 +262,7 @@ pub fn engine_id_from_str(text: &str) -> OctetString {
         "3" => mac_engine_id(ent, parts[2]),
         "4" => text_engine_id(ent, parts[2]),
         "5" => {
-            let octets = hex::decode(parts[2]).unwrap();
+            let octets = hex::decode(parts[2]).unwrap(); // Startup
             byte_engine_id(ent, &octets)
         }
         _ => panic!("Unsupported scheme"),
@@ -302,6 +302,41 @@ mod tests {
         assert_eq!(
             engine_id::engine_id_from_str("1234 3 AA:BB:CC:DD:EE:FF"),
             engine_id::mac_engine_id(1234, "AA:BB:CC:DD:EE:FF")
+        )
+    }
+
+    #[test]
+    fn test_engine_id_ipv6_from_str() {
+        println!(
+            "{:?}",
+            engine_id::format_engine_id(engine_id::engine_id_from_str("1234 2 ::1"))
+        );
+        assert_eq!(
+            engine_id::engine_id_from_str("1234 2 ::1"),
+            engine_id::ipv6_engine_id(1234, "::1")
+        )
+    }
+
+    #[test]
+    fn test_engine_id_text_from_str() {
+        println!(
+            "{:?}",
+            engine_id::format_engine_id(engine_id::engine_id_from_str("1234 4 text"))
+        );
+        assert_eq!(
+            engine_id::engine_id_from_str("1234 4 text"),
+            engine_id::text_engine_id(1234, "text")
+        )
+    }
+    #[test]
+    fn test_engine_id_bytes_from_str() {
+        println!(
+            "{:?}",
+            engine_id::format_engine_id(engine_id::engine_id_from_str("1234 5 deadbeef"))
+        );
+        assert_eq!(
+            engine_id::engine_id_from_str("1234 5 deadbeef"),
+            engine_id::byte_engine_id(1234, b"\xde\xad\xbe\xef")
         )
     }
 }

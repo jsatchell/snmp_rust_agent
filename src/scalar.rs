@@ -87,7 +87,7 @@ impl OidKeeper for ScalarMemOid {
                         // Then return current value and increment
                         if new_value == self.value {
                             if let ObjectSyntax::Simple(SimpleSyntax::Integer(incr)) = &self.value {
-                                let mut incr32: u32 = incr.to_u32().unwrap() + 1;
+                                let mut incr32: u32 = incr.to_u32().unwrap() + 1; // Checked, rolls over at 2^31
                                 if incr32 > 2147483647u32 {
                                     incr32 = 0u32;
                                 }
@@ -231,24 +231,25 @@ mod tests {
     #[test]
     fn pscl_get_test() {
         let pscl = pscl_fixture();
-        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap();
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); //Checked #test
         let res = pscl.get(oid2);
         let s42 = simple_from_int(42);
         assert!(res.is_ok());
-        assert_eq!(res.unwrap(), VarBindValue::Value(s42));
+        assert_eq!(res.unwrap(), VarBindValue::Value(s42)); //Checked #test
     }
 
     #[test]
     fn pscl_get_next() {
-        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap();
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); //Checked #test
         let pscl = pscl_fixture();
         let res = pscl.get_next(oid2.clone());
         assert!(res.is_err());
+        assert_eq!(pscl.access(oid2), Access::ReadWrite);
     }
 
     #[test]
     fn pscl_persistence() {
-        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap();
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); //Checked #test
         let mut pscl = pscl_fixture();
         let s17 = simple_from_int(17);
         let vb = VarBindValue::Value(s17.clone());
@@ -260,11 +261,33 @@ mod tests {
         assert!(c_res.is_ok());
         let res = pscl.get(oid2.clone());
         assert!(res.is_ok());
-        assert_eq!(res.unwrap(), VarBindValue::Value(s17.clone()));
+        assert_eq!(res.unwrap(), VarBindValue::Value(s17.clone())); //Checked #test
         let load_res = pscl.load();
         assert!(load_res.is_ok());
         let res = pscl.get(oid2);
         assert!(res.is_ok());
-        assert_eq!(res.unwrap(), VarBindValue::Value(s17.clone()));
+        assert_eq!(res.unwrap(), VarBindValue::Value(s17.clone())); //Checked #test
+    }
+    #[test]
+    fn test_obvious() {
+        let value = simple_from_int(7);
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); //Checked #test
+        let s = ScalarMemOid::new(value, OType::Integer, Access::ReadWrite);
+        assert!(s.is_scalar(oid2.clone()));
+        assert_eq!(s.access(oid2), Access::ReadWrite);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_row_status_wrong() {
+        let value = simple_from_int(7);
+        let _s = ScalarMemOid::new(value, OType::RowStatus, Access::ReadWrite);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_row_type_wrong() {
+        let value = simple_from_int(7);
+        let _s = ScalarMemOid::new(value, OType::String, Access::ReadWrite);
     }
 }

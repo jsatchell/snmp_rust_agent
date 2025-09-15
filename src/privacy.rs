@@ -9,7 +9,7 @@ type Aes128CfbDec = cfb_mode::Decryptor<aes::Aes128>;
 /// If you get this wrong, the first block comes out wrong,
 /// but it then recovers - this is a CFB feature
 fn make_iv(usp: USMSecurityParameters) -> [u8; 16] {
-    // Manager chooses salt, agent just uses it (except for traps, which we don't do)
+    // Manager chooses salt, agent just uses it (except for v3 traps, which we don't do yet)
     let mut iv: [u8; 16] = [0; 16];
     let (boot32p, needed) = usp.authoritative_engine_boots.to_unsigned_bytes_be();
     let boot32 = boot32p.as_ref();
@@ -33,7 +33,7 @@ pub fn decrypt(data: &mut [u8], usp: USMSecurityParameters, pkey: &[u8]) -> Vec<
     let iv = make_iv(usp.clone());
     let key: &[u8] = &pkey[0..16];
     Aes128CfbDec::new_from_slices(key, &iv)
-        .unwrap()
+        .unwrap() // Checked, length is valid
         .decrypt(data);
     data.to_vec()
 }
@@ -43,7 +43,42 @@ pub fn encrypt(data: &mut [u8], usp: USMSecurityParameters, pkey: &[u8]) -> Vec<
     let iv = make_iv(usp);
     let key: &[u8] = &pkey[0..16];
     Aes128CfbEnc::new_from_slices(key, &iv)
-        .unwrap()
+        .unwrap() // Checked, length is valid
         .encrypt(data);
     data.to_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use rasn::types::{Integer, OctetString};
+
+    use rasn_snmp::v3::USMSecurityParameters;
+
+    fn usp0() -> USMSecurityParameters {
+        USMSecurityParameters {
+            authoritative_engine_id: OctetString::from_static(b""),
+            authoritative_engine_boots: Integer::from(0),
+            authoritative_engine_time: Integer::from(0),
+            user_name: OctetString::from_static(b""),
+            authentication_parameters: OctetString::from_static(&[0u8; 8]),
+            privacy_parameters: OctetString::from_static(&[0u8; 8]),
+        }
+    }
+    #[test]
+    fn test_iv() {
+        let iv = make_iv(usp0());
+        assert_eq!(iv, [0u8; 16]);
+    }
+
+    #[test]
+    fn test_round_trip() {
+        let usp = usp0();
+        let pkey = [0u8; 16];
+        let mut data = b"red".to_vec();
+        let mut black = encrypt(&mut data, usp.clone(), &pkey);
+        let answer = decrypt(&mut black, usp.clone(), &pkey);
+        assert_eq!(answer, b"red".to_vec());
+    }
 }

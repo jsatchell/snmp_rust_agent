@@ -85,23 +85,23 @@ impl TableMemOid {
             match col {
                 ObjectSyntax::Simple(os) => match os {
                     SimpleSyntax::Integer(i) => {
-                        let iopt = i.to_i64().unwrap();
-                        let iu32: u32 = iopt.try_into().unwrap();
+                        let iopt = i.to_i64().unwrap(); // Checked, ASN-1 integer is 32bit
+                        let iu32: u32 = iopt.try_into().unwrap(); // Checked, ASN-1 integer is 32bit
                         ret.push(iu32);
                     }
                     SimpleSyntax::String(s) => {
                         if !implied_last || n < icols.len() - 1 {
-                            let sl: u32 = s.len().try_into().unwrap();
+                            let sl: u32 = s.len().try_into().unwrap(); // Checked, max valid length 128
                             ret.push(sl);
                         }
-                        for ir in s.to_vec() {
+                        for ir in s.iter().copied() {
                             let ui32: u32 = ir.into();
                             ret.push(ui32);
                         }
                     }
                     SimpleSyntax::ObjectId(o) => {
                         if !implied_last || n < icols.len() - 1 {
-                            let ol: u32 = o.len().try_into().unwrap();
+                            let ol: u32 = o.len().try_into().unwrap(); // Checked, max valid length 128
                             ret.push(ol);
                         }
                         for ui32 in o.iter().copied() {
@@ -164,14 +164,14 @@ impl TableMemOid {
                         // Then we just use all the remaining entries
                         for itemp in &idx[idx_idx..] {
                             let item = *itemp;
-                            text.push(item.try_into().unwrap());
+                            text.push(item.try_into().unwrap()); // Checked, string is bytes, so everything fits in u8
                         }
                     } else {
-                        let slen: usize = idx[idx_idx].try_into().unwrap();
+                        let slen: usize = idx[idx_idx].try_into().unwrap(); // Checked, strings at most 64K, fits in usize
                         idx_idx += 1;
                         for itemp in &idx[idx_idx..(idx_idx + slen)] {
                             let item = *itemp;
-                            text.push(item.try_into().unwrap());
+                            text.push(item.try_into().unwrap()); // Checked, string is bytes, so everything fits in u8
                         }
                     }
                     row[*index_column_number - 1] =
@@ -186,7 +186,7 @@ impl TableMemOid {
                             arc.push(item);
                         }
                     } else {
-                        let slen: usize = idx[idx_idx].try_into().unwrap();
+                        let slen: usize = idx[idx_idx].try_into().unwrap(); // Checked, valid oid length easily fits in usize
                         idx_idx += 1;
                         for itemp in &idx[idx_idx..(idx_idx + slen)] {
                             let item = *itemp;
@@ -194,7 +194,8 @@ impl TableMemOid {
                         }
                     }
                     row[*index_column_number - 1] = ObjectSyntax::Simple(SimpleSyntax::ObjectId(
-                        ObjectIdentifier::new(arc).unwrap().to_owned(),
+                        ObjectIdentifier::new(arc).unwrap().to_owned(), // Checked valid if base valid
+                                                                        // (which would be caught earlier), or index not too long
                     ));
                 }
                 _ => {
@@ -232,13 +233,13 @@ impl TableMemOid {
     fn make_oid(&self, col: usize, index: &[u32]) -> ObjectIdentifier {
         let mut tmp = self.base.clone();
         tmp.push(1u32); // Table entry
-        let c32: u32 = col.try_into().unwrap();
+        let c32: u32 = col.try_into().unwrap(); // Checked, unless column is crazy!
         tmp.push(c32); // Column
         for i in index {
             tmp.push(*i); // However many pieces of index
         }
         // Should be OK if base is OK, unless index very long, and we hit length limit.
-        ObjectIdentifier::new(tmp).unwrap().to_owned()
+        ObjectIdentifier::new(tmp).unwrap().to_owned() //Checked OK, if base good and index not too long
     }
 }
 
@@ -299,7 +300,8 @@ impl OidKeeper for TableMemOid {
                 .position(|p| {
                     *p == Access::ReadOnly || *p == Access::ReadWrite || *p == Access::ReadCreate
                 })
-                .unwrap_or(1) // If nothing is readable, arbitrarily use fisrt
+                .unwrap_or(1) //Checked , use default
+                              // If nothing is readable, arbitrarily use first
         } else {
             suffix[1] as usize
         };
@@ -575,7 +577,7 @@ mod tests {
     }
 
     fn tab_fixture() -> TableMemOid {
-        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap();
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); //Checked #test
         let first = simple_from_str(b"abc");
         let last = simple_from_str(b"xyz");
         let blank = simple_from_str(b"");
@@ -607,47 +609,47 @@ mod tests {
     #[test]
     fn tab_get_test() {
         let tab = tab_fixture();
-        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap();
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); //Checked #test
         let res = tab.get(oid2);
         assert_eq!(res, Err(OidErr::NoSuchInstance));
 
-        let o3 = ObjectIdentifier::new(&[1, 6, 1, 2, 3, 120, 121, 122, 5]).unwrap();
+        let o3 = ObjectIdentifier::new(&[1, 6, 1, 2, 3, 120, 121, 122, 5]).unwrap(); //Checked #test
         let res = tab.get(o3);
         assert!(res.is_ok());
         let s5 = simple_from_int(5);
-        assert_eq!(res.unwrap(), VarBindValue::Value(s5));
-        let o4 = ObjectIdentifier::new(&[1, 6, 1, 3, 3, 120, 121, 122, 5]).unwrap();
+        assert_eq!(res.unwrap(), VarBindValue::Value(s5)); //Checked #test
+        let o4 = ObjectIdentifier::new(&[1, 6, 1, 3, 3, 120, 121, 122, 5]).unwrap(); //Checked #test
         let res = tab.get(o4);
         assert!(res.is_ok());
         let s42 = simple_from_int(42);
-        assert_eq!(res.unwrap(), VarBindValue::Value(s42));
+        assert_eq!(res.unwrap(), VarBindValue::Value(s42)); //Checked #test
     }
 
     #[test]
     fn tab_get_next_test() {
-        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap();
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); //Checked #test
         let tab = tab_fixture();
         let res = tab.get_next(oid2);
         assert!(res.is_ok());
-        let o3 = ObjectIdentifier::new(&[1, 6, 1, 1]).unwrap();
+        let o3 = ObjectIdentifier::new(&[1, 6, 1, 1]).unwrap(); //Checked #test
         let res = tab.get_next(o3);
         assert!(res.is_ok());
-        let vb = res.unwrap();
-        let o4 = ObjectIdentifier::new(&[1, 6, 1, 1, 3, 97, 98, 99, 4]).unwrap();
+        let vb = res.unwrap(); //Checked #test
+        let o4 = ObjectIdentifier::new(&[1, 6, 1, 1, 3, 97, 98, 99, 4]).unwrap(); //Checked #test
         assert_eq!(vb.name, o4);
-        let o4 = ObjectIdentifier::new(&[1, 6, 1, 1, 5]).unwrap();
+        let o4 = ObjectIdentifier::new(&[1, 6, 1, 1, 5]).unwrap(); //Checked #test
         let res = tab.get_next(o4);
         assert!(res.is_ok());
-        let vb = res.unwrap();
-        let o5 = ObjectIdentifier::new(&[1, 6, 1, 2, 4]).unwrap();
-        //   assert_eq!(vb.name, o5);
+        let vb = res.unwrap(); //Checked #test
+        let o5 = ObjectIdentifier::new(&[1, 6, 1, 2, 4]).unwrap(); //Checked #test
+                                                                   //   assert_eq!(vb.name, o5);
         assert_eq!(vb.value, VarBindValue::Value(simple_from_int(4)));
         let res = tab.get_next(o5);
         assert!(res.is_ok());
         let s41 = simple_from_int(41);
-        let vb = res.unwrap();
+        let vb = res.unwrap(); //Checked #test
         assert_eq!(vb.value, VarBindValue::Value(s41));
-        let ol = ObjectIdentifier::new(&[1, 6, 1, 3, 5]).unwrap();
+        let ol = ObjectIdentifier::new(&[1, 6, 1, 3, 5]).unwrap(); //Checked #test
         let res = tab.get_next(ol);
         assert!(res.is_err());
     }
@@ -664,9 +666,23 @@ mod tests {
     }
 
     #[test]
+    fn test_access() {
+        let tab = tab_fixture();
+        let o1 = ObjectIdentifier::new(&[1, 6, 1]).unwrap();
+        assert_eq!(tab.access(o1), Access::NoAccess);
+        let o2 = ObjectIdentifier::new(&[1, 6, 5, 1]).unwrap();
+        assert_eq!(tab.access(o2), Access::NoAccess); 
+        let o3 = ObjectIdentifier::new(&[1, 6, 1, 16385]).unwrap();
+        assert_eq!(tab.access(o3), Access::NoAccess);
+               let o4 = ObjectIdentifier::new(&[1, 6, 1, 0]).unwrap();
+        assert_eq!(tab.access(o4), Access::NoAccess);  
+        let o5 = ObjectIdentifier::new(&[1, 6, 1, 2, 4]).unwrap();
+        assert_eq!(tab.access(o5), Access::ReadOnly);
+    }
+    #[test]
     fn test_create_and_wait() {
-        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap();
-        let oid3: ObjectIdentifier = ObjectIdentifier::new(&ARC3).unwrap();
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); //Checked #test
+        let oid3: ObjectIdentifier = ObjectIdentifier::new(&ARC3).unwrap(); //Checked #test
         let s1 = simple_from_int(1);
         let nr = simple_from_str(b"four");
         let s5 = simple_from_int(5);
@@ -703,7 +719,7 @@ mod tests {
     fn test_foreign_table() {
         let tab = tab_fixture();
         let s1 = simple_from_int(1);
-        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap();
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); // Checked, #test arc is valid
         let aug = AugTable::new(
             tab,
             vec![],

@@ -101,7 +101,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         let text = text_opt.unwrap();
         let mib_name = argument;
-        let mut iraw: String; // Will be used below for import text
         let mut res = resolver::Resolver::new();
         let mut nodes = vec![];
         total += 1;
@@ -131,8 +130,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .collect();
                 if !miss.is_empty() {
                     let txt_opt = importer::find_mib_text(mib_name);
-                    if txt_opt.is_some() {
-                        iraw = txt_opt.unwrap().clone();
+                    if let Some(iraw) = txt_opt {
                         let extra = importer::process_one(&iraw, miss, mib_name, &mut res);
                         nodes.extend(extra);
                     } else {
@@ -248,19 +246,23 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
             }
-            let compile_res = gen_stub::gen_stub(
-                &object_types,
-                res,
-                &tcs,
-                &entries,
-                &object_ids,
-                &mod_comps,
-                mib_name,
-                &out_dir,
-            );
-            if compile_res.is_ok() {
-                stub_ok.push(argument.clone());
-                success += 1;
+            let out_res = gen_stub::open_output(mib_name, &out_dir);
+            if let Ok(out) = out_res {
+                let compile_res = gen_stub::gen_stub(
+                    &object_types,
+                    res,
+                    &tcs,
+                    &entries,
+                    &object_ids,
+                    &mod_comps,
+                    out,
+                );
+                if compile_res.is_ok() {
+                    stub_ok.push(argument.clone());
+                    success += 1;
+                }
+            } else {
+                warn!("Output file open failed");
             }
         } else {
             error!("{mib_name}  {site}");
