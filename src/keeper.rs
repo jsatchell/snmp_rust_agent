@@ -2,6 +2,7 @@
 //!
 //! Module contains the OidKeep trait and three utility enums.
 //!
+use crate::usm::User;
 use rasn::types::ObjectIdentifier;
 use rasn_smi::v2::{ApplicationSyntax, ObjectSyntax, SimpleSyntax};
 use rasn_snmp::v3::{VarBind, VarBindValue};
@@ -93,7 +94,12 @@ pub trait OidKeeper {
 
     /// Set a value, if permitted
     /// Transaction must be active!
-    fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr>;
+    fn set(
+        &mut self,
+        oid: ObjectIdentifier,
+        value: VarBindValue,
+        user: &User,
+    ) -> Result<VarBindValue, OidErr>;
 
     /// Commit the transaction
     fn commit(&mut self) -> Result<(), OidErr>;
@@ -125,6 +131,7 @@ mod tests {
         assert!(!check_type(OType::Ticks, &val));
         assert!(!check_type(OType::Address, &val));
         assert!(!check_type(OType::Unsigned, &val));
+        assert!(!check_type(OType::Arbitrary, &val));
     }
 
     #[test]
@@ -140,6 +147,7 @@ mod tests {
         assert!(!check_type(OType::Ticks, &val));
         assert!(!check_type(OType::Address, &val));
         assert!(!check_type(OType::Unsigned, &val));
+        assert!(!check_type(OType::Arbitrary, &val));
     }
     #[test]
     fn test_check_otype_objid() {
@@ -202,7 +210,7 @@ mod tests {
 
     #[test]
     fn test_check_otype_addr() {
-        let val = address_from_zeros();
+        let val = address_from_vec([0, 0, 0, 0]);
         assert!(!check_type(OType::Integer, &val));
         assert!(!check_type(OType::TestAndIncr, &val));
         assert!(!check_type(OType::RowStatus, &val));
@@ -228,4 +236,6 @@ mod tests {
         assert!(!check_type(OType::Address, &val));
         assert!(check_type(OType::Unsigned, &val));
     }
+
+    // WE could get 100% coverage if we could make an Arbitrary, but that needs Opaque, and I can't see how to make one!
 }

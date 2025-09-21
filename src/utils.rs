@@ -8,14 +8,19 @@ use rasn_smi::v2::{
     ApplicationSyntax, Counter32, Counter64, ObjectSyntax, SimpleSyntax, TimeTicks, Unsigned32,
 };
 
+// AAll functions marked with allow dead code, as we can't predict which ones will be used in stubs
+// before the stubs are generated.
+#[allow(dead_code)]
 pub fn simple_from_int(value: i32) -> ObjectSyntax {
     ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(value)))
 }
 
+#[allow(dead_code)]
 pub fn simple_from_str(value: &'static [u8]) -> ObjectSyntax {
     ObjectSyntax::Simple(SimpleSyntax::String(OctetString::from_static(value)))
 }
 
+#[allow(dead_code)]
 pub fn simple_from_vec(value: &'static [u32]) -> ObjectSyntax {
     ObjectSyntax::Simple(SimpleSyntax::ObjectId(
         ObjectIdentifier::new(value).unwrap(), //Checked panics if value too long or value[0] > 2.
@@ -38,8 +43,8 @@ pub fn ticks_from_int(value: u32) -> ObjectSyntax {
 }
 
 #[allow(dead_code)]
-pub fn address_from_zeros() -> ObjectSyntax {
-    ObjectSyntax::ApplicationWide(ApplicationSyntax::Address(IpAddress([0, 0, 0, 0].into())))
+pub fn address_from_vec(arc: [u8; 4]) -> ObjectSyntax {
+    ObjectSyntax::ApplicationWide(ApplicationSyntax::Address(IpAddress(arc.into())))
 }
 
 #[allow(dead_code)]
@@ -113,8 +118,8 @@ mod tests {
     }
 
     #[test]
-    fn test_address_from_zeros() {
-        let x = address_from_zeros();
+    fn test_address_from_vec() {
+        let x = address_from_vec([0, 0, 0, 0]);
         assert_eq!(
             x,
             ObjectSyntax::ApplicationWide(ApplicationSyntax::Address(IpAddress(

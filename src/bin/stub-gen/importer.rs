@@ -3,14 +3,14 @@ use crate::resolver;
 use log::{error, warn};
 use std::fs;
 
-const MIB_SEARCH_PATH: [&str; 3] = [
+pub const MIB_SEARCH_PATH: [&str; 3] = [
     "/var/lib/mibs/ietf/",
     "/var/lib/mibs/iana/",
     "/usr/share/snmp/mibs/",
 ];
 
-pub fn find_mib_text(mib_name: &str) -> Option<String> {
-    for dirname in MIB_SEARCH_PATH {
+pub fn find_mib_text(mib_name: &str, path: &[String]) -> Option<String> {
+    for dirname in path {
         for ext in ["", ".txt"] {
             let path = dirname.to_owned() + mib_name + ext;
             let read_ok = fs::read_to_string(&path);

@@ -9,11 +9,11 @@ mod snmp_user_based_sm_stub;
 mod snmpv2_stub;
 
 ///Generated function to load all stubs
-pub fn load_stubs(
-    oid_map: &mut OidMap,
+pub fn load_stubs<'a>(
+    oid_map: &'a mut OidMap,
     config: &Config,
     agent: &Agent,
-    users: &Users,
+    users: &'a Users,
     comp: &mut ComplianceStatements,
 ) {
     snmp_user_based_sm_stub::load_stub(oid_map, config, agent, users, comp);

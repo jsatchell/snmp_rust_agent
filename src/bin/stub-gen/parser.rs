@@ -195,9 +195,26 @@ impl<'a> MibNode<'a> {
                 meta: MibNode::mk_static_str(x.meta),
                 val: x.val.copy(),
             }),
+            MibNode::ModCp(x) => MibNode::ModCp(ModuleCompliance {
+                name: MibNode::mk_static_str(x.name),
+                syntax: MibNode::mk_static_str(x.syntax),
+                val: x.val.copy(),
+            }),
             MibNode::NtGrp(x) => MibNode::NtGrp(NotificationGroup {
                 name: MibNode::mk_static_str(x.name),
                 syntax: MibNode::mk_static_str(x.syntax),
+            }),
+            MibNode::NtTy(x) => MibNode::NtTy(NotificationType {
+                name: MibNode::mk_static_str(x.name),
+                status: MibNode::mk_static_str(x.status),
+                description: MibNode::mk_static_str(x.description),
+                reference: MibNode::mk_static_str(x.reference),
+                objects: x
+                    .objects
+                    .iter()
+                    .map(|o| MibNode::mk_static_str(o))
+                    .collect(),
+                val: x.val.copy(),
             }),
             MibNode::Al(_) => MibNode::Al(Alias {}),
             MibNode::Mac(_) => MibNode::Mac(Macro {}),
@@ -898,5 +915,98 @@ pub fn parse_mib<'a>(input: &'a str, nodes: &mut Vec<MibNode<'a>>) -> (bool, u32
         (false, 4)
     } else {
         (true, 0)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_parse_tc() {
+        let text = "
+text ::=     TEXTUAL-CONVENTION
+   STATUS         current
+   DESCRIPTION
+         \"Every\"
+    SYNTAX       OCTET STRING
+     
+";
+        let (_rest, node) = parse_tc(text).unwrap();
+        let node = node.copy();
+        if let MibNode::Tc(tc) = node {
+            assert_eq!(tc.name, "text");
+        } else {
+            panic!("Should have parsed a Text Convention");
+        }
+    }
+
+    #[test]
+    fn test_parse_entry() {
+        let text = "
+
+SysOREntry ::= SEQUENCE {
+    sysORIndex     INTEGER,
+    sysORID        OBJECT IDENTIFIER,
+    sysORDescr     DisplayString,
+    sysORUpTime    TimeStamp
+}
+
+     
+";
+        let (_rest, node) = parse_entry(text).unwrap();
+        if let MibNode::Ent(ent) = node {
+            assert_eq!(ent.name, "SysOREntry");
+        } else {
+            panic!("Should have parsed a SEQUENCE");
+        }
+    }
+
+    #[test]
+    fn test_parse_object_type() {
+        let text = "
+
+usmUserPublic    OBJECT-TYPE
+    SYNTAX       OCTET STRING (SIZE(0..32))
+    MAX-ACCESS   read-create
+    STATUS       current
+    DESCRIPTION \"A publicly-readable value which can be written as part
+                 of the procedure for changing a user's secret
+                 authentication and/or privacy key, and later read to
+                 determine whether the change of the secret was
+                 effected.
+                \"
+    DEFVAL      { ''H }  -- the empty string
+    ::= { usmUserEntry 11 }
+
+";
+        let (_rest, node) = parse_obj_type(text).unwrap();
+        let node = node.copy();
+        if let MibNode::ObTy(ot) = node {
+            assert_eq!(ot.name, "usmUserPublic");
+        } else {
+            panic!("Should have parsed OBJECT-TYPE");
+        }
+    }
+
+    #[test]
+    fn test_parse_notification_group() {
+        let text = "
+snmpBasicNotificationsGroup NOTIFICATION-GROUP
+    NOTIFICATIONS { coldStart, authenticationFailure }
+    STATUS        current
+    DESCRIPTION
+       \"The basic notifications implemented by an SNMP entity
+        supporting command responder applications.\"
+    ::= { snmpMIBGroups 7 }
+
+";
+        let (_rest, node) = parse_notification_group(text).unwrap();
+        let node = node.copy();
+        if let MibNode::NtGrp(ot) = node {
+            assert_eq!(ot.name, "snmpBasicNotificationsGroup");
+        } else {
+            panic!("Should have parsed Notification Group");
+        }
     }
 }

@@ -2,19 +2,23 @@
 
 * Correct error response for simplest cases - Made a start. Missing below
   * Decode Error
-  * Authentication Error
-  * Permission Errors (in some cases)
+  * Permission Errors (in some cases), most now correct
   * Wrong encoding / size
-* Tests - Started
-  * Table - 6
-  * Scalar - 4
-  * Usm - 8
-  * Config - 1
-  * Privacy - no test cases in RFCs.
-  * Agent -  4 Hardest, needs mocks etc.
-  * Engine ID - 4
+* Tests - Started. OK coverage of agent, started compiler, nothing for generated code.
+  * Table - 7
+  * Oidmap - 1
+  * Perms - 3
+  * Scalar - 7
+  * Usm - 11
+  * Utils - 8
+  * Config - 2
+  * Privacy - 2, check round trip, no test cases in RFCs.
+  * Agent -  6 Hardest, needs mocks etc.
+  * Engine ID - 7
+  * stub-gen/resolver - 2
+  * keeper - 8
 * Table model
-  * Text-Convention range checking (lookup done for DEFVAL)
+  * Text-Convention and sub type range checking (lookup done for DEFVAL) - TODO
   * Default Values - mostly done
   * Augment tables - FIXME - wrong implementation, needs Rust support to do right, do after MVP
   * Row management via row status column
@@ -27,9 +31,9 @@
   * Change to OidKeep Trait - begin_transaction, commit, rollback - Done
   * commitfail, undofail errors - ToDo
   * sample implementations for ScalarMemOid and TableMemOid - Done
-  * Compiler support - Done for Rust
+  * Compiler support - Done
   * snmp_agent use new API - Done
-* Rough outline of MiB compiler / code generator - Started, both python and rust.
+* Outline of MiB compiler / code generator - Started, rust one replaces python prototype.
 * Improved permissions model - Done
 * Get-bulk - Done, but error handling is hope and wishful thinking
 * At least two MIB fairly complete implementations that are not just stubs:

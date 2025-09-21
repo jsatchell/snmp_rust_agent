@@ -19,7 +19,7 @@ use log::warn;
 use regex::Regex;
 use sha1;
 use sha2;
-use std::fs::read_to_string;
+use std::cell::RefCell;
 use std::fs::File;
 use std::io::{Error, Write};
 
@@ -36,28 +36,30 @@ enum WhatHash {
 ///
 /// Contains localized hashes, and pre calculated values for k1 and k2, used
 /// in generating the checksums.
-#[derive(Debug, PartialEq)]
-pub struct User<'a> {
+#[derive(Debug, PartialEq, Eq)]
+pub struct User {
     what: WhatHash,
     pub group: Vec<u8>,
-    pub perm: &'a Perm,
+    pub perm: Perm,
     pub name: Vec<u8>,
-    auth_key: Vec<u8>,
-    pub priv_key: Vec<u8>,
+    pub trunc: usize,
+    auth_key: RefCell<Vec<u8>>,
+    pub priv_key: RefCell<Vec<u8>>,
     pub auth_length: usize,
-    k1: Vec<u8>, //[u8; 64],
-    k2: Vec<u8>, //[u8; 64],
+    k1: RefCell<Vec<u8>>, //[u8; 64],
+    k2: RefCell<Vec<u8>>, //[u8; 64],
+    pub clean: RefCell<bool>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ParseUserError;
 
-impl<'a> User<'a> {
+impl User {
     /// Create a User from a line in the file
     ///
     /// Will throw ParseUserError on problems.
     /// User group name (the second item on the line) must match a group in perms
-    pub fn from_str(s: &str, perms: &'a Vec<Perm>) -> Result<Self, ParseUserError> {
+    pub fn from_str(s: &str, perms: &Vec<Perm>) -> Result<Self, ParseUserError> {
         if perms.is_empty() {
             return Err(ParseUserError);
         }
@@ -88,21 +90,23 @@ impl<'a> User<'a> {
                 return Ok(User {
                     what,
                     group,
-                    perm: perm_entry,
+                    perm: perm_entry.clone(),
                     name: captures["name"].as_bytes().to_vec(),
-                    auth_key: akb.clone(),
-                    priv_key: hex::decode(&captures["pk"]).unwrap(), // Startup, who cares?
+                    trunc,
+                    auth_key: RefCell::new(akb.clone()),
+                    priv_key: RefCell::new(hex::decode(&captures["pk"]).unwrap()), // Startup, who cares?
                     auth_length,
                     k1: if trunc < 40 {
-                        k1_from_ak(&akb, trunc)
+                        RefCell::new(k1_from_ak(&akb, trunc))
                     } else {
-                        k1_128_from_ak(&akb, trunc)
+                        RefCell::new(k1_128_from_ak(&akb, trunc))
                     },
                     k2: if trunc < 40 {
-                        k2_from_ak(&akb, trunc)
+                        RefCell::new(k2_from_ak(&akb, trunc))
                     } else {
-                        k2_128_from_ak(&akb, trunc)
+                        RefCell::new(k2_128_from_ak(&akb, trunc))
                     },
+                    clean: RefCell::new(true),
                 });
             }
         }
@@ -132,9 +136,9 @@ impl<'a> User<'a> {
                 out.extend(b" sha512 ");
             }
         };
-        out.extend(hex::encode(self.auth_key.clone()).as_bytes());
+        out.extend(hex::encode(self.auth_key.borrow().clone()).as_bytes());
         out.extend(b" aes ");
-        out.extend(hex::encode(self.priv_key.clone()).as_bytes());
+        out.extend(hex::encode(self.priv_key.borrow().clone()).as_bytes());
         out.push(b'\n');
         out
     }
@@ -154,11 +158,11 @@ impl<'a> User<'a> {
     /// Parameterized to support RFC7630
     pub fn auth_from_bytes(&self, data: &[u8]) -> Vec<u8> {
         let mut hasher = self.choose_hasher();
-        hasher.update(&self.k1);
+        hasher.update(&self.k1.borrow());
         hasher.update(data);
         let mid = hasher.finalize();
         let mut hash2 = self.choose_hasher();
-        hash2.update(&self.k2);
+        hash2.update(&self.k2.borrow());
         hash2.update(&mid);
         let trunc = match self.what {
             WhatHash::Sha1 => 12,
@@ -172,8 +176,12 @@ impl<'a> User<'a> {
 
     /// Key change algorithm from RFC3414#page-84 for HMAC SHA-1.
     /// In this case, L=20, K=20. data must be 40 bytes.
-    pub fn key_change(&self, data: &[u8]) -> Vec<u8> {
-        let mut temp = self.auth_key.clone();
+    pub fn key_change(&self, data: &[u8], auth_priv: bool) -> Vec<u8> {
+        let mut temp = if auth_priv {
+            self.auth_key.borrow().clone()
+        } else {
+            self.priv_key.borrow().clone()
+        };
         let l = match self.what {
             WhatHash::Sha1 => 20,
             WhatHash::Sha224 => 28,
@@ -195,6 +203,31 @@ impl<'a> User<'a> {
             new_key.push(next[i] ^ data[l + i]);
         }
         new_key
+    }
+
+    pub fn update_password(&self, new_val: &[u8], auth_priv: bool) -> Result<(), Error> {
+        let new_key = self.key_change(new_val, auth_priv);
+        if auth_priv {
+            let mut ak = self.auth_key.borrow_mut();
+            ak.clear();
+            ak.extend(new_key);
+            *self.k1.borrow_mut() = if self.auth_length < 30 {
+                k1_from_ak(&ak, self.trunc)
+            } else {
+                k1_128_from_ak(&ak, self.trunc)
+            };
+            *self.k2.borrow_mut() = if self.auth_length < 30 {
+                k2_from_ak(&ak, self.trunc)
+            } else {
+                k2_128_from_ak(&ak, self.trunc)
+            } // end of ak, k1 and k2 borrows
+        } else {
+            let mut pk = self.priv_key.borrow_mut();
+            pk.clear();
+            pk.extend(new_key);
+        } // endof pk borrow
+        *self.clean.borrow_mut() = false;
+        Ok(())
     }
 }
 
@@ -238,18 +271,19 @@ fn k2_128_from_ak(ak: &[u8], trunc: usize) -> Vec<u8> {
     eak.to_vec()
 }
 
-pub struct Users<'a> {
+#[derive(Debug, PartialEq, Eq)]
+pub struct Users {
     filename: String,
-    pub users: Vec<User<'a>>,
+    pub users: Vec<User>,
 }
 
-impl Default for Users<'_> {
+impl Default for Users {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'a> Users<'a> {
+impl<'a> Users {
     pub fn new() -> Self {
         Users {
             filename: "users.txt".to_string(),
@@ -257,7 +291,7 @@ impl<'a> Users<'a> {
         }
     }
 
-    pub fn lookup_user(&self, name: Vec<u8>) -> Option<&User<'a>> {
+    pub fn lookup_user(&self, name: Vec<u8>) -> Option<&User> {
         // FIXME change to binary search to support many users better
         for user in &self.users {
             let uname = user.name.clone();
@@ -269,8 +303,8 @@ impl<'a> Users<'a> {
         None
     }
 
-    pub fn load_from_file(&mut self, perms: &'a Vec<Perm>) {
-        for line in read_to_string(self.filename.clone()).unwrap().lines() {
+    pub fn load_from_str(&mut self, perms: &'a Vec<Perm>, user_text: &str) {
+        for line in user_text.lines() {
             // Startup, who cares?
             self.users
                 .push(User::from_str(line, perms).expect("Parse error reading users.txt"));
@@ -412,17 +446,20 @@ mod tests {
         let u = User {
             what: WhatHash::Sha1,
             group: vec![0, 1],
-            perm: &p[0],
+            perm: p[0].clone(),
             name: b"test".to_vec(),
-            auth_key:
+            auth_key: RefCell::new(
                 b"\x66\x95\xfe\xbc\x92\x88\xe3\x62\x82\x23\x5f\xc7\x15\x1f\x12\x84\x97\xb3\x8f\x3f"
                     .to_vec(),
+            ),
             auth_length: 12,
-            priv_key: vec![],
-            k1: [0; 64].to_vec(),
-            k2: [0; 64].to_vec(),
+            trunc: 20,
+            priv_key: RefCell::new(vec![]),
+            k1: RefCell::new([0; 64].to_vec()),
+            k2: RefCell::new([0; 64].to_vec()),
+            clean: RefCell::new(true),
         };
-        let new_k = u.key_change(hex_data);
+        let new_k = u.key_change(hex_data, true);
         assert_eq!(
             new_k,
             b"\x78\xe2\xdc\xce\x79\xd5\x94\x03\xb5\x8c\x1b\xba\xa5\xbf\xf4\x63\x91\xf1\xcd\x25"
@@ -431,8 +468,44 @@ mod tests {
     }
 
     #[test]
+    fn test_passwd_update() {
+        // Appendix A5.2 of RFC3414, localized key from A3.2
+        let hex_data = b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x9c\x10\x17\xf4\xfd\x48\x3d\x2d\xe8\xd5\xfa\xdb\xf8\x43\x92\xcb\x06\x45\x70\x51";
+        let p = perms();
+        let u = User {
+            what: WhatHash::Sha1,
+            group: vec![0, 1],
+            perm: p[0].clone(),
+            name: b"test".to_vec(),
+            auth_key: RefCell::new(
+                b"\x66\x95\xfe\xbc\x92\x88\xe3\x62\x82\x23\x5f\xc7\x15\x1f\x12\x84\x97\xb3\x8f\x3f"
+                    .to_vec(),
+            ),
+            auth_length: 12,
+            trunc: 20,
+            priv_key: RefCell::new(vec![]),
+            k1: RefCell::new([0; 64].to_vec()),
+            k2: RefCell::new([0; 64].to_vec()),
+            clean: RefCell::new(true),
+        };
+        let res = u.update_password(hex_data, true);
+        assert!(res.is_ok());
+        assert_eq!(
+            *u.auth_key.borrow(),
+            b"\x78\xe2\xdc\xce\x79\xd5\x94\x03\xb5\x8c\x1b\xba\xa5\xbf\xf4\x63\x91\xf1\xcd\x25"
+                .to_vec()
+        );
+    }
+
+    #[test]
     fn test_empty_users() {
-        let u = Users::default();
+        let mut u = Users::default();
         assert!(u.users.is_empty());
+        let user_text = "test test sha1 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
+        let pv = perms();
+        u.load_from_str(&pv, user_text);
+        assert!(!u.users.is_empty());
+        assert!(u.lookup_user(b"test".to_vec()).is_some());
+        assert!(u.lookup_user(b"not".to_vec()).is_none());
     }
 }

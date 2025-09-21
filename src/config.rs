@@ -15,6 +15,10 @@
 //! * TrapSink - address and port where Trap PDUs will be sent when the agent has trap support.
 //! * SendAuthenticationFailures - if "true" or "t", and TrapSink is defined, send authentication failure traps.
 //!
+//! Thses two have builttt-in defaults, corresponding to the legacy fixed values
+//! * PermissionsFile - toml file containing the group permissions data, defaults to groups.toml
+//! * UsersFile - username and password data, defaults to users.txt
+//!
 //! Panics if the file cannot be found, has missing keys or on parse errors.
 //!
 
@@ -31,6 +35,8 @@ pub struct Config {
     pub contact: String,
     pub trap_sink: String,
     pub send_auth_fails: bool,
+    pub perms_file: String,
+    pub users_file: String,
 }
 
 const CONF_FILES: [&str; 3] = [
@@ -48,6 +54,8 @@ impl Config {
         let mut listen = "".to_string();
         let mut trap_sink = "".to_string();
         let mut send_auth_fails: bool = false;
+        let mut perms_file = "groups.toml".to_string();
+        let mut users_file = "users.txt".to_string();
         let mut got_eid = false;
         let mut got_fqdn = false;
         let mut got_listen = false;
@@ -75,6 +83,8 @@ impl Config {
                 "Contact" => contact = parts[1].to_string(),
                 "TrapSink" => trap_sink = parts[1].to_string(),
                 "SendAuthenticationFailures" => send_auth_fails = parts[1].contains("t"),
+                "PermissionsFile" => perms_file = parts[1].to_string(),
+                "UsersFile" => users_file = parts[1].to_string(),
                 _ => {
                     debug!("Unexpected keyword in config file {0}", parts[0]);
                 }
@@ -106,6 +116,8 @@ impl Config {
             contact,
             trap_sink,
             send_auth_fails,
+            perms_file,
+            users_file,
         }
     }
 

@@ -218,7 +218,7 @@ fn value_from_syntax(syntax: &str) -> String {
         "OType::Counter" => "counter_from_int(0)",
         "OType::BigCounter" => "big_counter_from_int(0)",
         "OType::Ticks" => "ticks_from_int(0)",
-        "OType::Address" => "address_from_zeros()",
+        "OType::Address" => "address_from_vec([0, 0, 0, 0])",
         _ => "simple_from_int(4)",
     }
     .to_string()
@@ -485,6 +485,9 @@ fn new() -> Self {{
 
 impl OidKeeper for {struct_name} {{
 fn is_scalar(&self, _oid: ObjectIdentifier) -> bool {{false}}
+fn is_empty(&self) -> bool {{
+       self.table.is_empty()
+    }}
 fn get(&self, oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {{
   self.table.get(oid) }}
 fn get_next(&self, oid: ObjectIdentifier) -> Result<VarBind, OidErr> {{
@@ -495,8 +498,9 @@ fn set(
         &mut self,
         oid: ObjectIdentifier,
         value: VarBindValue,
+        user: &User,
     ) -> Result<VarBindValue, OidErr> {{
-    self.table.set(oid, value) }}
+    self.table.set(oid, value, user) }}
 fn begin_transaction(&mut self) -> Result<(), OidErr> {{
         self.table.begin_transaction()
     }}
@@ -560,8 +564,8 @@ impl OidKeeper for {struct_name} {{
     fn access(&self, oid: ObjectIdentifier) -> Access {{
         self.scalar.access(oid)
     }}
-    fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {{
-        self.scalar.set(oid, value)
+    fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue, user: &User) -> Result<VarBindValue, OidErr> {{
+        self.scalar.set(oid, value, user)
     }}
     fn begin_transaction(&mut self) -> Result<(), OidErr> {{
         self.scalar.begin_transaction()
@@ -727,6 +731,7 @@ use crate::scalar::ScalarMemOid;
 use crate::table::TableMemOid;
 use crate::oidmap::OidMap;
 use crate::utils::*;
+use crate::usm::User;
 use rasn::types::ObjectIdentifier;
 
 use rasn_snmp::v3::{VarBind, VarBindValue};
@@ -779,4 +784,63 @@ pub fn loader(mib_files: Vec<String>) -> Result<(), Error> {
     }
     src.write_all(b"}\n")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_access_lookup() {
+        let acc = access_lookup("read-only");
+        assert_eq!(acc, "Access::ReadOnly");
+        assert_eq!(access_lookup("miss"), "Access::NoAccess");
+    }
+
+    #[test]
+    fn test_otype_lookup() {
+        assert_eq!(name_otype("INTEGER"), "OType::Integer");
+        assert_eq!(name_otype("miss"), "OType::ObjectId");
+    }
+
+    #[test]
+    fn test_slasb() {
+        assert_eq!(slash_b("text\nalso"), "// text\n// also\n");
+    }
+
+    #[test]
+    fn test_lower_snake() {
+        assert_eq!(lower_snake("camelCase"), "camel_case");
+        assert_eq!(lower_snake("ABc"), "a_bc");
+    }
+
+    #[test]
+    fn test_upper_snake() {
+        assert_eq!(upper_snake("camelCase"), "CAMEL_CASE");
+    }
+
+    #[test]
+    fn test_title() {
+        assert_eq!(title("title"), "Title");
+        assert_eq!(title(""), "");
+    }
+
+    #[test]
+    fn test_value_from_syntax() {
+        // fairly pointless, just check lookups work!
+        for (syntax, val) in [
+            ("OType::String", "simple_from_str(b\"b\")"),
+            ("OType::ObjectId", "simple_from_vec(&[1, 3, 6, 1])"),
+            ("OType::Counter", "counter_from_int(0)"),
+            ("OType::BigCounter", "big_counter_from_int(0)"),
+            ("OType::Ticks", "ticks_from_int(0)"),
+            ("OType::Address", "address_from_vec([0, 0, 0, 0])"),
+        ] {
+            assert_eq!(value_from_syntax(syntax), val);
+        }
+    }
+
+    // Few more file free functions to check
+
+    // Big question is how to check writing functions? Use temp file somewhere?
 }

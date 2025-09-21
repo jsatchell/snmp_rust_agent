@@ -207,10 +207,14 @@ pub fn format_engine_id(engine_id: OctetString) -> String {
                 }
             }
             3 => {
-                format!(
-                    "MAC Enterprise Number {} {:X}:{:X}:{:X}:{:X}:{:X}:{:X}",
-                    enterprise, vid[5], vid[6], vid[7], vid[8], vid[9], vid[10]
-                )
+                if vid.len() != 11 {
+                    "MAC scheme must be exactly 11 bytes".to_string()
+                } else {
+                    format!(
+                        "MAC Enterprise Number {} {:X}:{:X}:{:X}:{:X}:{:X}:{:X}",
+                        enterprise, vid[5], vid[6], vid[7], vid[8], vid[9], vid[10]
+                    )
+                }
             }
             4 => {
                 let bytes = vid[5..].to_vec();
@@ -271,6 +275,8 @@ pub fn engine_id_from_str(text: &str) -> OctetString {
 
 #[cfg(test)]
 mod tests {
+    use rasn::types::OctetString;
+
     use crate::engine_id;
 
     #[test]
@@ -284,6 +290,10 @@ mod tests {
     #[test]
     fn test_static() {
         assert_eq!(
+            engine_id::engine_id_from_str("1234 Static 6162636465666768"),
+            engine_id::static_engine_id(1234, b"abcdefgh")
+        );
+        assert_eq!(
             "Static ID. Enterprise Number 1234 Bytes [97, 98, 99, 100, 101, 102, 103, 104]",
             engine_id::format_engine_id(engine_id::static_engine_id(1234, b"abcdefgh"))
         );
@@ -294,49 +304,86 @@ mod tests {
         assert_eq!(
             engine_id::engine_id_from_str("1234 1 127.0.0.1"),
             engine_id::ipv4_engine_id(1234, "127.0.0.1")
-        )
+        );
+        assert_eq!(
+            "IPv4 Enterprise Number 1234 Address 127.0.0.1",
+            engine_id::format_engine_id(engine_id::ipv4_engine_id(1234, "127.0.0.1"))
+        );
     }
 
     #[test]
     fn test_engine_id_mac_from_str() {
+        assert!(engine_id::mac_to_bytes("Too short").is_none());
         assert_eq!(
             engine_id::engine_id_from_str("1234 3 AA:BB:CC:DD:EE:FF"),
             engine_id::mac_engine_id(1234, "AA:BB:CC:DD:EE:FF")
-        )
+        );
+        assert_eq!(
+            "MAC Enterprise Number 1234 AA:BB:CC:DD:EE:FF",
+            engine_id::format_engine_id(engine_id::mac_engine_id(1234, "AA:BB:CC:DD:EE:FF"))
+        );
     }
 
     #[test]
     fn test_engine_id_ipv6_from_str() {
-        println!(
-            "{:?}",
-            engine_id::format_engine_id(engine_id::engine_id_from_str("1234 2 ::1"))
-        );
         assert_eq!(
             engine_id::engine_id_from_str("1234 2 ::1"),
             engine_id::ipv6_engine_id(1234, "::1")
-        )
+        );
+        assert_eq!(
+            "IPv6 Enterprise Number 1234 Address ::1",
+            engine_id::format_engine_id(engine_id::ipv6_engine_id(1234, "::1"))
+        );
     }
 
     #[test]
     fn test_engine_id_text_from_str() {
-        println!(
-            "{:?}",
-            engine_id::format_engine_id(engine_id::engine_id_from_str("1234 4 text"))
-        );
         assert_eq!(
             engine_id::engine_id_from_str("1234 4 text"),
             engine_id::text_engine_id(1234, "text")
-        )
+        );
+        assert_eq!(
+            "Text Enterprise Number 1234 Text text",
+            engine_id::format_engine_id(engine_id::text_engine_id(1234, "text"))
+        );
     }
+
     #[test]
     fn test_engine_id_bytes_from_str() {
-        println!(
-            "{:?}",
-            engine_id::format_engine_id(engine_id::engine_id_from_str("1234 5 deadbeef"))
-        );
         assert_eq!(
             engine_id::engine_id_from_str("1234 5 deadbeef"),
             engine_id::byte_engine_id(1234, b"\xde\xad\xbe\xef")
-        )
+        );
+        assert_eq!(
+            "Byte Enterprise Number 1234 Bytes [222, 173, 190, 239]",
+            engine_id::format_engine_id(engine_id::byte_engine_id(1234, b"\xde\xad\xbe\xef"))
+        );
+    }
+
+    #[test]
+    fn test_format_bad() {
+        // None of these should panic, but should explore error message paths
+        let vals = vec![
+            b"tiny".to_vec(),
+            b"way toooooooooooooooooooooo looooooooooooooooong".to_vec(),
+            b"Abcdwrong length".to_vec(),
+            b"\xfabcd\x00Notzero".to_vec(),
+            b"\xfabcd\x01".to_vec(),
+            b"\xfabcd\x02".to_vec(),
+            b"\xfabcd\x03".to_vec(),
+            b"\xfabcd\x06".to_vec(),
+            b"\xfabcd\x07".to_vec(),
+            b"\xfabcd\xa2".to_vec(),
+        ];
+        for val in vals {
+            let eid = OctetString::from_slice(&val);
+            let _ = engine_id::format_engine_id(eid);
+        }
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_bad_parse() {
+        let _ = engine_id::engine_id_from_str("1234 7 deadbeef");
     }
 }

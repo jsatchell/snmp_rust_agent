@@ -1,4 +1,5 @@
 use crate::keeper::{check_type, Access, OType, OidErr, OidKeeper};
+use crate::usm::User;
 use num_traits::ToPrimitive;
 use rasn::ber::{decode, encode};
 use rasn::types::{Integer, ObjectIdentifier};
@@ -10,7 +11,7 @@ use log::{debug, error};
 
 /// Simplistic scalar stored in memory.
 /// Initialized in constructor.
-#[derive(PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq)]
 pub struct ScalarMemOid {
     value: ObjectSyntax,
     otype: OType,
@@ -76,7 +77,12 @@ impl OidKeeper for ScalarMemOid {
         }
     }
 
-    fn set(&mut self, _oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
+    fn set(
+        &mut self,
+        _oid: ObjectIdentifier,
+        value: VarBindValue,
+        _user: &User,
+    ) -> Result<VarBindValue, OidErr> {
         if self.access == Access::ReadCreate || self.access == Access::ReadWrite {
             if !self.transaction {
                 return Err(OidErr::WrongType);
@@ -97,8 +103,9 @@ impl OidKeeper for ScalarMemOid {
                         } else {
                             return Err(OidErr::OutOfRange); // InconsistentValue
                         }
+                    } else {
+                        self.pending = new_value;
                     }
-                    self.pending = new_value;
                 } else {
                     return Err(OidErr::WrongType);
                 }
@@ -121,7 +128,7 @@ impl OidKeeper for ScalarMemOid {
     }
 }
 
-#[derive(PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq)]
 pub struct PersistentScalar {
     scalar: ScalarMemOid,
     file_name: String,
@@ -171,8 +178,13 @@ impl OidKeeper for PersistentScalar {
         self.scalar.begin_transaction()
     }
 
-    fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
-        self.scalar.set(oid, value)
+    fn set(
+        &mut self,
+        oid: ObjectIdentifier,
+        value: VarBindValue,
+        user: &User,
+    ) -> Result<VarBindValue, OidErr> {
+        self.scalar.set(oid, value, user)
     }
 
     fn rollback(&mut self) -> Result<(), OidErr> {
@@ -195,17 +207,18 @@ impl OidKeeper for PersistentScalar {
         }
         comm_res
     }
+    // Just use the default implementation for is_empty()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use super::{Access, PersistentScalar};
+    use crate::perms::{Perm, Rule};
+    use crate::utils::simple_from_int;
     use rasn::types::{Integer, ObjectIdentifier};
     use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
     use rasn_snmp::v3::VarBindValue;
-
-    use crate::utils::simple_from_int;
 
     const ARC2: [u32; 2] = [1, 6];
 
@@ -216,6 +229,25 @@ mod tests {
             x,
             ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(21)))
         );
+    }
+    fn perms() -> Vec<Perm> {
+        let rules = vec![Rule {
+            read: true,
+            write: true,
+            include: vec![vec![1u32]],
+            exclude: vec![],
+        }];
+        vec![Perm {
+            rules,
+            security_level: 1u8, // Just flags
+            group_name: "test".as_bytes().to_vec(),
+        }]
+    }
+
+    fn user_fixture<'a>(pv: &'a Vec<Perm>) -> User {
+        let s ="test test sha1 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
+        let u = User::from_str(s, pv).unwrap(); // Checked #test
+        u
     }
 
     fn pscl_fixture() -> PersistentScalar {
@@ -232,6 +264,7 @@ mod tests {
     fn pscl_get_test() {
         let pscl = pscl_fixture();
         let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); //Checked #test
+        assert!(pscl.is_scalar(oid2.clone()));
         let res = pscl.get(oid2);
         let s42 = simple_from_int(42);
         assert!(res.is_ok());
@@ -254,8 +287,10 @@ mod tests {
         let s17 = simple_from_int(17);
         let vb = VarBindValue::Value(s17.clone());
         let b_res = pscl.begin_transaction();
+        let pv = perms();
+        let user = user_fixture(&pv);
         assert!(b_res.is_ok());
-        let set_rs = pscl.set(oid2.clone(), vb);
+        let set_rs = pscl.set(oid2.clone(), vb, &user);
         assert!(set_rs.is_ok());
         let c_res = pscl.commit();
         assert!(c_res.is_ok());
@@ -275,6 +310,7 @@ mod tests {
         let s = ScalarMemOid::new(value, OType::Integer, Access::ReadWrite);
         assert!(s.is_scalar(oid2.clone()));
         assert_eq!(s.access(oid2), Access::ReadWrite);
+        assert!(!s.is_empty());
     }
 
     #[test]
@@ -289,5 +325,71 @@ mod tests {
     fn test_row_type_wrong() {
         let value = simple_from_int(7);
         let _s = ScalarMemOid::new(value, OType::String, Access::ReadWrite);
+    }
+
+    #[test]
+    fn test_lifecycle() {
+        let value = simple_from_int(7);
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); //Checked #test
+        let mut s = ScalarMemOid::new(value.clone(), OType::Integer, Access::ReadWrite);
+        let s8 = simple_from_int(8);
+        let vb = VarBindValue::Value(s8);
+        let pv = perms();
+        let user = user_fixture(&pv);
+        let _ = s.rollback();
+        assert!(s.set(oid2.clone(), vb.clone(), &user).is_err());
+        assert!(s.begin_transaction().is_ok());
+        assert!(s.begin_transaction().is_err()); // errors, and resets transaction
+        assert!(s.begin_transaction().is_ok());
+        assert!(s.set(oid2.clone(), vb.clone(), &user).is_ok());
+        // No effect until commit
+        assert_eq!(s.get(oid2.clone()).unwrap(), VarBindValue::Value(value));
+        assert!(s.commit().is_ok());
+        assert_eq!(s.get(oid2.clone()).unwrap(), vb);
+    }
+
+    #[test]
+    fn test_incr() {
+        let value = simple_from_int(7);
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); //Checked #test
+        let mut s = ScalarMemOid::new(value.clone(), OType::TestAndIncr, Access::ReadWrite);
+        let vb = VarBindValue::Value(value.clone());
+        let s8 = simple_from_int(8);
+        let vb8 = VarBindValue::Value(s8.clone());
+        let pv = perms();
+        let user = user_fixture(&pv);
+        let _ = s.rollback();
+        assert!(s.begin_transaction().is_ok());
+        // Wrong value should be rejected
+        assert!(s.set(oid2.clone(), vb8.clone(), &user).is_err());
+        assert!(s.set(oid2.clone(), vb.clone(), &user).is_ok());
+        // No effect until commit
+        assert_eq!(s.get(oid2.clone()).unwrap(), VarBindValue::Value(value));
+        assert!(s.commit().is_ok());
+        assert_ne!(s.get(oid2.clone()).unwrap(), vb);
+    }
+
+    #[test]
+    fn test_incr_rollover() {
+        let value = simple_from_int(2147483647i32);
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); //Checked #test
+        let mut s = ScalarMemOid::new(value.clone(), OType::TestAndIncr, Access::ReadWrite);
+        let vb = VarBindValue::Value(value.clone());
+        let s8 = simple_from_int(8);
+        let vb8 = VarBindValue::Value(s8.clone());
+        let pv = perms();
+        let user = user_fixture(&pv);
+        let _ = s.rollback();
+        assert!(s.begin_transaction().is_ok());
+        // Wrong value should be rejected
+        assert!(s.set(oid2.clone(), vb8.clone(), &user).is_err());
+        assert!(s.set(oid2.clone(), vb.clone(), &user).is_ok());
+        // No effect until commit
+        assert_eq!(s.get(oid2.clone()).unwrap(), VarBindValue::Value(value));
+        assert!(s.commit().is_ok());
+        let vb0 = s.get(oid2.clone()).unwrap();
+        if let VarBindValue::Value(s0) = vb0 {
+            assert_eq!(s0, simple_from_int(0));
+        }
     }
 }

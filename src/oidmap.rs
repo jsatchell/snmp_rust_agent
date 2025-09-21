@@ -123,7 +123,7 @@ mod tests {
 
     const ARC: [u32; 1] = [1];
     const ARC2: [u32; 2] = [2, 2];
-    //  const ARC3: [u32; 2] = [1, 3];
+    const ARC3: [u32; 2] = [1, 3];
 
     #[test]
     fn test_load1() {
@@ -135,7 +135,8 @@ mod tests {
         ));
         let o1 = ObjectIdentifier::new(&ARC).unwrap();
         let o2 = ObjectIdentifier::new(&ARC2).unwrap();
-        let mut om = OidMap::new();
+        let o3 = ObjectIdentifier::new(&ARC3).unwrap();
+        let mut om = OidMap::default();
         assert!(om.is_empty());
         om.push(o1.clone(), s);
         om.sort();
@@ -147,7 +148,7 @@ mod tests {
         assert!(res.is_err());
         //assert_eq!(om.idx(0), s);
         assert_eq!(*om.oid(0), o1);
-        let resn = om.search_next(&o1);
+        let resn = om.search_next(&o3);
         assert!(resn.is_none());
     }
 }

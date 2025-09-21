@@ -3,6 +3,7 @@
 //! Agent is the basic run time service.  See main.rs for a simple example of how
 //! it might be used.
 
+use crate::keeper;
 use crate::keeper::OidErr;
 use crate::notifier;
 use crate::oidmap::OidMap;
@@ -237,7 +238,7 @@ impl Agent {
         };
         if encrypted {
             usm.privacy_parameters = usp.privacy_parameters.clone();
-            let key = &user.priv_key;
+            let key = &user.priv_key.borrow();
             let enc_octs = rasn::ber::encode(&spd).unwrap(); // Checked spd constructed by safe rust code, so should encode
             let value: Vec<u8> = privacy::encrypt(&mut enc_octs.to_vec(), usp, key);
             spd = ScopedPduData::EncryptedPdu(OctetString::from(value));
@@ -307,8 +308,6 @@ impl Agent {
         (error_status, error_index, request_id)
     }
 
-    /// This internal method is used for GetNext and Bulk,
-    ///
     /// It is a steaming mess, and does not handle all cases correctly - there must be a better way!
     fn do_next(
         &self,
@@ -323,41 +322,73 @@ impl Agent {
     ) {
         // From RFC3416:
         //
-        // The variable is located which is in the lexicographically
-        //  ordered list of the names of all variables which are
-        // accessible by this request and whose name is the first
-        // lexicographic successor of the variable binding's name in
-        // the incoming GetNextRequest-PDU.  The corresponding variable
-        // binding's name and value fields in the Response-PDU are set
-        // to the name and value of the located variable.
+        //   The variable is located which is in the lexicographically
+        //   ordered list of the names of all variables which are
+        //   accessible by this request and whose name is the first
+        //   lexicographic successor of the variable binding's name in
+        //   the incoming GetNextRequest-PDU.  The corresponding variable
+        //   binding's name and value fields in the Response-PDU are set
+        //   to the name and value of the located variable.
         //
         // In other words, we need to look at permissions and the object access,
         // and skip over anything we cannot read. The complication arises for tables,
         // which have internal content and access.
-
         let opt_get: Result<usize, usize> = oid_map.search(&roid);
+        let mut oid1 = roid.clone();
+        debug!(
+            "Perm group is {}",
+            String::from_utf8(perm.perm.group_name.clone()).expect("nasty")
+        );
+
+        let mut cnt;
         match opt_get {
             Err(insert_point) => {
-                debug!("Get next miss case {insert_point}");
-                if insert_point == 0 {
-                    // Off the front of our range - give the first thing we can access
-                    let mut first = 0;
-                    let mut oid1;
-                    loop {
-                        oid1 = oid_map.oid(first).clone();
-                        if perm.check(false, &oid1) {
-                            break;
-                        }
-                        first += 1;
-                    }
-                    let okeep = &mut oid_map.idx(first);
-                    if okeep.is_scalar(oid1.clone()) {
-                        let value_res = okeep.get(oid1.clone());
+                if insert_point >= oid_map.len() {
+                    debug!("miss case {insert_point} >= oid_map.len()");
+                    vb.push(VarBind {
+                        name: roid.clone(),
+                        value: VarBindValue::EndOfMibView,
+                    });
+                    return;
+                }
+                cnt = insert_point;
+            }
+            Ok(which) => {
+                if oid_map.idx(which).is_scalar(roid.clone()) {
+                    cnt = which + 1;
+                    oid1 = oid_map.oid(cnt).clone();
+                } else {
+                    cnt = which;
+                }
+            }
+        }
+        debug!("Entering loop oid is {oid1:?}");
+        loop {
+            //let oid1 = oid_map.oid(cnt).clone();
+            if perm.check(false, &oid1) {
+                let keep = oid_map.idx(cnt);
+
+                let acc = if keep.is_scalar(oid1.clone()) {
+                    keep.access(oid1.clone())
+                } else {
+                    keeper::Access::ReadOnly
+                };
+
+                if (acc == keeper::Access::ReadOnly
+                    || acc == keeper::Access::ReadWrite
+                    || acc == keeper::Access::ReadCreate)
+                    && !keep.is_empty()
+                {
+                    if keep.is_scalar(oid1.clone()) {
+                        let value_res = keep.get(oid1.clone());
                         match value_res {
-                            Ok(value) => vb.push(VarBind {
-                                name: oid1.clone(),
-                                value,
-                            }),
+                            Ok(value) => {
+                                vb.push(VarBind {
+                                    name: oid_map.oid(cnt).clone(),
+                                    value,
+                                });
+                                return;
+                            }
                             Err(_err) => {
                                 // FIXME map errors
                                 parg.error_index = parg.vb_cnt;
@@ -370,213 +401,34 @@ impl Agent {
                             }
                         };
                     } else {
-                        match okeep.get_next(oid1.clone()) {
-                            Ok(bind) => vb.push(bind),
-                            // FIXME, map errors here - could be empty table!
-                            Err(_) => vb.push(VarBind {
-                                name: oid1.clone(),
-                                value: VarBindValue::EndOfMibView,
-                            }),
-                        }
-                    }
-                } else if insert_point >= oid_map.len() {
-                    debug!("miss case {insert_point} >= oid_map.len()");
-                    vb.push(VarBind {
-                        name: roid.clone(),
-                        value: VarBindValue::EndOfMibView,
-                    });
-                } else {
-                    warn!(
-                        "Insert point in map, but is a miss, should never happen. {} {}",
-                        insert_point,
-                        oid_map.len()
-                    );
-                    debug!("Insert point in map");
-                    let mut oid1;
-                    let mut first = insert_point;
-                    loop {
-                        oid1 = oid_map.oid(first).clone();
-                        if perm.check(false, &oid1) {
-                            break;
-                        }
-                        first += 1;
-                    }
-                    let last_keep = &mut oid_map.idx(first);
-                    debug!("last_keep oid {oid1:?}");
-                    if last_keep.is_scalar(oid1.clone()) {
-                        match last_keep.get(oid1.clone()) {
-                            Ok(value) => vb.push(VarBind {
-                                name: oid1.clone(),
-                                value,
-                            }),
-                            Err(e) => {
-                                debug!("Error on scalar get {e:?}");
-                                vb.push(VarBind {
-                                    name: oid1.clone(),
-                                    value: VarBindValue::Unspecified,
-                                })
+                        match keep.get_next(oid1.clone()) {
+                            Ok(bind) => {
+                                vb.push(bind);
+                                return;
                             }
-                        }
-                    } else {
-                        // Table
-                        debug!("table case {insert_point}");
-                        let next_res = last_keep.get_next(roid.clone());
-                        match next_res {
-                            Ok(next) => vb.push(next),
-                            Err(bad) => match bad {
-                                OidErr::OutOfRange => {
-                                    debug!("Out of range {insert_point}");
-                                    if insert_point == oid_map.len() {
-                                        vb.push(VarBind {
-                                            name: roid.clone(),
-                                            value: VarBindValue::EndOfMibView,
-                                        });
-                                    } else {
-                                        debug!("handle case following table end");
-                                        let next_oid = oid_map.oid(insert_point).clone();
-                                        let next_keep = &mut oid_map.idx(insert_point);
-                                        if next_keep.is_scalar(next_oid.clone()) {
-                                            let value = next_keep.get(next_oid.clone()).unwrap();
-                                            vb.push(VarBind {
-                                                name: next_oid.clone(),
-                                                value,
-                                            });
-                                        } else {
-                                            vb.push(next_keep.get_next(next_oid.clone()).unwrap());
-                                        }
-                                    }
-                                }
-                                OidErr::NoSuchInstance => {
-                                    parg.error_index = parg.vb_cnt;
-                                    parg.error_status = Pdu::ERROR_STATUS_NO_ACCESS;
-                                    vb.push(VarBind {
-                                        name: roid,
-                                        value: VarBindValue::NoSuchObject,
-                                    });
-                                }
-                                OidErr::NoSuchName => {
-                                    parg.error_index = parg.vb_cnt;
-                                    parg.error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
-                                    vb.push(VarBind {
-                                        name: roid,
-                                        value: VarBindValue::NoSuchObject,
-                                    });
-                                }
-                                OidErr::GenErr => {
-                                    parg.error_index = parg.vb_cnt;
-                                    parg.error_status = Pdu::ERROR_STATUS_GEN_ERR;
-                                    vb.push(VarBind {
-                                        name: roid,
-                                        value: VarBindValue::Unspecified,
-                                    });
-                                }
-                                _ => {
-                                    warn!("unexpected response from get_next {bad:?}")
-                                }
-                            },
-                        }
-                    }
-                }
-            }
-            Ok(which) => {
-                debug!("hit case {which}");
-
-                let mut oid1;
-                let mut first = which;
-                loop {
-                    if first == oid_map.len() - 1 {
-                        break;
-                    }
-
-                    oid1 = oid_map.oid(first).clone();
-                    if perm.check(false, &oid1) {
-                        break;
-                    }
-                    first += 1;
-                }
-                let which = first;
-                if which == oid_map.len() - 1 && oid_map.idx(which).is_scalar(roid.clone()) {
-                    debug!("End of oids, ");
-                    vb.push(VarBind {
-                        name: roid.clone(),
-                        value: VarBindValue::EndOfMibView,
-                    });
-                    return;
-                };
-                if oid_map.idx(which).is_scalar(roid.clone()) {
-                    let next_oid: ObjectIdentifier = oid_map.oid(which + 1).clone();
-                    let okeep = &mut oid_map.idx(which + 1);
-                    if okeep.is_scalar(next_oid.clone()) {
-                        let value_res = okeep.get(next_oid.clone());
-                        match value_res {
-                            Err(_) => vb.push(VarBind {
-                                name: next_oid.clone(),
-                                value: VarBindValue::Unspecified,
-                            }),
-                            Ok(value) => vb.push(VarBind {
-                                name: next_oid.clone(),
-                                value,
-                            }),
-                        }
-                    } else {
-                        // This is table case!
-                        let mut gn_res = okeep.get_next(roid.clone());
-                        let mut which2 = which;
-                        while gn_res.is_err() {
-                            which2 += 1;
-                            let next_oid = oid_map.oid(which2).clone();
-                            debug!("in gn_res loop, which2 {which2}, {next_oid:?}");
-                            let okeep = &mut oid_map.idx(which2);
-                            gn_res = okeep.get_next(next_oid.clone());
-                        }
-                        vb.push(gn_res.unwrap());
-                    };
-                } else {
-                    // Last oid was table.
-                    let okeep = &mut oid_map.idx(which);
-                    debug!("Last item was table. Trying okeep ");
-                    let gn_res = okeep.get_next(roid.clone());
-                    debug!("gn_res {gn_res:?}");
-                    match gn_res {
-                        Ok(nvb) => vb.push(nvb),
-                        //FIXME More cases here - permissions, general error etc, not just end
-                        Err(err) => {
-                            if err == OidErr::OutOfRange && which < oid_map.len() - 1 {
-                                let next_oid: ObjectIdentifier = oid_map.oid(which + 1).clone();
-
-                                let okeep = &mut oid_map.idx(which + 1);
-                                if okeep.is_scalar(next_oid.clone()) {
-                                    let value_res = okeep.get(next_oid.clone());
-                                    match value_res {
-                                        Err(_) => vb.push(VarBind {
-                                            name: next_oid.clone(),
-                                            value: VarBindValue::Unspecified,
-                                        }),
-                                        Ok(value) => vb.push(VarBind {
-                                            name: next_oid.clone(),
-                                            value,
-                                        }),
-                                    }
-                                } else {
-                                    let n_res = okeep.get_next(next_oid.clone());
-                                    if let Ok(var_b) = n_res {
-                                        vb.push(var_b);
-                                    } else {
-                                        panic!("Fault in next_oid");
-                                    }
-                                };
-                            } else {
-                                vb.push(VarBind {
-                                    name: roid.clone(),
+                            // FIXME, map errors here - could be empty table!
+                            Err(_) => {
+                                /*  vb.push(VarBind {
+                                    name: oid1.clone(),
                                     value: VarBindValue::EndOfMibView,
                                 });
+                                return; */
                             }
                         }
                     }
                 }
             }
+            cnt += 1;
+            if cnt >= oid_map.len() {
+                vb.push(VarBind {
+                    name: oid1.clone(),
+                    value: VarBindValue::EndOfMibView,
+                });
+                return;
+            }
+            oid1 = oid_map.oid(cnt).clone();
+            debug!("After increment {} {:?}", cnt, oid1);
         }
-        debug!("do_next returning {vb:?}");
     }
 
     fn getnext(
@@ -616,6 +468,7 @@ impl Agent {
         r: SetRequest,
         vb: &mut Vec<VarBind>,
         perm: &FlagPerm,
+        user: &usm::User,
     ) -> (u32, u32, i32) {
         let mut keeps = HashSet::<usize>::new();
         let mut error_status = Pdu::ERROR_STATUS_NO_ERROR;
@@ -660,7 +513,7 @@ impl Agent {
                         break;
                     } else {
                         debug!("Table set ");
-                        let set_res = okeep.set(roid.clone(), vbind.value);
+                        let set_res = okeep.set(roid.clone(), vbind.value, user);
                         debug!("Table set {set_res:?}");
                         match set_res {
                             Ok(res) => vb.push(VarBind {
@@ -680,7 +533,7 @@ impl Agent {
                 Ok(which) => {
                     vb_cnt += 1;
                     let okeep = &mut oid_map.idx(which);
-                    let set_result = (**okeep).set(roid.clone(), vbind.value.clone());
+                    let set_result = (**okeep).set(roid.clone(), vbind.value.clone(), user);
                     if let Err(OidErr::WrongType) = set_result {
                         error_status = Pdu::ERROR_STATUS_WRONG_TYPE;
                         vb.push(VarBind {
@@ -793,7 +646,7 @@ impl Agent {
         let mut error_index = 0;
         let mut request_id = 0;
         let _context_name = scoped_pdu.name;
-        let fperm = FlagPerm::new(flags, user.perm);
+        let fperm = FlagPerm::new(flags, &user.perm);
 
         match scoped_pdu.data {
             Pdus::GetRequest(r) => {
@@ -803,7 +656,8 @@ impl Agent {
                 (error_status, error_index, request_id) = self.getnext(oid_map, r, &mut vb, &fperm);
             }
             Pdus::SetRequest(r) => {
-                (error_status, error_index, request_id) = self.set(oid_map, r, &mut vb, &fperm);
+                (error_status, error_index, request_id) =
+                    self.set(oid_map, r, &mut vb, &fperm, user);
             }
             Pdus::GetBulkRequest(r) => {
                 (error_status, error_index, request_id) = self.bulk(oid_map, r, &mut vb, &fperm);
@@ -840,7 +694,7 @@ impl Agent {
     ///
     /// This can be populated in any order, as it is sorted on the Oids before the loop starts.
     ///
-    pub fn loop_forever(&mut self, oid_map: &mut OidMap, users: usm::Users) {
+    pub fn loop_forever<'a>(&mut self, oid_map: &'a mut OidMap, users: &'a usm::Users) {
         let mut buf = [0; 65100];
         let mut opt_user: Option<&usm::User>;
         // Sort by oid, the lookups use binary search.
@@ -954,7 +808,7 @@ impl Agent {
                     resp_opt = self.do_scoped_pdu(flags, user, scoped_pdu, oid_map);
                 }
                 ScopedPduData::EncryptedPdu(enc_octs) => {
-                    let key = &user.priv_key;
+                    let key = &user.priv_key.borrow();
                     let buf2: Vec<u8> = privacy::decrypt(&mut enc_octs.to_vec(), usp.clone(), key);
                     let pdu_decode_res: Result<ScopedPdu, rasn::error::DecodeError> =
                         rasn::ber::decode(&buf2);
@@ -980,6 +834,9 @@ impl Agent {
                 self.set_auth(&mut out_message, user);
             }
             self.send(src, out_message);
+            if !*user.clean.borrow() && users.save_to_file().is_err() {
+                error!("Error saving passwpord file, changes may not be persistent and file might be corrupted");
+            }
         }
     }
 
@@ -1182,7 +1039,7 @@ mod tests {
         }]
     }
 
-    fn user_fixture<'a>(pv: &'a Vec<Perm>) -> User<'a> {
+    fn user_fixture<'a>(pv: &'a Vec<Perm>) -> User {
         let s ="test test sha1 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
         let u = User::from_str(s, pv).unwrap(); // Checked #test
         u
@@ -1199,6 +1056,13 @@ mod tests {
         let (status, idx, r_id) = agent.get(&mut oid_map, gp, &mut vb, &fperm);
         assert_eq!(r_id, 1);
         assert_eq!(idx, 1);
+        assert_eq!(status, Pdu::ERROR_STATUS_NO_SUCH_NAME);
+        assert_eq!(vb.len(), 1);
+        vb.clear();
+        let gp = get_pdu(&[1, 7, 1, 3, 4]);
+        let (status, idx, r_id) = agent.get(&mut oid_map, gp, &mut vb, &fperm);
+        assert_eq!(r_id, 1);
+        assert_eq!(idx, 0);
         assert_eq!(status, Pdu::ERROR_STATUS_NO_SUCH_NAME);
         assert_eq!(vb.len(), 1);
         vb.clear();
@@ -1220,7 +1084,6 @@ mod tests {
         let perm = &perms()[0];
         let fperm = FlagPerm::new(3, perm);
         let (status, idx, r_id) = agent.getnext(&mut oid_map, gp, &mut vb, &fperm);
-        println!("{status} {idx} {r_id}");
         assert_eq!(r_id, 1);
         assert_eq!(idx, 0);
         assert_eq!(status, Pdu::ERROR_STATUS_NO_ERROR);
@@ -1228,12 +1091,20 @@ mod tests {
         vb.clear();
         let gp = get_next_pdu(&[1, 6, 1, 2, 3, 120, 121, 122, 5]);
         let (status, idx, r_id) = agent.getnext(&mut oid_map, gp, &mut vb, &fperm);
-        println!("{status} {idx} {r_id}");
         assert_eq!(r_id, 1);
         assert_eq!(idx, 0);
         assert_eq!(status, Pdu::ERROR_STATUS_NO_ERROR);
         assert_eq!(vb.len(), 1);
         assert_eq!(vb[0].value, VarBindValue::Value(simple_from_int(41)));
+        vb.clear();
+        // Miss case
+        let gp = get_next_pdu(&[1, 5, 1]);
+        let (status, idx, r_id) = agent.getnext(&mut oid_map, gp, &mut vb, &fperm);
+        assert_eq!(r_id, 1);
+        assert_eq!(idx, 0);
+        assert_eq!(status, Pdu::ERROR_STATUS_NO_ERROR);
+        assert_eq!(vb.len(), 1);
+        assert_eq!(vb[0].value, VarBindValue::Value(simple_from_str(b"abc")));
     }
 
     #[test]
@@ -1244,8 +1115,9 @@ mod tests {
         let mut oid_map = make_oid_map();
         let perm = &perms()[0];
         let fperm = FlagPerm::new(3, perm);
-        let (status, idx, r_id) = agent.set(&mut oid_map, sp, &mut vb, &fperm);
-        println!("{status} {idx} {r_id}");
+        let pv = perms();
+        let user = user_fixture(&pv);
+        let (status, idx, r_id) = agent.set(&mut oid_map, sp, &mut vb, &fperm, &user);
         assert_eq!(r_id, 1);
         assert_eq!(idx, 0);
         assert_eq!(status, Pdu::ERROR_STATUS_NO_ERROR);
@@ -1253,7 +1125,6 @@ mod tests {
         /*  vb.clear();
         let gp = get_next_pdu(&[1, 6, 1, 2, 3, 120, 121, 122, 5]);
         let (status, idx, r_id) = agent.getnext(&mut oid_map, gp, &mut vb, &perms()[0], 3);
-        println!("{status} {idx} {r_id}");
         assert_eq!(r_id, 1);
         assert_eq!(idx, 0);
         assert_eq!(status, Pdu::ERROR_STATUS_NO_ERROR);
@@ -1270,7 +1141,6 @@ mod tests {
         let perm = &perms()[0];
         let fperm = FlagPerm::new(3, perm);
         let (status, idx, r_id) = agent.bulk(&mut oid_map, gp, &mut vb, &fperm);
-        println!("{status} {idx} {r_id}");
         assert_eq!(r_id, 1);
         assert_eq!(idx, 0);
         assert_eq!(status, Pdu::ERROR_STATUS_NO_ERROR);
@@ -1278,7 +1148,6 @@ mod tests {
         vb.clear();
         let gp = get_bulk_pdu(&[1, 6, 1, 2, 3, 120, 121, 122, 5]);
         let (status, idx, r_id) = agent.bulk(&mut oid_map, gp, &mut vb, &fperm);
-        println!("{status} {idx} {r_id}");
         assert_eq!(r_id, 1);
         assert_eq!(idx, 0);
         assert_eq!(status, Pdu::ERROR_STATUS_NO_ERROR);
@@ -1291,27 +1160,42 @@ mod tests {
         let pv = perms();
         let user = user_fixture(&pv);
         let agent = make_agent("3165");
+        let message_id = Integer::from(213);
+        let zb = OctetString::from_static(b"");
         let gp = get_pdu(&ARC2);
+        let eid = static_engine_id(1, b"besttest");
         let scoped_pdu = ScopedPdu {
-            engine_id: static_engine_id(1, b"besttest"),
-            name: OctetString::from_static(b""),
+            engine_id: eid.clone(),
+            name: zb.clone(),
             data: Pdus::GetRequest(gp),
         };
         let mut oid_map = make_oid_map();
         let opt_resp = agent.do_scoped_pdu(2u8, &user, scoped_pdu, &mut oid_map);
         assert!(opt_resp.is_some());
+        if let Some(resp) = opt_resp {
+            let usp: USMSecurityParameters = USMSecurityParameters {
+                authoritative_engine_id: eid,
+                authoritative_engine_boots: Integer::from(7),
+                authoritative_engine_time: Integer::from(8),
+                user_name: zb.clone(),
+                authentication_parameters: zb.clone(),
+                privacy_parameters: zb,
+            };
+            let message = agent.prepare_back(message_id, resp, &user, usp, false);
+            assert_eq!(message.version, Integer::from(3));
+        }
     }
     #[test]
-        fn test_id_response() {
+    fn test_reports() {
         let agent = make_agent("3166");
         let id_message = agent.id_response(7, Integer::from(8));
         assert_eq!(id_message.version, Integer::from(3));
         let auth_message = agent.auth_failure(8, Integer::from(9));
         assert_eq!(auth_message.version, Integer::from(3));
-                let use_message= agent.unknown_user(8, Integer::from(9));
+        let use_message = agent.unknown_user(8, Integer::from(9));
         assert_eq!(use_message.version, Integer::from(3));
     }
-    // FIXME add tests for more set cases and bulk, and maybe do at least some through do_scoped_pdu.
+    // FIXME add tests for more set cases, and maybe do at least some more through do_scoped_pdu.
     // Maybe do some cfg[test] to allow testing of main loop code? Or refactor into small loop
     // and handle_packet?
 }

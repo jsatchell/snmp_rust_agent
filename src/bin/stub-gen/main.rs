@@ -6,6 +6,7 @@ mod resolver;
 use argh::FromArgs;
 use log::{error, info, warn};
 use std::collections::{HashMap, HashSet};
+use std::env;
 use std::error::Error;
 
 #[derive(FromArgs)]
@@ -18,6 +19,14 @@ struct Cli {
         default = "String::from(\"../snmp-rust/src/stubs/\")"
     )]
     out_dir: String,
+
+    /// MIB Search path elements
+    #[argh(
+        option,
+        short = 'p',
+        default = "importer::MIB_SEARCH_PATH.iter().map(|s|s.to_string()).collect()"
+    )]
+    path: Vec<String>,
 
     /// include deprecated
     #[argh(switch, short = 'd')]
@@ -46,6 +55,11 @@ impl Cli {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    // Set sane default if environment variable does not exist
+    if env::var("RUST_LOG").is_err() {
+        println!("RUST_LOG environment variable not set, defaulting to warn");
+        env::set_var("RUST_LOG", "warn");
+    }
     env_logger::init();
     let cli: Cli = argh::from_env();
     let mut total = 0;
@@ -91,10 +105,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let out_dir = cli.out_dir.to_string();
     let mut stub_ok = vec![];
     for argument in &cli.mib_names.clone() {
-        if argument.ends_with("mib-compiler-rs") {
-            continue;
-        }
-        let text_opt = importer::find_mib_text(argument);
+        let text_opt = importer::find_mib_text(argument, &cli.path);
         if text_opt.is_none() {
             warn!("Not found MIB {argument}, skipping, will try rest");
             continue;
@@ -129,7 +140,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .map(|x| x.to_string())
                     .collect();
                 if !miss.is_empty() {
-                    let txt_opt = importer::find_mib_text(mib_name);
+                    let txt_opt = importer::find_mib_text(mib_name, &cli.path);
                     if let Some(iraw) = txt_opt {
                         let extra = importer::process_one(&iraw, miss, mib_name, &mut res);
                         nodes.extend(extra);

@@ -24,10 +24,9 @@
 //! Not being able to attack them on the wire is a deliberate security feature, not a bug.
 use log::warn;
 use rasn::types::ObjectIdentifier;
-use std::fs::read_to_string;
 use toml;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 /// Permissions to apply to a group.
 pub struct Perm {
     /// The group name is used to identify which users this applies to.
@@ -38,7 +37,7 @@ pub struct Perm {
     pub rules: Vec<Rule>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Rule {
     /// Are read operations permitted? Needed for Get, GetNext, BulkGet PDUs
     pub read: bool,
@@ -101,9 +100,9 @@ impl Perm {
 ///
 /// FIXME - setup serde stuff, including wrappers, so deserialize just works, rather than doing
 /// it by hand.
-pub fn load_perms() -> Vec<Perm> {
+pub fn load_from_str(toml_text: &str) -> Vec<Perm> {
     let mut perms = Vec::new();
-    let toml_text = read_to_string("groups.toml").unwrap(); // Startup
+
     let data = toml_text.parse::<toml::Table>().unwrap(); // Startup
     let groups = data.get("groups").unwrap().as_array().unwrap(); // Startup
     for group in groups {
@@ -177,7 +176,7 @@ pub fn load_perms() -> Vec<Perm> {
 }
 
 pub struct FlagPerm<'a> {
-    perm: &'a Perm,
+    pub perm: &'a Perm,
     flags: u8,
 }
 
@@ -244,5 +243,17 @@ mod tests {
         assert!(f.check(true, &o_in));
         assert!(f.check(false, &o_in));
         assert!(!f.check(false, &o_out));
+    }
+
+    #[test]
+    fn test_load_from_str() {
+        let txt = "
+[[groups]]
+name = \"admin\"
+level = \"authPriv\"
+rules = [ {read = true, write = true, include=[ \"1.3.6.1\" ], exclude = [ \"1.3.6.1.6.3.1.25\"]} ]
+";
+        let perms = load_from_str(&txt);
+        assert_eq!(perms.len(), 1);
     }
 }

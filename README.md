@@ -4,21 +4,40 @@ This is work towards a framework for developing SNMP v3 agents, using the rasn A
 
 This agent only supports SNMP v3, older variants have no on the wire security.
 
-This project follows semver - but that means no guarantees at all pre v1! There is change in the OidKeeper trait iin this release, so this is a patch version (0.3.0) rather than a patch version. The change reverts part of version 0.2.0 changes; it removes the compliance method, which was not supposed to be implemented in most stubs, so hopefully no code changes will be needed.
-
-Unit test coverage is significantly improved.
-
-Possible panic sites have been audited; some have been fixed, but there is more to do. The target is for there to be no panics once the agent is running. *This version does not meet the target yet*. Panic at startup due to detected configuration problems will be allowed; graceful exit with helpful messages would be even better!
-
-A security policy has been added in SECURITY.md. Support will only be provided for the most recent version, until the code is more stable, or other projects depend on it. Please report security issues through the Github machinery. This is prototype code, not yet suitable for production use.
+This project follows semver - but that means no guarantees at all pre v1! There is change in the OidKeeper trait iin this release, so this is a minor version (0.3.0) rather than a patch version. T
 
 The agent and stub-gen are 100% safe Rust code. The code for both is clippy clean.
 
-The agent server loop is a single threaded blocking design. I would argue that this is appropriate for almost all agents, as typically a single manager will interact with multiple agents. Managers may well want to support high levels of concurrency. The single threaded design avoids many issues with concurrency and locking. Of course, there is nothing to stop handlers for specific long running operations using a thread. Good luck with that!
+The agent server loop is a single threaded blocking design. I would argue that this is appropriate for almost all agents, as typically a single manager will interact with multiple agents. Managers may well want to support high levels of concurrency. The single threaded agent design avoids many issues with concurrency and locking. Of course, there is nothing to stop handlers for specific long running operations using a thread.
+
+This is prototype code, not yet suitable for production use.
+
+## License
+
+Dual licensed at your option, MIT or Apache-2.0
+
+## In this release
+
+There are two changes to OidKeeper traits:
+
+* A user argument is added to the set method - this is needed for implmenting some of the USM operations.
+* Revert part of version 0.2.0 changes. The compliance method in the trait is not needed anymore.
+
+The stub generator, and the existing handlers have been updated to natch.
+
+Unit test coverage is significantly improved. Excluding generated code, there is about 80% line coverage. The agent is better tested than the stub generator.
+
+Possible panic sites have been audited; some have been fixed, but there is a lot more to do. The ambition is for there to be no panics once the agent is running. *This version does not meet the target yet*. Reading about #[no_panic] made me realize that is hard to acheive and very, very hard to prove. Panic at startup due to detected configuration problems will be allowed; graceful exit with helpful messages would be even better!
+
+A security policy has been added in SECURITY.md. Support will only be provided for the most recent version, until the code is more stable, or other projects depend on it. Please report security issues through the Github machinery.
 
 All the additional authentication hashes from RFC7630 have been added - SHA-224, SHA-256, SHA-384 and SHA-512. The password file generator supports this change as well.
 
-This release has a more flexible and capable permissions model, driven by a policy in the file groups.toml. Different groups of users can be given selective access to different parts of the MIB, with independent control of read and write access. The integration of this permissions model into GetNext handling is not right yet, but everywhere else is complete.
+Changing passwords on the wire is now supported - this is a bit preliminary, and there are several things to tidy up. In particular it does not yet properly support the transaction model.
+
+The file names of the user and permission policy files are now configurable.
+
+This 0.2.1 release introduced a more flexible and capable permissions model, driven by a policy in a TOML file. Different groups of users can be given selective access to different parts of the MIB, with independent control of read and write access. The integration of this permissions model into GetNext handling is fixed.
 
 The Engine ID is loaded from a configuration file. A sample configuration file is included at .snmp-agent.conf. Two example MIB module handlers are included under src/handlers for SNMPv3-MIB and SNMP-USER-BASED-SM-MIB. They were written based on stubs generated by the Rust tool. The USM handler does not yet include remote password changes and user creation.
 
@@ -27,22 +46,20 @@ Inactive Module Compliance statements are generated by the stub generator. Instr
 There is initial support for notifications. I am still thinking about a good pattern, and there is the start of some code in src/notifier.rs. It only supports v2 Traps (not Informs) to the "public" community. Two specific hardwired (but useful) notifications are implemented - coldStart, and authenticationFailure. My plan is to run another thread for notifications types that need to poll an external resource (e.g. CPU load ) and then these could send a Notification struct down the mpsc channel for sending by the existing code. In time, if there is interest, there could be sending Inform messages as well as Traps, multiple trap sinks and eventually v3 on the wire. Please raise an issue or start a discussion if you have a specific use case in mind, as that would really help  me decide how to do it and what the priorities are. Stub-generator support for notifications will follow once there is an established code pattern to target.
 
 There are known limitations for tables that use either the AUGMENTS or use index columns drawn from foreign tables. The
-generated stubs have a single row of junk data in all tables. For most tables, that row is indexed correctly. For tables that have foreign index columns, an arbitrary single integer index is used, with the row indexed at value 1. This allows operations like get and get_next to work. If you take that stub and implement it as real handler, you will need
-to do your own implementation of foreign indexing, almost certainly involving referencing the other table structs, probably by passing them in to the constructor.
+generated stubs have a single row of junk data in all tables. For most tables, that row is indexed correctly. For tables that have foreign index columns, an arbitrary single integer index is used, with the row indexed at value 1. This allows operations like get and get_next to work using the stubs. If you take that stub and implement it as real handler, you will need to do your own implementation of foreign indexing, almost certainly involving referencing the other table structs, probably by passing them in to the constructor.
 
 ## Users and passwords
 
 There is a small python tool for generating a username and password file under tools/usekey.py. It picks the EngineID up
 from the configuration file. It can generate lines for the alternate password hashes, up to SHA-512.
 
-Changing passwords on the wire is not yet implemented, and would be a really good project. Some of the support methods that would be needed have
-already been started in src/usm.rs; this needs extending slightly to handle the RFC7630 hashes.
+Changing passwords on the wire is not yet implemented, and would be a really good project. Some of the support methods that would be needed have already been started in src/usm.rs; this needs extending slightly to handle the RFC7630 hashes.
 
 ## Tools for stub generation
 
-At present, there is only developing tooling to help implement an useful agent, but it is possible with some patience. There is a stub generator, written in Rust. There used to be a Python one too, but it is now obsolete and was removed.
+At present, there is prototype tooling to help implement an useful agent, but it is possible with some patience. There is a stub generator, written in Rust. There used to be a Python one too, but it is now obsolete and was removed.
 
-The source files for the Rust stub generator are under src/bin/stub-gen. It uses the nom parser combinator library for parsing. It has a reasonably complete parser implementation, which can parse almost all the MIBs on my machine except for legacy MIBS in Smi v1 and a few bootstrap definition files. The code generator in this version ignores everything to do with notifications (but does detailed parsing).  It also does the wrong thing with AUGMENTS and tables that use foreign index columns (AUGMENTS is actually just a special case of foreign indices).
+The source files for the Rust stub generator are under src/bin/stub-gen. It uses the nom parser combinator library for parsing. It has a reasonably complete parser implementation, which can parse almost all the MIBs on my machine except for legacy MIBS in Smi v1 and a few bootstrap definition files. The code generator in this version ignores everything to do with notifications (but does detailed parsing).  It also does the wrong thing with AUGMENTS and tables that use foreign index columns (AUGMENTS is just a special case of foreign indices).
 
 The stub generator is fast enough to not be a problem, a mixed group of 80 stubs takes just over a second to process with a debug version on a modest laptop.
 
@@ -70,10 +87,9 @@ then generate the stubs for the mibs you want with:
 target/debug/stub-gen -o src/stubs/ MIB1 MIB2 ...
 ```
 
-where MIB1 and MIB2 and so on are the names of the MIB files to generate stubs from. The generator searches /var/lib/mibs/ietf, /var/lib/mibs/iana and /usr/share/snmp/mibs to find the files, and tries adding .txt extension as well. If your system has the files somewhere different, or you wish to include vendor mibs, edit src/bin/stub-gen/importer.rs and change the SEARCH_PATH constant. Arguably, this should be settable by the command line and / or an environment variable.
+where MIB1 and MIB2 and so on are the names of the MIB files to generate stubs from. The generator searches /var/lib/mibs/ietf, /var/lib/mibs/iana and /usr/share/snmp/mibs to find the files, and tries adding .txt extension as well. If your system has the files somewhere different, or you wish to include vendor mibs, you can use ```-p``` or ```-path``` flags to override this built in default as many times as you need. For example, ```-p /usr/lib/mibs/ -p /var/lib/mibs/ietf/```. If you use the flag, the builtin default is ignored, and you will have to populate the whole path. If you might have name clashes, the path is search in the obvious order, and the first matching file is used.
 
-By default, the stub generator ignores objects that are marked as "deprecated" or "obsolete". You can include deprecated objects with the ```-d``` or ```--deprecated``` flags. If you really need to implement something obsolete,
-there is a ```--obsolete``` flag, if you are stuck with a manager that can't be updated and depends on some old stuff.  
+By default, the stub generator ignores objects that are marked as "deprecated" or "obsolete" in the MIB. You can include deprecated objects with the ```-d``` or ```--deprecated``` flags. If you really need to implement something obsolete, there is a ```--obsolete``` flag, if you are stuck with a manager that can't be updated and depends on some old stuff.  
 
 The generated stubs will be placed under src/stubs/ with the command above.
 
@@ -92,12 +108,15 @@ Edit the configuration file .snmp-agent.conf, and insert your Enterprise number 
 Create a password file called users.txt, using python3 tools/usekey.py. For example,
 
 ```shell
-python3 tools/usekey.py admin myv3user password password1 > users.txt
+touch users.txt
+python3 tools/usekey.py admin myv3user password password1 >> users.txt
 ```
+
+You can repeat the python invocation to add extra user lines to the file.
 
 Optionally, edit groups.toml. The existing file has groups called admin, user and guest, so you will need to use one of the group names when adding a user.
 
-Set a suitable log level with, for example, ```export RUST_LOG=info```.
+Set a suitable log level with, for example, ```export RUST_LOG=info```. The agent defaults to "warn" if the environment variable is not set.
 
 Run the agent with cargo run.
 
@@ -106,3 +125,5 @@ Install netsnmp for testing purposes, and run in another terminal:
 ```shell
 snmpwalk -v 3 -l authPriv -a SHA -A password  -x AES -X password1 -u myv3user   127.0.0.1:2161 1.3.6.1
 ```
+
+If you want to play with the brand new password change stuff snmpusm is the relevant tool from thenetsnmp suite.

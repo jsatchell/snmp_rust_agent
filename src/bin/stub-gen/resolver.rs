@@ -113,3 +113,78 @@ impl Resolver {
         good
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_builtins() {
+        let res = Resolver::new();
+        assert!(res.check_name("zeroDotZero"));
+        assert_eq!([0u32, 0u32], res.lookup("zeroDotZero"));
+    }
+
+    #[test]
+    fn test_try_add() {
+        let mut res = Resolver::new();
+        assert!(!res.check_name("testInsert"));
+        res.try_add("testInsert", "zeroDotZero", &[2u32, 3u32]);
+        assert!(res.check_name("testInsert"));
+        assert_eq!([0u32, 0u32, 2u32, 3u32], res.lookup("testInsert"));
+    }
+
+    #[test]
+    fn test_try_nodes() {
+        let mut res = Resolver::new();
+        let mtext = "
+testInsert
+MODULE-IDENTITY
+meta
+::= { mgmt 7 }
+
+zzz OBJECT IDENTIFIER ::= { testInsert 1 }
+
+www OBJECT-IDENTITY
+STATUS current
+DESCRIPTION \"d\"
+::= { testInsert 2 }
+
+yyy OBJECT-TYPE  -- skip comment
+   SYNTAX INTEGER
+   MAX-ACCESS read-only
+   STATUS current
+   DESCRIPTION \"d\"
+   REFERENCE \"r\"
+   ::= { zzz 1 }
+
+snare NOTIFICATION-TYPE
+   STATUS current
+   DESCRIPTION \"d\"
+   ::= { zzz 2 }
+
+comp MODULE-COMPLIANCE
+    STATUS current
+    DESCRIPTION \"d\"
+    ::= { zzz 3 }
+
+obj OBJECT-GROUP
+  OBJECTS { snare }
+  STATUS current
+  DESCRIPTION \"d\"
+  ::= { zzz 5 }
+
+       ";
+        let mod_res = parser::parse_module_id(mtext).unwrap(); // Checked #test
+        let mut nodes = vec![mod_res.1];
+        let more = parser::parse_defs(mod_res.0).unwrap(); // Checked #test
+
+        nodes.extend(more.1);
+        assert!(!res.check_name("testInsert"));
+        res.try_nodes(&nodes);
+        assert!(res.check_name("testInsert"));
+        for node in nodes {
+            let _ = node.copy();
+        }
+    }
+}

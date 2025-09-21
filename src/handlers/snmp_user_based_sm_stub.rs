@@ -1,14 +1,15 @@
 use crate::config::{ComplianceStatements, Config};
-use crate::keeper::{Access, OType, OidErr, OidKeeper};
+use crate::keeper::{check_type, Access, OType, OidErr, OidKeeper};
 use crate::oidmap::OidMap;
 use crate::scalar::{PersistentScalar, ScalarMemOid};
 use crate::snmp_agent::Agent;
 use crate::table::TableMemOid;
-use crate::usm::Users;
+use crate::usm::{User, Users};
 use log::{debug, warn};
 use rasn::types::{Integer, ObjectIdentifier, OctetString};
 use rasn_smi::v2::{ApplicationSyntax, Counter32, ObjectSyntax, SimpleSyntax};
 use rasn_snmp::v3::{VarBind, VarBindValue};
+//use std::cell::RefCell
 
 fn simple_from_int(value: i32) -> ObjectSyntax {
     ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(value)))
@@ -58,7 +59,7 @@ const COMPLIANCE_USM_MIB_COMPLIANCE: [u32; 10] = [1, 3, 6, 1, 6, 3, 15, 2, 1, 1]
 // user that was not known to the SNMP engine.
 //
 
-#[derive(PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq)]
 struct KeepUsmStatsUnknownUserNames {
     bad_users: u32,
 }
@@ -88,6 +89,7 @@ impl OidKeeper for KeepUsmStatsUnknownUserNames {
         &mut self,
         _oid: ObjectIdentifier,
         _value: VarBindValue,
+        _user: &User,
     ) -> Result<VarBindValue, OidErr> {
         Err(OidErr::NotWritable)
     }
@@ -107,7 +109,7 @@ impl OidKeeper for KeepUsmStatsUnknownUserNames {
 // usmUserTable.
 //
 
-#[derive(PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq)]
 struct KeepUsmUserSpinLock {
     scalar: PersistentScalar,
 }
@@ -144,8 +146,13 @@ impl OidKeeper for KeepUsmUserSpinLock {
     fn access(&self, oid: ObjectIdentifier) -> Access {
         self.scalar.access(oid)
     }
-    fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
-        self.scalar.set(oid, value)
+    fn set(
+        &mut self,
+        oid: ObjectIdentifier,
+        value: VarBindValue,
+        user: &User,
+    ) -> Result<VarBindValue, OidErr> {
+        self.scalar.set(oid, value, user)
     }
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
@@ -162,7 +169,7 @@ impl OidKeeper for KeepUsmUserSpinLock {
 // contain the expected digest value.
 //
 
-#[derive(PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq)]
 struct KeepUsmStatsWrongDigests {
     wrong: u32,
 }
@@ -192,6 +199,7 @@ impl OidKeeper for KeepUsmStatsWrongDigests {
         &mut self,
         _oid: ObjectIdentifier,
         _value: VarBindValue,
+        _user: &User,
     ) -> Result<VarBindValue, OidErr> {
         Err(OidErr::NotWritable)
     }
@@ -210,7 +218,7 @@ impl OidKeeper for KeepUsmStatsWrongDigests {
 // decrypted.
 //
 
-#[derive(PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq)]
 struct KeepUsmStatsDecryptionErrors {
     err_cnt: u32,
 }
@@ -240,6 +248,7 @@ impl OidKeeper for KeepUsmStatsDecryptionErrors {
         &mut self,
         _oid: ObjectIdentifier,
         _value: VarBindValue,
+        _user: &User,
     ) -> Result<VarBindValue, OidErr> {
         Err(OidErr::NotWritable)
     }
@@ -258,7 +267,7 @@ impl OidKeeper for KeepUsmStatsDecryptionErrors {
 // snmpEngineID that was not known to the SNMP engine.
 //
 
-#[derive(PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq)]
 struct KeepUsmStatsUnknownEngineIDs {
     scalar: ScalarMemOid,
 }
@@ -284,8 +293,13 @@ impl OidKeeper for KeepUsmStatsUnknownEngineIDs {
     fn access(&self, oid: ObjectIdentifier) -> Access {
         self.scalar.access(oid)
     }
-    fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
-        self.scalar.set(oid, value)
+    fn set(
+        &mut self,
+        oid: ObjectIdentifier,
+        value: VarBindValue,
+        user: &User,
+    ) -> Result<VarBindValue, OidErr> {
+        self.scalar.set(oid, value, user)
     }
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
@@ -302,7 +316,7 @@ impl OidKeeper for KeepUsmStatsUnknownEngineIDs {
 // outside of the authoritative SNMP engine's window.
 //
 
-#[derive(PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq)]
 struct KeepUsmStatsNotInTimeWindows {
     not_in_window: u32,
 }
@@ -332,6 +346,7 @@ impl OidKeeper for KeepUsmStatsNotInTimeWindows {
         &mut self,
         _oid: ObjectIdentifier,
         _value: VarBindValue,
+        _user: &User,
     ) -> Result<VarBindValue, OidErr> {
         Err(OidErr::NotWritable)
     }
@@ -351,7 +366,7 @@ impl OidKeeper for KeepUsmStatsNotInTimeWindows {
 // or otherwise unavailable.
 //
 
-#[derive(PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq)]
 struct KeepUsmStatsUnsupportedSecLevels {
     scalar: ScalarMemOid,
 }
@@ -381,6 +396,7 @@ impl OidKeeper for KeepUsmStatsUnsupportedSecLevels {
         &mut self,
         _oid: ObjectIdentifier,
         _value: VarBindValue,
+        _user: &User,
     ) -> Result<VarBindValue, OidErr> {
         Err(OidErr::NotWritable)
     }
@@ -399,9 +415,9 @@ impl OidKeeper for KeepUsmStatsUnsupportedSecLevels {
 // Security Model.
 //
 
-#[derive(PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq)]
 struct KeepUsmUserTable {
-    //users: &'a Users<'a>,
+    // users: RefCell<&'a Users<'a>>,
     table: TableMemOid,
 }
 
@@ -426,8 +442,8 @@ impl KeepUsmUserTable {
                 simple_from_str(b""),
                 simple_from_str(b""),
                 simple_from_str(b""),
-                simple_from_int(3),
-                simple_from_int(1),
+                simple_from_int(4), // Permanent (partly ROM)
+                simple_from_int(1), // Active
             ];
             data.push(row);
         }
@@ -446,8 +462,8 @@ impl KeepUsmUserTable {
                     simple_from_str(b""),
                     simple_from_str(b""),
                     simple_from_str(b""),
-                    simple_from_int(3),
-                    simple_from_int(1),
+                    simple_from_int(4), // Permeanent - pertly in ROm, no user creation
+                    simple_from_int(1), // Active
                 ],
                 13,
                 &base_oid,
@@ -494,6 +510,11 @@ impl OidKeeper for KeepUsmUserTable {
     fn is_scalar(&self, _oid: ObjectIdentifier) -> bool {
         false
     }
+    fn is_empty(&self) -> bool {
+        self.table.is_empty()
+    }
+    /// Get is OK, because key material is not stored in the table, but elsewhere
+    /// Just reads empty strings for many columns
     fn get(&self, oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {
         self.table.get(oid)
     }
@@ -503,8 +524,71 @@ impl OidKeeper for KeepUsmUserTable {
     fn access(&self, oid: ObjectIdentifier) -> Access {
         self.table.access(oid)
     }
-    fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
-        self.table.set(oid, value)
+
+    /// Special case set, over-rides normal behaviour. Support safe subset of
+    /// behaviour for now - active users can update their own passwords, both
+    /// authentication and privacy.
+    fn set(
+        &mut self,
+        oid: ObjectIdentifier,
+        value: VarBindValue,
+        user: &User,
+    ) -> Result<VarBindValue, OidErr> {
+        if !self.table.in_transaction {
+            warn!("Not in transaction in set");
+            return Err(OidErr::GenErr);
+        }
+        let suffix = self.table.suffix(oid.clone());
+        debug!("Suffix is {suffix:?}");
+        // Complex indices (not integer and/or multicolumn need longer than 2)
+        if suffix.len() < 3 {
+            return Err(OidErr::NoSuchInstance);
+        }
+        if suffix[0] != 1u32 {
+            return Err(OidErr::NoSuchName);
+        }
+        if suffix[1] > 14 {
+            // Some sort of denial of service attack?
+            // This would only allow 4 bytes per column
+            return Err(OidErr::NoSuchName);
+        }
+        // This is OK on 16bit and larger machines. Might fail on a microcontroller,
+        // but you probably don't want more than 255 columns on such a machine anyway
+        let col: usize = suffix[1] as usize;
+        // col is 1 based, so 0 is wrong
+        if col == 7 || col == 10 {
+            // Own key change
+            if let VarBindValue::Value(new_value) = value.clone() {
+                if !check_type(self.table.otypes[col - 1], &new_value) {
+                    return Err(OidErr::WrongType);
+                }
+            }
+            let index = &suffix[2..];
+            let s_res = self
+                .table
+                .rows
+                .binary_search_by(|a| a.0.cmp(&index.to_vec()));
+            if s_res.is_err() {
+                return Err(OidErr::NoSuchInstance);
+            }
+            let (_, ref mut row) = &mut self.table.rows[s_res.unwrap()]; // Checked, Err dealt with above
+            if row[1] != simple_from_str(&user.name) {
+                return Err(OidErr::NoAccess);
+            }
+
+            let auth_priv = col == 7;
+            if let VarBindValue::Value(ObjectSyntax::Simple(SimpleSyntax::String(ref new_value))) =
+                value
+            {
+                let rand = &new_value[0..user.trunc];
+                if user.update_password(new_value, auth_priv).is_err() {
+                    warn!("Password update failed, who knows whwere you are?");
+                    return Err(OidErr::GenErr);
+                };
+                row[11] = simple_from_str(rand);
+            }
+        }
+        self.table.set(oid, value, user)
     }
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.table.begin_transaction()
@@ -517,11 +601,11 @@ impl OidKeeper for KeepUsmUserTable {
     }
 }
 
-pub fn load_stub(
-    oid_map: &mut OidMap,
+pub fn load_stub<'a>(
+    oid_map: &'a mut OidMap,
     config: &Config,
     agent: &Agent,
-    users: &Users,
+    users: &'a Users,
     comp: &mut ComplianceStatements,
 ) {
     // The next group is for OBJECT-IDENTITY.

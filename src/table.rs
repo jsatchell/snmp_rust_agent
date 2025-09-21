@@ -1,4 +1,5 @@
 use crate::keeper::{check_type, Access, OType, OidErr, OidKeeper};
+use crate::usm::User;
 use log::{debug, warn};
 use num_traits::cast::ToPrimitive;
 use rasn::types::{Integer, ObjectIdentifier, OctetString};
@@ -12,18 +13,18 @@ pub const ROW_STATUS_CREATE_AND_GO: u32 = 4u32;
 pub const ROW_STATUS_CREATE_AND_WAIT: u32 = 5u32;
 pub const ROW_STATUS_DESTROY: u32 = 6u32;
 
-#[derive(PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq)]
 pub struct TableMemOid {
-    rows: Vec<(Vec<u32>, Vec<ObjectSyntax>)>,
+    pub rows: Vec<(Vec<u32>, Vec<ObjectSyntax>)>,
     default_row: Vec<ObjectSyntax>,
     cols: usize,
     base: Vec<u32>,
-    otypes: Vec<OType>,
+    pub otypes: Vec<OType>,
     access: Vec<Access>,
     index_cols: Vec<usize>,
     pending: Vec<(Vec<u32>, VarBindValue)>,
     implied_last: bool,
-    in_transaction: bool,
+    pub in_transaction: bool,
 }
 
 impl TableMemOid {
@@ -132,7 +133,7 @@ impl TableMemOid {
         ret
     }
 
-    fn suffix(&self, oid: ObjectIdentifier) -> Vec<u32> {
+    pub fn suffix(&self, oid: ObjectIdentifier) -> Vec<u32> {
         let base_len = self.base.len();
         if oid.len() > base_len {
             oid.to_vec()[base_len..].to_vec()
@@ -141,7 +142,7 @@ impl TableMemOid {
         }
     }
 
-    fn row_from_index(&self, idx: &[u32]) -> Vec<ObjectSyntax> {
+    pub fn row_from_index(&self, idx: &[u32]) -> Vec<ObjectSyntax> {
         let mut row: Vec<ObjectSyntax> = vec![];
         let mut idx_idx = 0;
         let num_idx_cols = self.index_cols.len();
@@ -291,27 +292,33 @@ impl OidKeeper for TableMemOid {
     }
 
     fn get_next(&self, oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
+        if self.rows.is_empty() {
+            return Err(OidErr::OutOfRange);
+        }
         let suffix = self.suffix(oid.clone());
+        let mut skip_col = false;
         let mut col: usize = if suffix.len() < 3 {
-            // Column not specified, so choose first readable column.
-            1 + self
-                .access
-                .iter()
-                .position(|p| {
-                    *p == Access::ReadOnly || *p == Access::ReadWrite || *p == Access::ReadCreate
-                })
-                .unwrap_or(1) //Checked , use default
-                              // If nothing is readable, arbitrarily use first
+            // Column not specified, so choose first column.
+            1
         } else {
+            // choose first readable column start from one requested
             suffix[1] as usize
         };
         if col == 0 || col > self.cols {
             return Err(OidErr::NoSuchName);
         }
-        if self.rows.is_empty() {
-            return Err(OidErr::OutOfRange);
+        loop {
+            let acc = self.access[col - 1];
+            if acc == Access::ReadOnly || acc == Access::ReadWrite || acc == Access::ReadCreate {
+                break;
+            }
+            skip_col = true;
+            col += 1;
+            if col > self.cols {
+                return Err(OidErr::OutOfRange);
+            }
         }
-        if suffix.len() >= 3 {
+        if suffix.len() >= 3 && !skip_col {
             let res = self
                 .rows
                 .binary_search_by(|a| a.0.cmp(&suffix[2..].to_vec()));
@@ -390,7 +397,12 @@ impl OidKeeper for TableMemOid {
     /// This doesn't actual make changes yet, but does checking, and adds the arguments
     /// to the pending transaction. If the whole PDU is OK, then the transaction is applied.
     /// If an error is found, possibly from a completely different MIB, then the transaction is rolled back.
-    fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue) -> Result<VarBindValue, OidErr> {
+    fn set(
+        &mut self,
+        oid: ObjectIdentifier,
+        value: VarBindValue,
+        _user: &User,
+    ) -> Result<VarBindValue, OidErr> {
         if !self.in_transaction {
             warn!("Not in transaction in set");
             return Err(OidErr::GenErr);
@@ -559,6 +571,7 @@ impl OidKeeper for TableMemOid {
 mod tests {
     use super::*;
     use super::{Access, OidErr, TableMemOid};
+    use crate::perms::{Perm, Rule};
     use crate::utils::*;
     use rasn::types::{Integer, ObjectIdentifier};
     use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
@@ -574,6 +587,26 @@ mod tests {
             x,
             ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(21)))
         );
+    }
+
+    fn perms() -> Vec<Perm> {
+        let rules = vec![Rule {
+            read: true,
+            write: true,
+            include: vec![vec![1u32]],
+            exclude: vec![],
+        }];
+        vec![Perm {
+            rules,
+            security_level: 1u8, // Just flags
+            group_name: "test".as_bytes().to_vec(),
+        }]
+    }
+
+    fn user_fixture<'a>(pv: &'a Vec<Perm>) -> User {
+        let s ="test test sha1 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
+        let u = User::from_str(s, pv).unwrap(); // Checked #test
+        u
     }
 
     fn tab_fixture() -> TableMemOid {
@@ -671,21 +704,62 @@ mod tests {
         let o1 = ObjectIdentifier::new(&[1, 6, 1]).unwrap();
         assert_eq!(tab.access(o1), Access::NoAccess);
         let o2 = ObjectIdentifier::new(&[1, 6, 5, 1]).unwrap();
-        assert_eq!(tab.access(o2), Access::NoAccess); 
+        assert_eq!(tab.access(o2), Access::NoAccess);
         let o3 = ObjectIdentifier::new(&[1, 6, 1, 16385]).unwrap();
         assert_eq!(tab.access(o3), Access::NoAccess);
-               let o4 = ObjectIdentifier::new(&[1, 6, 1, 0]).unwrap();
-        assert_eq!(tab.access(o4), Access::NoAccess);  
+        let o4 = ObjectIdentifier::new(&[1, 6, 1, 0]).unwrap();
+        assert_eq!(tab.access(o4), Access::NoAccess);
         let o5 = ObjectIdentifier::new(&[1, 6, 1, 2, 4]).unwrap();
         assert_eq!(tab.access(o5), Access::ReadOnly);
     }
     #[test]
-    fn test_create_and_wait() {
+    fn test_create_and_wait_obj() {
         let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); //Checked #test
         let oid3: ObjectIdentifier = ObjectIdentifier::new(&ARC3).unwrap(); //Checked #test
         let s1 = simple_from_int(1);
         let nr = simple_from_str(b"four");
         let s5 = simple_from_int(5);
+        let ov = simple_from_vec(&[1, 1]);
+        let mut tab = TableMemOid::new(
+            //vec![],
+            vec![ov.clone(), nr.clone()],
+            2,
+            &oid2,
+            vec![OType::ObjectId, OType::RowStatus],
+            vec![Access::ReadOnly, Access::ReadWrite],
+            vec![1usize],
+            true,
+        );
+        //tab.set_index(vec![1usize], false,);
+        let pv = perms();
+        let user = user_fixture(&pv);
+        assert_eq!(tab.rows.len(), 0);
+        assert!(tab.begin_transaction().is_ok());
+        let set_res = tab.set(oid3.clone(), VarBindValue::Value(s5.clone()), &user);
+        assert!(set_res.is_ok());
+        assert_eq!(tab.rows.len(), 0);
+        assert!(tab.commit().is_ok());
+        assert_eq!(tab.rows.len(), 1);
+        assert!(tab.begin_transaction().is_ok());
+        let set_res = tab.set(oid3.clone(), VarBindValue::Value(s1.clone()), &user);
+        assert!(set_res.is_ok());
+        assert_eq!(tab.rows.len(), 1);
+        assert!(tab.commit().is_ok());
+        assert!(tab.begin_transaction().is_ok());
+        let set_res = tab.set(oid3.clone(), VarBindValue::Value(nr.clone()), &user);
+        assert_eq!(set_res, Err(OidErr::WrongType));
+        assert!(tab.rollback().is_ok());
+    }
+
+    #[test]
+    fn test_create_and_wait2() {
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); //Checked #test
+        let oid3: ObjectIdentifier = ObjectIdentifier::new(&ARC3).unwrap(); //Checked #test
+        let s1 = simple_from_int(1);
+        let nr = simple_from_str(b"four");
+        let s5 = simple_from_int(5);
+        let pv = perms();
+        let user = user_fixture(&pv);
         let mut tab = TableMemOid::new(
             //vec![],
             vec![s1.clone(), nr.clone()],
@@ -699,36 +773,30 @@ mod tests {
         //tab.set_index(vec![1usize], false,);
         assert_eq!(tab.rows.len(), 0);
         assert!(tab.begin_transaction().is_ok());
-        let set_res = tab.set(oid3.clone(), VarBindValue::Value(s5.clone()));
+        let set_res = tab.set(oid3.clone(), VarBindValue::Value(s5.clone()), &user);
         assert!(set_res.is_ok());
         assert_eq!(tab.rows.len(), 0);
         assert!(tab.commit().is_ok());
         assert_eq!(tab.rows.len(), 1);
         assert!(tab.begin_transaction().is_ok());
-        let set_res = tab.set(oid3.clone(), VarBindValue::Value(s1.clone()));
+        let set_res = tab.set(oid3.clone(), VarBindValue::Value(s1.clone()), &user);
         assert!(set_res.is_ok());
         assert_eq!(tab.rows.len(), 1);
         assert!(tab.commit().is_ok());
         assert!(tab.begin_transaction().is_ok());
-        let set_res = tab.set(oid3.clone(), VarBindValue::Value(nr.clone()));
+        let set_res = tab.set(oid3.clone(), VarBindValue::Value(nr.clone()), &user);
         assert_eq!(set_res, Err(OidErr::WrongType));
         assert!(tab.rollback().is_ok());
     }
 
-    /*#[test]
+    #[test]
     fn test_foreign_table() {
-        let tab = tab_fixture();
+        let mut tab = tab_fixture();
+        assert_eq!(tab.rows.len(), 2);
         let s1 = simple_from_int(1);
-        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); // Checked, #test arc is valid
-        let aug = AugTable::new(
-            tab,
-            vec![],
-            vec![s1],
-            1,
-            &oid2,
-            vec![OType::Integer],
-            vec![Access::ReadWrite],
-        );
-        assert_eq!(aug.rows.len(), 0)
-    }*/
+        let name = simple_from_str(b"name");
+        let data = vec![(vec![1u32], vec![name, s1.clone(), s1.clone()])];
+        tab.set_indexed_data(data);
+        assert_eq!(tab.rows.len(), 1);
+    }
 }
