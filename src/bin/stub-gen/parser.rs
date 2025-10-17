@@ -1,4 +1,4 @@
-use log::{error, info};
+use log::error;
 use nom::{
     branch::alt,
     bytes::complete::{is_not, tag, take_until},
@@ -65,7 +65,7 @@ pub struct ObjectType<'a> {
     pub access: &'a str,
     pub status: &'a str,
     pub description: &'a str,
-    reference: &'a str,
+    pub reference: &'a str,
     pub index: &'a str,
     pub augments: &'a str,
     pub defval: &'a str,
@@ -733,7 +733,7 @@ pub fn parse_tc(input: &str) -> IResult<&str, MibNode<'_>> {
     .parse(input)
 }
 
-fn parse_mod_comp(input: &str) -> IResult<&str, MibNode<'_>> {
+pub fn parse_mod_comp(input: &str) -> IResult<&str, MibNode<'_>> {
     map(
         pair(
             terminated(
@@ -903,11 +903,6 @@ pub fn parse_mib<'a>(input: &'a str, nodes: &mut Vec<MibNode<'a>>) -> (bool, u32
 
     let end_ok = parse_end(end);
     if end_ok.is_err() {
-        let tcs: Vec<&MibNode> = defs
-            .iter()
-            .filter(|&x| matches!(*x, MibNode::Tc(_)))
-            .collect();
-        info!("TCS {tcs:?}");
         let l = min(64, end.len());
         let deb = &end[0..l];
 
@@ -934,11 +929,12 @@ text ::=     TEXTUAL-CONVENTION
 ";
         let (_rest, node) = parse_tc(text).unwrap();
         let node = node.copy();
-        if let MibNode::Tc(tc) = node {
+        assert!(if let MibNode::Tc(tc) = node {
             assert_eq!(tc.name, "text");
+            true
         } else {
-            panic!("Should have parsed a Text Convention");
-        }
+            false
+        });
     }
 
     #[test]
@@ -955,11 +951,12 @@ SysOREntry ::= SEQUENCE {
      
 ";
         let (_rest, node) = parse_entry(text).unwrap();
-        if let MibNode::Ent(ent) = node {
+        assert!(if let MibNode::Ent(ent) = node {
             assert_eq!(ent.name, "SysOREntry");
+            true
         } else {
-            panic!("Should have parsed a SEQUENCE");
-        }
+            false
+        });
     }
 
     #[test]
@@ -982,11 +979,12 @@ usmUserPublic    OBJECT-TYPE
 ";
         let (_rest, node) = parse_obj_type(text).unwrap();
         let node = node.copy();
-        if let MibNode::ObTy(ot) = node {
+        assert!(if let MibNode::ObTy(ot) = node {
             assert_eq!(ot.name, "usmUserPublic");
+            true
         } else {
-            panic!("Should have parsed OBJECT-TYPE");
-        }
+            false
+        });
     }
 
     #[test]
@@ -1003,10 +1001,131 @@ snmpBasicNotificationsGroup NOTIFICATION-GROUP
 ";
         let (_rest, node) = parse_notification_group(text).unwrap();
         let node = node.copy();
-        if let MibNode::NtGrp(ot) = node {
+        assert!(if let MibNode::NtGrp(ot) = node {
             assert_eq!(ot.name, "snmpBasicNotificationsGroup");
+            true
         } else {
-            panic!("Should have parsed Notification Group");
-        }
+            false
+        });
+    }
+
+    #[test]
+    fn test_import() {
+        let text = " -- ignore
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE,
+    OBJECT-IDENTITY,
+    snmpModules, Counter32                FROM SNMPv2-SMI
+    TEXTUAL-CONVENTION, TestAndIncr,
+    RowStatus, RowPointer,
+    StorageType, AutonomousType           FROM SNMPv2-TC
+    MODULE-COMPLIANCE, OBJECT-GROUP       FROM SNMPv2-CONF
+    SnmpAdminString, SnmpEngineID,
+    snmpAuthProtocols, snmpPrivProtocols  FROM SNMP-FRAMEWORK-MIB;
+
+";
+        let (_rest, node) = parse_imports(text).unwrap();
+        assert!(if let MibNode::Imp(imp) = node {
+            assert_eq!(imp.imp_list.len(), 4);
+            let item = &imp.imp_list[0];
+            assert_eq!(item.1, "SNMPv2-SMI");
+            assert_eq!(item.0.len(), 5);
+            true
+        } else {
+            false
+        });
+    }
+
+    #[test]
+    fn test_macro() {
+        let text = " -- ignore
+OBJECT-IDENTITY MACRO ::=
+BEGIN
+    TYPE NOTATION ::=
+                  \"STATUS\" Status
+                  \"DESCRIPTION\" Text
+
+                  ReferPart
+
+    VALUE NOTATION ::=
+                  value(VALUE OBJECT IDENTIFIER)
+
+    Status ::=
+                  \"current\"
+                | \"deprecated\"
+                | \"obsolete\"
+
+    ReferPart ::=
+                  \"REFERENCE\" Text
+                | empty
+
+    -- a character string as defined in section 3.1.1
+    Text ::= value(IA5String)
+END
+
+";
+        let (_rest, node) = parse_macro(text).unwrap();
+        let node = node.copy();
+        assert!(if let MibNode::Mac(_alias) = node {
+            true
+        } else {
+            false
+        });
+    }
+
+    #[test]
+    fn test_parse_alias() {
+        let text = "asdf ::= INTEGER";
+        let (_rest, node) = parse_alias(text).unwrap();
+        let node = node.copy();
+        assert!(if let MibNode::Al(_alias) = node {
+            true
+        } else {
+            false
+        });
+    }
+
+    #[test]
+    fn test_parse_mib() {
+        let text = "SNMP-USM-AES-MIB DEFINITIONS ::= BEGIN
+    IMPORTS
+        MODULE-IDENTITY, OBJECT-IDENTITY,
+        snmpModules             FROM SNMPv2-SMI          -- [RFC2578]
+        snmpPrivProtocols       FROM SNMP-FRAMEWORK-MIB; -- [RFC3411]
+
+snmpUsmAesMIB  MODULE-IDENTITY
+    LAST-UPDATED \"200406140000Z\"
+    ORGANIZATION \"IETF\"
+    CONTACT-INFO \"Uri Blumenthal\"
+
+    DESCRIPTION  \"Definitions of Object Identities needed for
+                  \"
+
+    REVISION     \"200406140000Z\"
+    DESCRIPTION  \"Initial version, published as RFC3826\"
+    ::= { snmpModules 20 }
+
+usmAesCfb128Protocol OBJECT-IDENTITY
+    STATUS        current
+    DESCRIPTION  \"The CFB128-AES-128 Privacy Protocol.\"
+    REFERENCE    \"- Specification for the ADVANCED ENCRYPTION
+                    STANDARD. Federal Information Processing
+                    Standard (FIPS) Publication 197.
+                    (November 2001).
+
+                  - Dworkin, M., NIST Recommendation for Block
+                    Cipher Modes of Operation, Methods and
+                    Techniques. NIST Special Publication 800-38A
+                    (December 2001).
+                 \"
+    ::= { snmpPrivProtocols 4 }
+
+END
+        ";
+        let mut nodes = vec![];
+        let (x, y) = parse_mib(text, &mut nodes);
+
+        assert_eq!(y, 0);
+        assert!(x);
     }
 }

@@ -5,6 +5,7 @@ use crate::config::{ComplianceStatements, Config};
 use crate::oidmap::OidMap;
 use crate::snmp_agent::Agent;
 use crate::usm::Users;
+mod snmp_target_stub;
 mod snmp_user_based_sm_stub;
 mod snmpv2_stub;
 
@@ -17,7 +18,7 @@ pub fn load_stubs<'a>(
     comp: &mut ComplianceStatements,
 ) {
     snmp_user_based_sm_stub::load_stub(oid_map, config, agent, users, comp);
-
-    // Do this one last, as it loads the gtahered compliance statements
+    snmp_target_stub::load_stub(oid_map, agent, comp);
+    // Do this one last, as it loads the gathered compliance statements
     snmpv2_stub::load_stub(oid_map, config, agent, comp);
 }

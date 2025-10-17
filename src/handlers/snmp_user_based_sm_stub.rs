@@ -4,7 +4,7 @@ use crate::oidmap::OidMap;
 use crate::scalar::{PersistentScalar, ScalarMemOid};
 use crate::snmp_agent::Agent;
 use crate::table::TableMemOid;
-use crate::usm::{User, Users};
+use crate::usm::{User, Users, WhatHash};
 use log::{debug, warn};
 use rasn::types::{Integer, ObjectIdentifier, OctetString};
 use rasn_smi::v2::{ApplicationSyntax, Counter32, ObjectSyntax, SimpleSyntax};
@@ -49,6 +49,12 @@ const ARC_SNMP_PRIV_PROTOCOLS: [u32; 9] = [1, 3, 6, 1, 6, 3, 10, 1, 2];
 
 // From RFC 3826
 const ARC_USM_AES_CFB_128_PRIV_PROTOCOL: [u32; 10] = [1, 3, 6, 1, 6, 3, 10, 1, 2, 4];
+
+// From RFC 7630
+const ARC_USM_HMAC128SHA224AUTH_PROTOCOL: [u32; 10] = [1, 3, 6, 1, 6, 3, 10, 1, 1, 4];
+const ARC_USM_HMAC192SHA256AUTH_PROTOCOL: [u32; 10] = [1, 3, 6, 1, 6, 3, 10, 1, 1, 5];
+const ARC_USM_HMAC256SHA384AUTH_PROTOCOL: [u32; 10] = [1, 3, 6, 1, 6, 3, 10, 1, 1, 6];
+const ARC_USM_HMAC384SHA512AUTH_PROTOCOL: [u32; 10] = [1, 3, 6, 1, 6, 3, 10, 1, 1, 7];
 
 const COMPLIANCE_USM_MIB_COMPLIANCE: [u32; 10] = [1, 3, 6, 1, 6, 3, 15, 2, 1, 1];
 
@@ -96,7 +102,7 @@ impl OidKeeper for KeepUsmStatsUnknownUserNames {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         Ok(())
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
+    fn commit(&mut self, _user: &User) -> Result<(), OidErr> {
         Ok(())
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
@@ -157,8 +163,8 @@ impl OidKeeper for KeepUsmUserSpinLock {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -206,7 +212,7 @@ impl OidKeeper for KeepUsmStatsWrongDigests {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         Ok(())
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
+    fn commit(&mut self, _user: &User) -> Result<(), OidErr> {
         Ok(())
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
@@ -255,7 +261,7 @@ impl OidKeeper for KeepUsmStatsDecryptionErrors {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         Ok(())
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
+    fn commit(&mut self, _user: &User) -> Result<(), OidErr> {
         Ok(())
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
@@ -304,8 +310,8 @@ impl OidKeeper for KeepUsmStatsUnknownEngineIDs {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -353,7 +359,7 @@ impl OidKeeper for KeepUsmStatsNotInTimeWindows {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         Ok(())
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
+    fn commit(&mut self, _user: &User) -> Result<(), OidErr> {
         Ok(())
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
@@ -403,7 +409,7 @@ impl OidKeeper for KeepUsmStatsUnsupportedSecLevels {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         Ok(())
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
+    fn commit(&mut self, _user: &User) -> Result<(), OidErr> {
         Ok(())
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
@@ -417,7 +423,9 @@ impl OidKeeper for KeepUsmStatsUnsupportedSecLevels {
 
 #[derive(PartialEq, Eq)]
 struct KeepUsmUserTable {
-    // users: RefCell<&'a Users<'a>>,
+    auth_priv: bool,
+    pending: OctetString,
+    row_num: usize,
     table: TableMemOid,
 }
 
@@ -430,12 +438,19 @@ impl KeepUsmUserTable {
             for b in &user.name {
                 name.push(*b);
             }
+            let arc = match user.what {
+                WhatHash::Sha1 => simple_from_vec(&ARC_USM_HMACSHA_AUTH_PROTOCOL),
+                WhatHash::Sha224 => simple_from_vec(&ARC_USM_HMAC128SHA224AUTH_PROTOCOL),
+                WhatHash::Sha256 => simple_from_vec(&ARC_USM_HMAC192SHA256AUTH_PROTOCOL),
+                WhatHash::Sha384 => simple_from_vec(&ARC_USM_HMAC256SHA384AUTH_PROTOCOL),
+                WhatHash::Sha512 => simple_from_vec(&ARC_USM_HMAC384SHA512AUTH_PROTOCOL),
+            };
             let row = vec![
                 ObjectSyntax::Simple(SimpleSyntax::String(engine_id.clone())),
                 simple_from_str(&name),
                 simple_from_str(&name),
                 simple_from_vec(&[0, 0]),
-                simple_from_vec(&ARC_USM_HMACSHA_AUTH_PROTOCOL),
+                arc,
                 simple_from_str(b""),
                 simple_from_str(b""),
                 simple_from_vec(&ARC_USM_AES_CFB_128_PRIV_PROTOCOL),
@@ -500,6 +515,9 @@ impl KeepUsmUserTable {
                 vec![1, 2],
                 false,
             ),
+            auth_priv: true,
+            pending: OctetString::from_static(b""),
+            row_num: 0,
         };
         tab.table.set_data(data);
         tab
@@ -571,30 +589,38 @@ impl OidKeeper for KeepUsmUserTable {
             if s_res.is_err() {
                 return Err(OidErr::NoSuchInstance);
             }
-            let (_, ref mut row) = &mut self.table.rows[s_res.unwrap()]; // Checked, Err dealt with above
+            let (_, ref row) = &self.table.rows[s_res.unwrap()]; // Checked, Err dealt with above
             if row[1] != simple_from_str(&user.name) {
                 return Err(OidErr::NoAccess);
             }
-
-            let auth_priv = col == 7;
-            if let VarBindValue::Value(ObjectSyntax::Simple(SimpleSyntax::String(ref new_value))) =
-                value
+            self.auth_priv = col == 7;
+            if let VarBindValue::Value(ObjectSyntax::Simple(SimpleSyntax::String(new_value))) =
+                value.clone()
             {
-                let rand = &new_value[0..user.trunc];
-                if user.update_password(new_value, auth_priv).is_err() {
-                    warn!("Password update failed, who knows whwere you are?");
-                    return Err(OidErr::GenErr);
-                };
-                row[11] = simple_from_str(rand);
+                self.pending = new_value.clone();
+                self.row_num = s_res.unwrap(); // Checked, Err dealt with above
             }
+        } else {
+            return Err(OidErr::NotWritable);
         }
         self.table.set(oid, value, user)
     }
+
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
+        self.pending = OctetString::from_static(b"");
         self.table.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.table.commit()
+
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        let rand = &self.pending[0..user.trunc];
+        if user.update_password(&self.pending, self.auth_priv).is_err() {
+            warn!("Password update failed, who knows whwere you are?");
+            return Err(OidErr::GenErr);
+        };
+
+        let comm = self.table.commit(user);
+        self.table.rows[self.row_num].1[11] = simple_from_str(rand);
+        comm
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.table.rollback()

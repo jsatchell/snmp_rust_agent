@@ -25,8 +25,11 @@ pub enum OidErr {
     NoAccess,
     NotWritable,
     GenErr,
+    CommitFail,
+    UndoFail,
 }
 
+/// Defines the five levels of access to a scalar or table column.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum Access {
     NoAccess,
@@ -53,6 +56,9 @@ pub enum OType {
 }
 
 /// Return true if the type of val is consistent with the enum otype.
+///
+/// Not a one to one mapping, as there are some distinct integer cases with distinct
+/// semantics which the Enum seperates.
 pub fn check_type(otype: OType, val: &ObjectSyntax) -> bool {
     match val {
         ObjectSyntax::Simple(SimpleSyntax::Integer(_)) => {
@@ -102,7 +108,7 @@ pub trait OidKeeper {
     ) -> Result<VarBindValue, OidErr>;
 
     /// Commit the transaction
-    fn commit(&mut self) -> Result<(), OidErr>;
+    fn commit(&mut self, user: &User) -> Result<(), OidErr>;
 
     /// Rollback the transaction
     fn rollback(&mut self) -> Result<(), OidErr>;
@@ -117,6 +123,9 @@ pub trait OidKeeper {
 mod tests {
     use super::*;
     use crate::utils::*;
+    use rasn::types::OctetString;
+    use rasn_smi::v1::ToOpaque;
+    use rasn_smi::v2::{ApplicationSyntax, ObjectSyntax};
 
     #[test]
     fn test_check_otype_int() {
@@ -162,6 +171,7 @@ mod tests {
         assert!(!check_type(OType::Ticks, &val));
         assert!(!check_type(OType::Address, &val));
         assert!(!check_type(OType::Unsigned, &val));
+        assert!(!check_type(OType::Arbitrary, &val));
     }
 
     #[test]
@@ -177,6 +187,7 @@ mod tests {
         assert!(!check_type(OType::Ticks, &val));
         assert!(!check_type(OType::Address, &val));
         assert!(!check_type(OType::Unsigned, &val));
+        assert!(!check_type(OType::Arbitrary, &val));
     }
 
     #[test]
@@ -192,6 +203,7 @@ mod tests {
         assert!(!check_type(OType::Ticks, &val));
         assert!(!check_type(OType::Address, &val));
         assert!(!check_type(OType::Unsigned, &val));
+        assert!(!check_type(OType::Arbitrary, &val));
     }
     #[test]
     fn test_check_otype_ticks() {
@@ -206,6 +218,7 @@ mod tests {
         assert!(check_type(OType::Ticks, &val));
         assert!(!check_type(OType::Address, &val));
         assert!(!check_type(OType::Unsigned, &val));
+        assert!(!check_type(OType::Arbitrary, &val));
     }
 
     #[test]
@@ -221,6 +234,7 @@ mod tests {
         assert!(!check_type(OType::Ticks, &val));
         assert!(check_type(OType::Address, &val));
         assert!(!check_type(OType::Unsigned, &val));
+        assert!(!check_type(OType::Arbitrary, &val));
     }
     #[test]
     fn test_check_otype_unsigned() {
@@ -233,9 +247,26 @@ mod tests {
         assert!(!check_type(OType::Counter, &val));
         assert!(!check_type(OType::BigCounter, &val));
         assert!(!check_type(OType::Ticks, &val));
+        assert!(!check_type(OType::Arbitrary, &val));
         assert!(!check_type(OType::Address, &val));
         assert!(check_type(OType::Unsigned, &val));
     }
 
-    // WE could get 100% coverage if we could make an Arbitrary, but that needs Opaque, and I can't see how to make one!
+    #[test]
+    fn test_check_otype_arbitrary() {
+        let val = ObjectSyntax::ApplicationWide(ApplicationSyntax::Arbitrary(
+            OctetString::from_static(b"test").to_opaque().unwrap(),
+        ));
+        assert!(check_type(OType::Arbitrary, &val));
+        assert!(!check_type(OType::Integer, &val));
+        assert!(!check_type(OType::TestAndIncr, &val));
+        assert!(!check_type(OType::RowStatus, &val));
+        assert!(!check_type(OType::String, &val));
+        assert!(!check_type(OType::ObjectId, &val));
+        assert!(!check_type(OType::Counter, &val));
+        assert!(!check_type(OType::BigCounter, &val));
+        assert!(!check_type(OType::Ticks, &val));
+        assert!(!check_type(OType::Address, &val));
+        assert!(!check_type(OType::Unsigned, &val));
+    }
 }

@@ -6,13 +6,13 @@
 //! This agent only supports SNMP v3, older variants have no on the wire security.
 //!
 //! This project follows semver - but that means no guarantees at all pre v1! There are changes in the internal APIs
-//!  and traits in this release, so this is a minor version (0.2.0) rather than a patch.
+//!  and traits in this release, so this is a minor version (0.4.0) rather than a patch.
 //!
-//! The standards define the use of horrible old crypto types like single DES for privacy, and MD5 in the authentication.
-//! The code currently supports HMAC-SHA-1-96 and AES-128; stronger hashes from RFC7630 are planned for the future.
-//! There is no agreed standard for stronger ciphers. It is not clear that using stronger hash functions or ciphers
-//! will deliver significant advantages in practice. The well known collision weakness of SHA-1 is not a problem in
-//! an HMAC application.
+//! The standards define the use of horrible old crypto types like single DES for privacy, and
+//! MD5 in the authentication. The code currently supports HMAC-SHA-1-96, the stronger hashes
+//! from RFC-7630 and AES-128. There is no agreed standard for stronger ciphers. It is not clear that
+//! using stronger hash functions or ciphers will deliver significant advantages in practice. The well
+//! known collision weakness of SHA-1 is not a problem in an HMAC application.
 //!
 //! This release implements (more or less) the transaction model for Set PDUs. This required a change to the
 //! OidKeeper trait, defined in src/keeper.rs. The sample handlers, and the Rust MIB compiler have been updated
@@ -21,13 +21,13 @@
 //! The agent server loop is a single threaded blocking design. I would argue that this is appropriate for almost
 //! all agents, as typically a single manager will interact with multiple agents. Managers may well want to support
 //! high levels of concurrency. The single threaded design avoids many issues with concurrency and locking.
-//! Of course, there is nothing to stop handlers for specific long running operations using a thread. Good luck
-//! with that!
+//! Of course, there is nothing to stop handlers for specific long running operations using a thread.
 //!
-//! At present, there is a simplistic permissions model, and some real world applications will need more than that.
-//! Coming real soon. It may not be RFC view action model, as that seems complex, and the facility to dynamically
-//! change the permissions model remotely is not often implemented. Instead, some sort of compile time model seems
-//! more appropriate to the sort of boxes that run agents.
+//! The 0.2.1 release introduced a more flexible and capable permissions model, driven by a policy in a TOML
+//! file. Different groups of users can be given selective access to different parts of the MIB, with independent
+//! control of read and write access. This has been extended to support multiple contexts in this release. By
+//! default, rules apply to all contexts, but you can mark a rule as applying to a specific context.  The
+//! integration of this permissions model into GetNext handling is fixed.
 //!
 //! In this release the Engine ID is loaded from a configuration file. A sample configuration file is included
 //! at .snmp-agent.conf.
@@ -53,16 +53,16 @@
 //! almost certainly involving referencing the other table structs.
 //!
 //!## Users and passwords
-//! There is a small python tool for generating a username and password file under tools/usekey.py. If you change the
-//! Engine ID in the agent configuration file, you will need to make a matching change here.
 //!
-//! Changing passwords on the wire is not yet implemented, and would be a really good project - an issue is open for it!
+//! There is a small python tool for generating a username and password file under tools/usekey.py. It now reads
+//! the Engine Id from the configuration file.
+//!
+//! Changing passwords on the wire is implemented. User creation is not.
 //!
 //!## Tools for stub generation
 //!
-//! At present, there is only rough tooling to help implement an useful agent, but it is possible with some
-//! patience. There is a stub generator, written in Rust. There used to be a Python one as well, but it is now
-//! obsolete and has been removed in this release.
+//! At present, there is prototype tooling to help implement an useful agent, but it is possible with some
+//! patience. There is a stub generator, written in Rust.
 //!
 //! The source files for the Rust stub generator are under src/bin/stub-gen. It uses the nom parser combinator
 //! library for parsing. It has a reasonably complete parser implementation, which can parse almost all the MIBs
@@ -75,6 +75,7 @@
 //!
 //!## Workflow
 //! First build the stub generator with:
+//!
 //! ```shell
 //! cargo build --bin stub-gen
 //! ```
@@ -84,34 +85,38 @@
 //! ```shell
 //! target/debug/stub-gen -o src/stubs/ MIB1 MIB2 ...
 //! ```
-//! where MIB1 and MIB2 and so on are the names of the MIB files to generate stubs from.
 //!
-//! The generator searches /var/lib/mibs/ietf, /var/lib/mibs/iana and /usr/share/snmp/mibs to find the files,
-//! and tries adding .txt extension as well. If your system has the files somewhere different, or you wish to include
-//! vendor mibs, edit src/bin/stub-gen/importer.rs and change the SEARCH_PATH constant. Arguably, this should be
-//! settable by the command line and / or an environment variable.
+//! where MIB1 and MIB2 and so on are the names of the MIB files to generate stubs from. The generator searches
+//! /var/lib/mibs/ietf, /var/lib/mibs/iana and /usr/share/snmp/mibs to find the files, and tries adding .txt
+//! extension as well. If your system has the files somewhere different, or you wish to include vendor mibs,
+//! you can use ```-p``` or ```-path``` flags to override this built in default as many times as you need.
+//! For example, ```-p /usr/lib/mibs/ -p /var/lib/mibs/ietf/```. If you use the flag, the builtin default is
+//! ignored, and you will have to populate the whole path. If you might have name clashes, the path is search
+//! in the obvious order, and the first matching file is used.
 //!
-//! The generated stubs will be placed under src/stubs/ (or whatever other stub directory
-//! you specified with the -o flag).
+//! By default, the stub generator ignores objects that are marked as "deprecated" or "obsolete" in the MIB.
+//! You can include deprecated objects with the ```-d``` or ```--deprecated``` flags. If you really need to implement
+//! something obsolete, there is a ```--obsolete``` flag, if you are stuck with a manager that can't be
+//! updated and depends on some old stuff.
 //!
-//! If you want the agent to do something useful, you need to write your own back-end implementations.
-//! The generated stubs are placed in the src/stubs/ directory. The basic idea is to associate instances
-//! that support the OidKeeper trait with the OID value or values that they support in the OidMap. This is
-//! populated and then the agent loop_forever() runs.
+//! The generated stubs will be placed under src/stubs/ with the command above.
 //!
-//! If you implement a suitable back end, by editing a stub or from scratch, move it to src/handlers/,
-//! and update src/stubs.rs and src/handlers.rs to reflect the new location. If it is a public MIB that
-//! you would like to contribute, make a PR, and I would be delighted to start shipping some more handlers.
+//! If you want the agent to do something useful, you need to write your own back-end implementations. The generated stubs are placed in the
+//! src/stubs/ directory. The basic idea is to associate instances that support the OidKeeper trait with the OID value or values that they
+//! support in the OidMap. This is populated and then the agent loop_forever() runs.
 //!
-//! Two toy implementations of the OidKeeper trait are provided by way of example, both purely memory based.
-//! One is for scalars, and the other is a limited table mode. Set can change cell values in existing rows.
-//! New rows can be created by the CreateAndWait mechanism if there is a RowStatus column in the table, and
-//! destroyed by Destroy. If you change the value of index cells, the results may be puzzling. If the MIB is
-//! correctly structured, the permissions checks should stop you making that mistake. The generated stub
-//! implementations just wrap the toy struct types, and need to be replaced by real actions.
+//! If you implement a suitable back end, by editing a stub or from scratch, move it to src/handlers/, and update src/stubs.rs and
+//! src/handlers.rs to reflect the new location. If it is a public MIB that you would like to contribute, make a PR, and I would be delighted
+//! to start shipping some more handlers.
 //!
-//! The handlers directory contains a couple of examples of stubs that have been edited to give at least partial
-//! implementations of a couple of the core MIBs.
+//! Two toy implementations of the OidKeeper trait are provided by way of example, both purely memory based. One is for scalars, and the other
+//! is a limited table mode. Set can change cell values in existing rows. New rows can be created by the CreateAndWait mechanism if there is a
+//! RowStatus column in the table, and destroyed by Destroy. If you change the value of index cells, the results may be puzzling. If the MIB is
+//! correctly structured, the permissions checks should stop you making that mistake. The generated stub implementations just wrap the toy
+//! struct types, and need to be replaced by real actions.
+//!
+//! The handlers directory contains a couple of examples of stubs that have been edited to give at least partial implementations
+//! of a couple of the core MIBs.
 //!
 //! ## Trying it out
 //!
@@ -120,10 +125,12 @@
 //! Create a password file called users.txt, using ```python3 tools/usekey.py```. For example,
 //!
 //! ```shell
-//! python3 tools/usekey.py admin myv3user password password1 > users.txt
+//! touch users.txt
+//! python3 tools/usekey.py admin myv3user password password1 >> users.txt
 //! ```
+//! You can run the python tool again to add extra lines to the file for other users.
 //!
-//! Optionally, edit groups.txt.
+//! Optionally, edit groups.toml.
 //!
 //! Set a suitable log level with, for example, ```export RUST_LOG=info```.
 //!

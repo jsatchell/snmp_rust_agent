@@ -4,7 +4,7 @@
 use log::{debug, info};
 use snmp_rust_agent::config::{ComplianceStatements, Config};
 use snmp_rust_agent::handlers;
-use snmp_rust_agent::oidmap::OidMap;
+use snmp_rust_agent::oidmap::{ContextMap, OidMap};
 use snmp_rust_agent::perms;
 use snmp_rust_agent::snmp_agent::Agent;
 use snmp_rust_agent::stubs::load_stubs;
@@ -36,14 +36,16 @@ fn main() -> std::io::Result<()> {
         debug!("No Trapsink defined in config, won't start notifier");
     } else {
         info!("Starting notifier for {0}", conf.trap_sink);
-        agent.start_notifier(&conf.trap_sink);
+        agent.start_notifier(&conf.trap_sink, &conf.trap_community);
     }
+    let mut context_map = ContextMap::new();
     let mut oid_map: OidMap = OidMap::new();
     let mut comp = ComplianceStatements::new();
     // Populate oid_map for stubs
     load_stubs(&mut oid_map, &mut comp);
     // Some of the handlers use values from the config, users or the agent itself
     handlers::load_stubs(&mut oid_map, &conf, &agent, &users, &mut comp);
-    agent.loop_forever(&mut oid_map, &users);
+    context_map.insert(b"", &mut oid_map);
+    agent.loop_forever(&mut context_map, &users);
     Ok(())
 }

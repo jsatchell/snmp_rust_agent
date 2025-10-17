@@ -471,7 +471,7 @@ impl OidKeeper for TableMemOid {
         Ok(value)
     }
 
-    fn commit(&mut self) -> Result<(), OidErr> {
+    fn commit(&mut self, _user: &User) -> Result<(), OidErr> {
         if !self.in_transaction {
             warn!("Commit - but not in transaction!");
             // Should raise some sort of error?
@@ -542,7 +542,7 @@ impl OidKeeper for TableMemOid {
                                 )))
                             {
                                 warn!["CreateAndGo not supported"];
-                                return Err(OidErr::WrongType);
+                                return Err(OidErr::CommitFail);
                             }
                         }
                     }
@@ -593,6 +593,7 @@ mod tests {
         let rules = vec![Rule {
             read: true,
             write: true,
+            context: None,
             include: vec![vec![1u32]],
             exclude: vec![],
         }];
@@ -701,15 +702,15 @@ mod tests {
     #[test]
     fn test_access() {
         let tab = tab_fixture();
-        let o1 = ObjectIdentifier::new(&[1, 6, 1]).unwrap();
+        let o1 = ObjectIdentifier::new(&[1, 6, 1]).unwrap(); // Checked #[test]
         assert_eq!(tab.access(o1), Access::NoAccess);
-        let o2 = ObjectIdentifier::new(&[1, 6, 5, 1]).unwrap();
+        let o2 = ObjectIdentifier::new(&[1, 6, 5, 1]).unwrap(); // Checked #[test]
         assert_eq!(tab.access(o2), Access::NoAccess);
-        let o3 = ObjectIdentifier::new(&[1, 6, 1, 16385]).unwrap();
+        let o3 = ObjectIdentifier::new(&[1, 6, 1, 16385]).unwrap(); // Checked #[test]
         assert_eq!(tab.access(o3), Access::NoAccess);
-        let o4 = ObjectIdentifier::new(&[1, 6, 1, 0]).unwrap();
+        let o4 = ObjectIdentifier::new(&[1, 6, 1, 0]).unwrap(); // Checked #[test]
         assert_eq!(tab.access(o4), Access::NoAccess);
-        let o5 = ObjectIdentifier::new(&[1, 6, 1, 2, 4]).unwrap();
+        let o5 = ObjectIdentifier::new(&[1, 6, 1, 2, 4]).unwrap(); // Checked #[test]
         assert_eq!(tab.access(o5), Access::ReadOnly);
     }
     #[test]
@@ -738,13 +739,13 @@ mod tests {
         let set_res = tab.set(oid3.clone(), VarBindValue::Value(s5.clone()), &user);
         assert!(set_res.is_ok());
         assert_eq!(tab.rows.len(), 0);
-        assert!(tab.commit().is_ok());
+        assert!(tab.commit(&user).is_ok());
         assert_eq!(tab.rows.len(), 1);
         assert!(tab.begin_transaction().is_ok());
         let set_res = tab.set(oid3.clone(), VarBindValue::Value(s1.clone()), &user);
         assert!(set_res.is_ok());
         assert_eq!(tab.rows.len(), 1);
-        assert!(tab.commit().is_ok());
+        assert!(tab.commit(&user).is_ok());
         assert!(tab.begin_transaction().is_ok());
         let set_res = tab.set(oid3.clone(), VarBindValue::Value(nr.clone()), &user);
         assert_eq!(set_res, Err(OidErr::WrongType));
@@ -776,13 +777,13 @@ mod tests {
         let set_res = tab.set(oid3.clone(), VarBindValue::Value(s5.clone()), &user);
         assert!(set_res.is_ok());
         assert_eq!(tab.rows.len(), 0);
-        assert!(tab.commit().is_ok());
+        assert!(tab.commit(&user).is_ok());
         assert_eq!(tab.rows.len(), 1);
         assert!(tab.begin_transaction().is_ok());
         let set_res = tab.set(oid3.clone(), VarBindValue::Value(s1.clone()), &user);
         assert!(set_res.is_ok());
         assert_eq!(tab.rows.len(), 1);
-        assert!(tab.commit().is_ok());
+        assert!(tab.commit(&user).is_ok());
         assert!(tab.begin_transaction().is_ok());
         let set_res = tab.set(oid3.clone(), VarBindValue::Value(nr.clone()), &user);
         assert_eq!(set_res, Err(OidErr::WrongType));

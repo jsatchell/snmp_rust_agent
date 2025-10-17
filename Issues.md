@@ -5,17 +5,19 @@
   * Permission Errors (in some cases), most now correct
   * Wrong encoding / size
 * Tests - Started. OK coverage of agent, started compiler, nothing for generated code.
-  * Table - 7
+  * Table - 8
   * Oidmap - 1
   * Perms - 3
-  * Scalar - 7
-  * Usm - 11
+  * Scalar - 10
+  * Usm - 12
   * Utils - 8
   * Config - 2
   * Privacy - 2, check round trip, no test cases in RFCs.
-  * Agent -  6 Hardest, needs mocks etc.
-  * Engine ID - 7
-  * stub-gen/resolver - 2
+  * Agent -  8 Hardest, needs mocks etc.
+  * Engine ID - 9
+  * stub-gen/resolver - 3
+  * stub-gen/parser - 8
+  * stub-gen/gen_stub - 10  Needs tempfile for the rest
   * keeper - 8
 * Table model
   * Text-Convention and sub type range checking (lookup done for DEFVAL) - TODO

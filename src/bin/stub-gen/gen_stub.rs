@@ -262,60 +262,16 @@ fn fix_def(
 ) -> String {
     //Generate default value"""
     let arg = arg.trim();
-    if syntax.trim() == "RowPointer" || syntax.trim() == "VariablePointer" {
-        if resolver.check_name(arg) {
-            let arc = resolver.lookup(arg);
-            return format!("simple_from_vec(&{arc:?})").to_string();
-        }
-        if arg.trim() == "zeroDotZero" {
-            return "simple_from_vec(&[0, 0])".to_string();
-        }
-    }
+    let mut syntax = syntax.trim();
+
     if arg.ends_with("'H") || arg.ends_with("'h") {
-        let tend = arg.len() - 3;
+        let tend = arg.len() - 2;
         let txt = if tend > 1 { &arg[1..tend] } else { "" };
         return format!("simple_from_str(b\"{txt}\")").to_string();
     }
 
     if let Some(tcsyn) = tc_find_syntax(syntax, tcs) {
-        if tcsyn.starts_with("INTEGER")
-            || tcsyn.starts_with("Integer32")
-            || tcsyn.starts_with("Unsigned")
-            || tcsyn.starts_with("Gauge")
-            || tcsyn.starts_with("TimeInterval")
-        {
-            return lookup_int_syntax(arg, tcsyn);
-        }
-        if tcsyn == "OBJECT IDENTIFIER" {
-            if resolver.check_name(arg) {
-                let arc = resolver.lookup(arg);
-                return format!("simple_from_vec(&{arc:?})").to_string();
-            }
-            if arg == "zeroDotZero" {
-                return "simple_from_vec(&[0, 0])".to_string();
-            }
-            let uarg = upper_snake(arg);
-            return format!("simple_from_vec(&ARC_{uarg})");
-        }
-        if tcsyn.starts_with("OCTET STRING") {
-            let txt = if arg.len() > 3 {
-                let tend = arg.len() - 3;
-                &arg[1..tend]
-            } else {
-                ""
-            };
-            return format!("simple_from_str(b\"{txt}\")");
-        }
-        if tcsyn.starts_with("BITS") {
-            // FIXME should look at args, but setting to a byte of zero should be OK for now
-            let txt = "\x00";
-            return format!("simple_from_str(b\"{txt}\")");
-        }
-        if tcsyn.starts_with("TimeTicks") {
-            // FIXME should look at args, but setting to value of zero should be OK for now
-            return "simple_from_int(0)".to_string();
-        }
-        panic!("Unsupported TC type for DEFVAL {tcsyn:?} {syntax}");
+        syntax = tcsyn;
     }
     if syntax.starts_with("Integer32")
         || syntax.starts_with("Unsigned32")
@@ -326,32 +282,16 @@ fn fix_def(
     {
         return lookup_int_syntax(arg, syntax);
     }
-    if syntax == "OBJECT IDENTIFIER" {
+    if syntax == "OBJECT IDENTIFIER" || syntax == "RowPointer" || syntax == "VariablePointer" {
         if resolver.check_name(arg) {
             let arc = resolver.lookup(arg);
             return format!("simple_from_vec(&{arc:?})").to_string();
-        }
-        if arg == "zeroDotZero" {
-            return "simple_from_vec(&[0, 0])".to_string();
         }
         let uarg = upper_snake(arg);
         return "simple_from_vec(&ARC_".to_owned() + &uarg + ")";
     }
     if syntax.starts_with("BITS") {
         let txt = "\x00";
-        return format!("simple_from_str(b\"{txt}\")");
-    }
-    if syntax.starts_with("DisplayString")
-        || syntax.starts_with("SnmpAdminString")
-        || syntax.starts_with("OCTET STRING")
-        || syntax.starts_with("OwnerString")
-    {
-        let txt = if arg.len() > 3 {
-            let tend = arg.len() - 3;
-            &arg[1..tend]
-        } else {
-            ""
-        };
         return format!("simple_from_str(b\"{txt}\")");
     }
     warn!("Return DEFVAL {arg} {syntax} literal");
@@ -504,8 +444,8 @@ fn set(
 fn begin_transaction(&mut self) -> Result<(), OidErr> {{
         self.table.begin_transaction()
     }}
-fn commit(&mut self) -> Result<(), OidErr> {{
-        self.table.commit()
+fn commit(&mut self, user: &User) -> Result<(), OidErr> {{
+        self.table.commit(user)
     }}
 fn rollback(&mut self) -> Result<(), OidErr> {{
         self.table.rollback()
@@ -570,8 +510,8 @@ impl OidKeeper for {struct_name} {{
     fn begin_transaction(&mut self) -> Result<(), OidErr> {{
         self.scalar.begin_transaction()
     }}
-    fn commit(&mut self) -> Result<(), OidErr> {{
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {{
+        self.scalar.commit(user)
     }}
     fn rollback(&mut self) -> Result<(), OidErr> {{
         self.scalar.rollback()
@@ -598,7 +538,7 @@ fn write_ot_structs(
     for name in names {
         let data = &object_types[name];
         // for (name, data) in object_types.iter() {
-        if data.col || !data.index.is_empty() {
+        if data.col || !data.index.is_empty() || !data.augments.is_empty() {
             continue;
         }
         if data.table {
@@ -766,7 +706,7 @@ pub fn loader(mib_files: Vec<String>) -> Result<(), Error> {
     src.write_all(doc)?;
     src.write_all(b"use crate::oidmap::OidMap;\nuse crate::config::ComplianceStatements;\n\n")?;
     let mut stubs = vec![];
-    for mib_name in mib_files {
+    for mib_name in &mib_files {
         let mut base_name = mib_name.split("-MIB").next().unwrap().to_lowercase();
 
         base_name = base_name.replace("-", "_");
@@ -776,9 +716,17 @@ pub fn loader(mib_files: Vec<String>) -> Result<(), Error> {
     for stub in &stubs {
         src.write_all(format!("mod {stub};\n").as_bytes())?;
     }
-    src.write_all(
+    // Shut clippy up in the case where no stubs are generated
+    if mib_files.is_empty() {
+        src.write_all(
+        b"\n\n///Generated function to load all stubs\npub fn load_stubs(_oid_map: &mut OidMap, _comp: &mut ComplianceStatements) {\n",
+    )?;
+    } else {
+        src.write_all(
         b"\n\n///Generated function to load all stubs\npub fn load_stubs(oid_map: &mut OidMap, comp: &mut ComplianceStatements) {\n",
     )?;
+    }
+
     for stub in &stubs {
         src.write_all(format!("    {stub}::load_stub(oid_map, comp);\n").as_bytes())?;
     }
@@ -789,6 +737,11 @@ pub fn loader(mib_files: Vec<String>) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser::{
+        parse_entry, parse_mod_comp, parse_obj_type, parse_object_identity, parse_tc, MibNode,
+        ParentNum,
+    };
+    use tempfile::tempfile;
 
     #[test]
     fn test_access_lookup() {
@@ -840,7 +793,273 @@ mod tests {
         }
     }
 
-    // Few more file free functions to check
+    #[test]
+    fn test_lookup_int() {
+        for (arg, syntax, val) in [
+            ("27", "any_old-thing", "simple_from_int(27)"),
+            (
+                "mid",
+                "
+INTEGER {
+low (1), -- too small
+mid (2), -- nice
+high (3)
+    }
+",
+                "simple_from_int(2)",
+            ),
+            ("mid", "crazy", "simple_from_int(0)"),
+        ] {
+            assert_eq!(lookup_int_syntax(arg, syntax), val);
+        }
+    }
+
+    #[test]
+    fn test_ordered_names() {
+        let mut res = resolver::Resolver::new();
+        let mut obj_ty = HashMap::<&str, ObjectType>::new();
+        res.try_add("a", "zeroDotZero", &[2u32]);
+        res.try_add("b", "zeroDotZero", &[1u32]);
+        res.try_add("c", "zeroDotZero", &[3u32]);
+        let syntax = "syn";
+        let units = "";
+        let access = "acc";
+        let status = "";
+        let description = "";
+        let reference = "";
+        let index = "";
+        let augments = "";
+        let defval = "";
+        let val = ParentNum {
+            parent: "z",
+            num: vec![1],
+        };
+        for name in ["a", "b"] {
+            let o = ObjectType {
+                name,
+                syntax,
+                units,
+                access,
+                status,
+                description,
+                reference,
+                index,
+                augments,
+                defval,
+                val: val.clone(),
+                table: false,
+                col: false,
+            };
+            obj_ty.insert(name, o);
+        }
+        assert_eq!(ordered_names(&obj_ty, &res), vec!["b", "a"]);
+    }
+
+    fn tcs_fixture() -> HashMap<&'static str, TextConvention<'static>> {
+        let mut tcs = HashMap::<&str, TextConvention>::new();
+        for tctext in [
+            " Tca ::= TEXTUAL-CONVENTION
+ STATUS current
+ DESCRIPTION 
+  \"blah\"
+ SYNTAX INTEGER (0-255)
+  ",
+            "Tcb ::= TEXTUAL-CONVENTION
+ STATUS current
+ DESCRIPTION 
+  \"blah\"
+ SYNTAX OBJECT IDENTIFIER
+  ",
+        ] {
+            let (_rest, node) = parse_tc(tctext).unwrap();
+            if let MibNode::Tc(tc) = node {
+                tcs.insert(tc.name, tc);
+            }
+        }
+        tcs
+    }
+
+    #[test]
+    fn test_fixdef() {
+        let mut resolver = resolver::Resolver::new();
+        resolver.try_add("a", "zeroDotZero", &[2u32]);
+        let tcs = tcs_fixture();
+        // tcs.insert("tca", TextConvention{name: "tca", hint: "", status: "current"});
+        for (arg, syntax, val_ref) in [
+            ("'text'H", "ignored", "simple_from_str(b\"text\")"),
+            ("a", "RowPointer", "simple_from_vec(&[0, 0, 2])"),
+            ("zeroDotZero", "RowPointer", "simple_from_vec(&[0, 0])"),
+            ("'asdf'h", "DisplayString", "simple_from_str(b\"asdf\")"),
+            ("a", "OBJECT IDENTIFIER", "simple_from_vec(&[0, 0, 2])"),
+            (
+                "zeroDotZero",
+                "OBJECT IDENTIFIER",
+                "simple_from_vec(&[0, 0])",
+            ),
+            (
+                "snakeMe",
+                "OBJECT IDENTIFIER",
+                "simple_from_vec(&ARC_SNAKE_ME)",
+            ),
+            ("27", "Integer32", "simple_from_int(27)"),
+            ("dummy", "BITS {a(0),\n b(1) }", "simple_from_str(b\"\0\")"),
+            ("17", "Tca", "simple_from_int(17)"),
+            ("a", "Tcb", "simple_from_vec(&[0, 0, 2])"),
+        ] {
+            let val = fix_def(arg, syntax, &tcs, &resolver);
+            assert_eq!(val, val_ref);
+        }
+    }
 
     // Big question is how to check writing functions? Use temp file somewhere?
+    fn object_id_fixture() -> Option<ObjectIdentity<'static>> {
+        let (_, node) = parse_object_identity(
+            "c OBJECT-IDENTITY
+    STATUS  current
+    DESCRIPTION
+            \"The OID assigned to DNS MIB work by the IANA.\"
+    ::= { b-2 32 }
+",
+        )
+        .unwrap();
+        if let MibNode::ObIdy(obj) = node {
+            Some(obj)
+        } else {
+            None
+        }
+    }
+
+    fn mod_comp_fixture() -> Option<ModuleCompliance<'static>> {
+        let (_, node) = parse_mod_comp(
+            "c MODULE-COMPLIANCE
+      STATUS  current
+      DESCRIPTION
+          \"The compliance statement for systems supporting
+          the Alarm MIB.\"
+      MODULE -- this module
+          MANDATORY-GROUPS {
+           alarmActiveGroup,
+           alarmModelGroup
+          }
+      GROUP       alarmActiveStatsGroup
+       DESCRIPTION
+           \"This group is optional.\"
+   ::= { a 1 }
+",
+        )
+        .unwrap();
+        if let MibNode::ModCp(obj) = node {
+            Some(obj)
+        } else {
+            None
+        }
+    }
+
+    fn entry_fixture() -> Option<Entry<'static>> {
+        let (_, node) = parse_entry(
+            "AlarmModelEntry ::= SEQUENCE {
+   alarmModelIndex                 Unsigned32,
+   alarmModelState                 Unsigned32,
+   alarmModelNotificationId        OBJECT IDENTIFIER,
+   alarmModelVarbindIndex          Unsigned32,
+   alarmModelVarbindValue          Integer32,
+   alarmModelDescription           SnmpAdminString,
+   alarmModelSpecificPointer       RowPointer,
+   alarmModelVarbindSubtree        OBJECT IDENTIFIER,
+   alarmModelResourcePrefix        OBJECT IDENTIFIER,
+   alarmModelRowStatus             RowStatus
+   }
+
+",
+        )
+        .unwrap();
+        if let MibNode::Ent(obj) = node {
+            Some(obj)
+        } else {
+            None
+        }
+    }
+
+    #[test]
+    fn test_write_arcs() {
+        let mut out = tempfile().unwrap(); // Checked #[test]
+        let mut resolve = resolver::Resolver::new();
+
+        resolve.try_add("a", "zeroDotZero", &[2u32]);
+        resolve.try_add("b", "zeroDotZero", &[3u32]);
+        resolve.try_add("c", "zeroDotZero", &[4u32]);
+        let obj = object_id_fixture().unwrap(); // Checked #[test]
+        let object_ids = vec![obj];
+        let names = vec!["a"];
+        let mod_comps = vec![mod_comp_fixture().unwrap()];
+        let write_res = write_arcs(&mut out, &object_ids, &resolve, &names, &mod_comps);
+        assert!(write_res.is_ok());
+        let w2 = write_object_ids(&mut out, &object_ids);
+        assert!(w2.is_ok());
+        let w3 = write_module_compliances(&mut out, &mod_comps);
+        assert!(w3.is_ok());
+    }
+
+    fn object_type_fixture() -> Option<ObjectType<'static>> {
+        let (_, node) = parse_obj_type(
+            "scal OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+            \"The implementation identification string for the DNS
+            server software in use on the system, for example;
+            `FNS-2.1'\"
+    ::= { dnsServConfig 1 }
+
+",
+        )
+        .unwrap();
+        if let MibNode::ObTy(obj) = node {
+            Some(obj)
+        } else {
+            None
+        }
+    }
+    #[test]
+    fn test_write_scalar() {
+        let mut out = tempfile().unwrap(); // Checked #[test]
+        let mut resolve = resolver::Resolver::new();
+        resolve.try_add("a", "zeroDotZero", &[2u32]);
+        let tcs = tcs_fixture();
+        let data = object_type_fixture().unwrap();
+        let w = write_scalar_struct(&mut out, "scal", &data, &tcs);
+        assert!(w.is_ok());
+    }
+
+    #[test]
+    fn test_write_table() {
+        let mut out = tempfile().unwrap(); // Checked #[test]
+        let mut resolve = resolver::Resolver::new();
+        resolve.try_add("a", "zeroDotZero", &[2u32]);
+        let tcs = tcs_fixture();
+        let data = object_type_fixture().unwrap();
+        let mut otm = HashMap::<&str, ObjectType>::new();
+        otm.insert("a", data.clone());
+        let ent = vec![("a", "b")];
+        let w = write_table_struct(&mut out, "scal", &otm, data, ent, &tcs, &resolve);
+        assert!(w.is_ok());
+    }
+
+    #[test]
+    fn test_write_ot_structs() {
+        let mut out = tempfile().unwrap(); // Checked #[test]
+        let mut resolve = resolver::Resolver::new();
+        resolve.try_add("a", "zeroDotZero", &[2u32]);
+        let tcs = tcs_fixture();
+        let data = object_type_fixture().unwrap();
+        let mut otm = HashMap::<&str, ObjectType>::new();
+        otm.insert("a", data.clone());
+        let mut ent = HashMap::<&str, Entry>::new();
+        ent.insert("z", entry_fixture().unwrap());
+        let w = write_ot_structs(&mut out, &otm, &tcs, &ent, &vec!["a"], &resolve);
+        assert!(w.is_ok());
+        let w2 = write_object_types(&mut out, &otm, &vec!["a"]);
+        assert!(w2.is_ok());
+    }
 }

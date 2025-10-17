@@ -1,7 +1,9 @@
 /target
 .vscode
 users.txt
+lcov.info
 boot-cnt.txt
+l
 Cargo.lock
 src/stubs/*.rs
 tools/__pycache__/

@@ -7,13 +7,13 @@
 //!
 //! Trie might be worth trying in the future, as lookups are O(1), but as most MIBs are small,
 //! logN is about 5 or 6 typically, so the speed up is modest, and real back end operations
-//!  like system calls are vastly slower.
-//!
+//! like system calls are vastly slower. Also, with Trie, it is hard reconstructing key values,
+//! likely to need an allocation to get the Oid back.
 use crate::keeper::OidKeeper;
 use log::info;
 use rasn::types::ObjectIdentifier;
 
-/// Mapping between OID and trait objects that keep the associated data.
+/// Mapping between OIDs and trait objects that keep the associated data.
 pub struct OidMap {
     store: Vec<(ObjectIdentifier, Box<dyn OidKeeper>)>,
 }
@@ -85,7 +85,7 @@ impl OidMap {
         &mut self.store[i].1
     }
 
-    /// Look up trait object by integer index
+    /// Look up Oid by integer index
     pub fn oid(&self, i: usize) -> &ObjectIdentifier {
         &self.store[i].0
     }
@@ -95,11 +95,14 @@ impl OidMap {
     /// Note that if some of these are tables, with potentially many rows,
     /// there can be many more valid oid values.
     ///
+    /// You can also associate a single trait objects with multiple Oid values.
+    ///
     /// Sigh.
     pub fn len(&self) -> usize {
         self.store.len()
     }
 
+    /// True if the store is empty.
     pub fn is_empty(&self) -> bool {
         self.store.is_empty()
     }
@@ -107,6 +110,50 @@ impl OidMap {
 
 /// Return an empty OidMap
 impl Default for OidMap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Mapping between context names and OidMaps
+pub struct ContextMap<'a> {
+    cmap: Vec<(&'a [u8], &'a mut OidMap)>,
+}
+
+impl<'a> ContextMap<'a> {
+    pub fn new() -> Self {
+        ContextMap { cmap: vec![] }
+    }
+
+    /// Insert an context name and its assocaited OidMap
+    pub fn insert(&mut self, context_name: &'a [u8], oid_map: &'a mut OidMap) {
+        self.cmap.push((context_name, oid_map));
+    }
+
+    /// Lookup which OidMap, if any, is associated with the context name
+    ///
+    /// Could change to binary search if there was a use case requiring many contexts,
+    /// but common case is one or two.
+    pub fn lookup(&mut self, context_name: &[u8]) -> Option<&mut OidMap> {
+        for (name, oid_map) in &mut self.cmap {
+            if *name == context_name {
+                return Some(oid_map);
+            }
+        }
+        None
+    }
+
+    /// Sort the store by context name order, and sort the individual OidMaps by Oid order
+    pub fn sort(&mut self) {
+        for (_, omap) in &mut self.cmap {
+            omap.sort();
+        }
+        self.cmap.sort_by(|a, b| a.0.cmp(b.0));
+    }
+}
+
+// Return an empty ContextMap
+impl Default for ContextMap<'_> {
     fn default() -> Self {
         Self::new()
     }
@@ -120,8 +167,11 @@ mod tests {
     use crate::scalar::ScalarMemOid;
     use crate::utils::*;
     use rasn::types::ObjectIdentifier;
+    use rasn_snmp::v3::VarBindValue;
 
     const ARC: [u32; 1] = [1];
+    const ARC_LONG: [u32; 3] = [1, 0, 0];
+    const ARC0: [u32; 1] = [0];
     const ARC2: [u32; 2] = [2, 2];
     const ARC3: [u32; 2] = [1, 3];
 
@@ -129,19 +179,27 @@ mod tests {
     fn test_load1() {
         let value = simple_from_int(42);
         let s: Box<dyn OidKeeper> = Box::new(ScalarMemOid::new(
-            value,
+            value.clone(),
             keeper::OType::Integer,
             keeper::Access::ReadWrite,
         ));
-        let o1 = ObjectIdentifier::new(&ARC).unwrap();
-        let o2 = ObjectIdentifier::new(&ARC2).unwrap();
-        let o3 = ObjectIdentifier::new(&ARC3).unwrap();
+        let t: Box<dyn OidKeeper> = Box::new(ScalarMemOid::new(
+            value.clone(),
+            keeper::OType::Integer,
+            keeper::Access::ReadWrite,
+        ));
+        let o0 = ObjectIdentifier::new(&ARC0).unwrap(); // Checked #[test]
+        let o1 = ObjectIdentifier::new(&ARC).unwrap(); // Checked #[test]
+        let o1_l = ObjectIdentifier::new(&ARC_LONG).unwrap(); // Checked #[test]
+        let o2 = ObjectIdentifier::new(&ARC2).unwrap(); // Checked #[test]
+        let o3 = ObjectIdentifier::new(&ARC3).unwrap(); // Checked #[test]
         let mut om = OidMap::default();
         assert!(om.is_empty());
         om.push(o1.clone(), s);
+        om.push(o3.clone(), t);
         om.sort();
         assert!(!om.is_empty());
-        assert_eq!(om.len(), 1);
+        assert_eq!(om.len(), 2);
         let res = om.search(&o1);
         assert!(res.is_ok());
         let res = om.search(&o2);
@@ -150,5 +208,39 @@ mod tests {
         assert_eq!(*om.oid(0), o1);
         let resn = om.search_next(&o3);
         assert!(resn.is_none());
+        let resn = om.search_next(&o2);
+        assert!(resn.is_none());
+        let resn = om.search_next(&o1);
+        assert!(resn.is_some());
+        let resn = om.search_next(&o1_l);
+        assert!(resn.is_some());
+        let resn = om.search_next(&o0);
+        assert!(resn.is_some());
+        assert_eq!(resn.unwrap().get(o1).unwrap(), VarBindValue::Value(value));
+    }
+
+    #[test]
+    fn test_context_map() {
+        let value = simple_from_int(42);
+        let s: Box<dyn OidKeeper> = Box::new(ScalarMemOid::new(
+            value,
+            keeper::OType::Integer,
+            keeper::Access::ReadWrite,
+        ));
+        let o1 = ObjectIdentifier::new(&ARC).unwrap(); // Checked #[test]
+        let mut om = OidMap::default();
+        assert!(om.is_empty());
+        om.push(o1.clone(), s);
+        om.sort();
+        assert!(!om.is_empty());
+        let mut om2 = OidMap::default();
+        {
+            let mut cm = ContextMap::default();
+            cm.insert(b"test", &mut om);
+            cm.insert(b"aardvark", &mut om2);
+            cm.sort();
+            assert!(cm.lookup(b"other").is_none());
+            assert!(cm.lookup(b"test").is_some());
+        }
     }
 }

@@ -85,7 +85,7 @@ mod tests {
         assert_eq!(
             x,
             ObjectSyntax::Simple(SimpleSyntax::ObjectId(
-                ObjectIdentifier::new(&ARC2).unwrap()
+                ObjectIdentifier::new(&ARC2).unwrap() // Checked #[test]
             ))
         );
     }

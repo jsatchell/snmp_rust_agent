@@ -4,10 +4,11 @@
 //!
 //! The permissions are read in from the file "groups.toml".
 //!
-//! This has a table per user group. The table has three entries,
+//! This has a table per user group. The table has three compulsory entries and one optional,
 //! * name, a string, used to correlate groups with users.
 //! * level, a string, one of three permitted values: noAuthNoPriv, authNoPriv or authPriv
 //! * rules, an array of rule tables. Usefully, you should have at least one rule.
+//! * context, if present is the name of an alternate context that the group applies to. If absent, the default, blank context is assumed.
 //!
 //! The inner rule table has the four entries:
 //! * read, a boolean
@@ -15,11 +16,7 @@
 //! * include, an array of strings. The strings are OID prefixes, in dotted notation, like "1.3.6.1". The rule applies to everything that starts with at least one of the entries.
 //! * exclude, an array of strings, which could be empty. The strings are OID prefixes, in dotted notation, like "1.3.6.1". Anything that matches at least one will be excluded from matching the rule. The prefixes need to lie within an inclusion prefix to have any effect.
 //!
-//! The big difference from the VACM model is these permissions are global, rather than confined
-//! to specific contexts, and there is no provision to change them, except by editing groups.toml.
-//!
-//! If people need separate permissions for multiple contexts, this could be extended, but somebody
-//! would need to show a convincing use case.
+//! The big difference from the VACM model is there is no provision to change them, except by editing groups.toml.
 //!
 //! Not being able to attack them on the wire is a deliberate security feature, not a bug.
 use log::warn;
@@ -43,6 +40,8 @@ pub struct Rule {
     pub read: bool,
     /// Are write operations permitted? Set PDU
     pub write: bool,
+    /// This rule may only apply in a specific context. If not mentioned in the file, the Rule applies everywhere.
+    pub context: Option<Vec<u8>>,
     /// OID prefixes that match this rule. You need at least one entry here; if nothing else try vec![1, 3, 6, 1]
     pub include: Vec<Vec<u32>>,
     /// Possibly empty vector of OID prefixes that are excluded from matching - each should lie wholly within an inclusion prefix.
@@ -60,12 +59,17 @@ impl Perm {
     /// set is true for Set operations, and false otherwise.
     ///
     /// The oid should be the OID for the associated object that will perform the operation.
-    pub fn check(&self, flags: u8, set: bool, oid: &ObjectIdentifier) -> bool {
+    ///
+    /// The context is the context of the calling Pdu;
+    pub fn check(&self, flags: u8, set: bool, oid: &ObjectIdentifier, context: &[u8]) -> bool {
         let sec_level = 1 + (flags & 1) + (flags & 2);
         if sec_level < self.security_level {
             return false;
         }
         for rule in &self.rules {
+            if rule.context.is_some() && context != rule.context.as_ref().unwrap() {
+                continue;
+            }
             if set && !rule.write {
                 //No point examining if rule matches, if it doesn't give permission anyway
                 continue;
@@ -119,6 +123,9 @@ pub fn load_from_str(toml_text: &str) -> Vec<Perm> {
         for rule in trules {
             let read = rule.get("read").unwrap().as_bool().unwrap(); // Startup
             let write = rule.get("write").unwrap().as_bool().unwrap(); // Startup
+            let con_op = rule.get("context");
+            let context = con_op.map(|cstr| cstr.as_str().unwrap().as_bytes().to_vec());
+
             let tinclude = rule.get("include").unwrap().as_array().unwrap(); // Startup
             let texclude = rule.get("exclude").unwrap().as_array().unwrap(); // Startup
             let mut include = vec![];
@@ -150,6 +157,7 @@ pub fn load_from_str(toml_text: &str) -> Vec<Perm> {
             let prule = Rule {
                 read,
                 write,
+                context,
                 include,
                 exclude,
             };
@@ -161,7 +169,7 @@ pub fn load_from_str(toml_text: &str) -> Vec<Perm> {
             "authPriv" => 3,
             _ => {
                 warn!("Unrecognized security level name {level}, denying all access");
-                0
+                255
             }
         };
 
@@ -178,15 +186,20 @@ pub fn load_from_str(toml_text: &str) -> Vec<Perm> {
 pub struct FlagPerm<'a> {
     pub perm: &'a Perm,
     flags: u8,
+    context: &'a [u8],
 }
 
 impl<'a> FlagPerm<'a> {
-    pub fn new(flags: u8, perm: &'a Perm) -> Self {
-        FlagPerm { perm, flags }
+    pub fn new(flags: u8, context: &'a [u8], perm: &'a Perm) -> Self {
+        FlagPerm {
+            perm,
+            flags,
+            context,
+        }
     }
 
     pub fn check(&self, set: bool, oid: &ObjectIdentifier) -> bool {
-        self.perm.check(self.flags, set, oid)
+        self.perm.check(self.flags, set, oid, self.context)
     }
 }
 
@@ -203,12 +216,14 @@ mod tests {
             Rule {
                 read: false,
                 write: false,
+                context: None,
                 include: vec![vec![1u32]],
                 exclude: vec![],
             },
             Rule {
                 read: true,
                 write: true,
+                context: None,
                 include: vec![vec![1u32]],
                 exclude: vec![vec![1u32, 3u32]],
             },
@@ -222,22 +237,24 @@ mod tests {
 
     #[test]
     fn test_check() {
-        let o_in = ObjectIdentifier::new(&ARC_IN).unwrap();
-        let o_out = ObjectIdentifier::new(&ARC_OUT).unwrap();
+        let o_in = ObjectIdentifier::new(&ARC_IN).unwrap(); // Checked #[test]
+        let o_out = ObjectIdentifier::new(&ARC_OUT).unwrap(); // Checked #[test]
         let p = &perms()[0];
-        assert!(p.check(2, true, &o_in));
-        assert!(p.check(2, false, &o_in));
-        assert!(!p.check(0, false, &o_in));
-        assert!(!p.check(2, false, &o_out));
+        let context = [];
+        assert!(p.check(2, true, &o_in, &context));
+        assert!(p.check(2, false, &o_in, &context));
+        assert!(!p.check(0, false, &o_in, &context));
+        assert!(!p.check(2, false, &o_out, &context));
     }
 
     #[test]
     fn test_flag_check() {
-        let o_in = ObjectIdentifier::new(&ARC_IN).unwrap();
-        let o_out = ObjectIdentifier::new(&ARC_OUT).unwrap();
+        let o_in = ObjectIdentifier::new(&ARC_IN).unwrap(); // Checked #[test]
+        let o_out = ObjectIdentifier::new(&ARC_OUT).unwrap(); // Checked #[test]
         let p = &perms()[0];
         let f = FlagPerm {
             perm: p,
+            context: &[],
             flags: 2u8,
         };
         assert!(f.check(true, &o_in));
@@ -247,13 +264,61 @@ mod tests {
 
     #[test]
     fn test_load_from_str() {
+        let o_in = ObjectIdentifier::new(&ARC_IN).unwrap(); // Checked #[test]
         let txt = "
 [[groups]]
 name = \"admin\"
 level = \"authPriv\"
-rules = [ {read = true, write = true, include=[ \"1.3.6.1\" ], exclude = [ \"1.3.6.1.6.3.1.25\"]} ]
+rules = [ {read = true, write = true, include=[ \"1.1\" ], exclude = [ \"1.3.6.1.6.3.1.25\"]} ]
 ";
         let perms = load_from_str(&txt);
         assert_eq!(perms.len(), 1);
+        let p = &perms[0];
+        let f = FlagPerm {
+            perm: p,
+            context: &[6],
+            flags: 2u8,
+        };
+        assert!(f.check(false, &o_in))
+    }
+
+    #[test]
+    fn test_load_from_bad_str() {
+        let o_in = ObjectIdentifier::new(&ARC_IN).unwrap(); // Checked #[test]
+        let txt = "
+[[groups]]
+name = \"admin\"
+level = \"sillyLevel\"
+rules = [ {read = true, write = true, include=[ \"1.1\" ], exclude = [ \"1.3.6.1.6.3.1.25\"]} ]
+";
+        let perms = load_from_str(&txt);
+        assert_eq!(perms.len(), 1);
+        let p = &perms[0];
+        let f = FlagPerm {
+            perm: p,
+            context: &[6],
+            flags: 2u8,
+        };
+        assert!(!f.check(false, &o_in))
+    }
+
+    #[test]
+    fn test_wrong_context() {
+        let o_in = ObjectIdentifier::new(&ARC_IN).unwrap(); // Checked #[test]
+        let txt = "
+[[groups]]
+name = \"admin\"
+level = \"authPriv\"
+rules = [ {read = true, write = true, context=\"a\", include=[ \"1.1\" ], exclude = [ \"1.3.6.1.6.3.1.25\"]} ]
+";
+        let perms = load_from_str(&txt);
+        assert_eq!(perms.len(), 1);
+        let p = &perms[0];
+        let f = FlagPerm {
+            perm: p,
+            context: &[6],
+            flags: 2u8,
+        };
+        assert!(!f.check(false, &o_in))
     }
 }

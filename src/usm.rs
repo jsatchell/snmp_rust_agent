@@ -7,10 +7,10 @@
 //! The fields on the line are:
 //! * the username (no spaces!)
 //! * the group name of the user (must match a name in groups.toml, see perms module)
-//! * the hash type in use. Currently only sha1 is accepted here.
-//! * the localized authentication hash
+//! * the hash type in use. sha1 and the four choices from RFC7630 (sha224, sha256, sha384, sha512) are accepted here.
+//! * the localized authentication hash in hex
 //! * the privacy type. Currently only aes allowed.
-//! * the localized privacy hash
+//! * the localized privacy hash in hex
 //!
 //!
 use crate::perms::Perm;
@@ -24,7 +24,7 @@ use std::fs::File;
 use std::io::{Error, Write};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-enum WhatHash {
+pub enum WhatHash {
     Sha1,
     Sha224,
     Sha256,
@@ -38,7 +38,7 @@ enum WhatHash {
 /// in generating the checksums.
 #[derive(Debug, PartialEq, Eq)]
 pub struct User {
-    what: WhatHash,
+    pub what: WhatHash,
     pub group: Vec<u8>,
     pub perm: Perm,
     pub name: Vec<u8>,
@@ -69,7 +69,7 @@ impl User {
 
         let captures = re.captures(s).ok_or(ParseUserError)?;
 
-        // Change this when we support additional hash types from RFC7630
+        // Includes additional hash types from RFC7630
         let (what, trunc, auth_length) = match &captures["hash"] {
             "sha1" => (WhatHash::Sha1, 20, 12),
             "sha224" => (WhatHash::Sha224, 28, 16),
@@ -271,6 +271,7 @@ fn k2_128_from_ak(ak: &[u8], trunc: usize) -> Vec<u8> {
     eak.to_vec()
 }
 
+/// User database
 #[derive(Debug, PartialEq, Eq)]
 pub struct Users {
     filename: String,
@@ -291,6 +292,9 @@ impl<'a> Users {
         }
     }
 
+    /// Look up user by name.
+    ///
+    /// Get None if name is not known, otherwise Some(&user)
     pub fn lookup_user(&self, name: Vec<u8>) -> Option<&User> {
         // FIXME change to binary search to support many users better
         for user in &self.users {
@@ -303,6 +307,7 @@ impl<'a> Users {
         None
     }
 
+    /// Populate the User list from a multi-line string.
     pub fn load_from_str(&mut self, perms: &'a Vec<Perm>, user_text: &str) {
         for line in user_text.lines() {
             // Startup, who cares?
@@ -313,6 +318,7 @@ impl<'a> Users {
         self.users.sort_by(|a, b| a.name.cmp(&b.name));
     }
 
+    /// Write the User data to the file, one line per user.
     pub fn save_to_file(&self) -> Result<(), Error> {
         let mut save = File::create(&self.filename)?;
         for user in &self.users {
@@ -331,6 +337,7 @@ mod tests {
         let rules = vec![Rule {
             read: true,
             write: true,
+            context: None,
             include: vec![vec![1u32]],
             exclude: vec![],
         }];
@@ -359,13 +366,36 @@ mod tests {
     }
 
     #[test]
-    fn test_bytes() {
-        let s ="test test sha1 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
+    fn wrong_cipher() {
+        let s ="test test sha224 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b des 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
         let pv = perms();
-        let u = User::from_str(s, &pv).unwrap(); // Checked #test
-        let b = u.to_bytes();
-        let l = s.len();
-        assert_eq!(&b[..l], s.as_bytes()); // Trim last byte, as output from to_bytes has \n added.
+        let u = User::from_str(s, &pv);
+        assert!(u.is_err());
+    }
+
+    #[test]
+    fn no_perms() {
+        let s ="test test sha1 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
+        let pv = vec![];
+        let u = User::from_str(s, &pv);
+        assert!(u.is_err());
+    }
+
+    #[test]
+    fn test_bytes() {
+        let cases =["test test sha1 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c",
+          "test test sha224 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0000000000000000 aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c",
+          "test test sha256 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b00000000000000000000000000000000 aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c",
+          "test test sha384 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b00000000000000000000000000000000000000000000000000000000 aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c",
+          "test test sha512 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"
+];
+        for s in cases {
+            let pv = perms();
+            let u = User::from_str(s, &pv).unwrap(); // Checked #test
+            let b = u.to_bytes();
+            let l = s.len();
+            assert_eq!(&b[..l], s.as_bytes()); // Trim last byte, as output from to_bytes ha,s \n added.
+        }
     }
 
     #[test]
@@ -430,11 +460,23 @@ mod tests {
     fn rfc4231_384_case1_test() {
         let s ="test test sha384 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b00000000000000000000000000000000000000000000000000000000 aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
         let pv = perms();
-        let u = User::from_str(s, &pv).unwrap();
+        let u = User::from_str(s, &pv).unwrap(); // Checked #[test]
 
         assert_eq!(
             u.auth_from_bytes(b"Hi There"),
             b"\xaf\xd0\x39\x44\xd8\x48\x95\x62\x6b\x08\x25\xf4\xab\x46\x90\x7f\x15\xf9\xda\xdb\xe4\x10\x1e\xc6\x82\xaa\x03\x4c\x7c\xeb\xc5\x9c"
+        );
+    }
+
+    #[test]
+    fn rfc4231_512_case1_test() {
+        let s ="test test sha512 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
+        let pv = perms();
+        let u = User::from_str(s, &pv).unwrap(); // Checked #[test]
+
+        assert_eq!(
+            u.auth_from_bytes(b"Hi There"),
+            b"\x87\xaa\x7c\xde\xa5\xef\x61\x9d\x4f\xf0\xb4\x24\x1a\x1d\x6c\xb0\x23\x79\xf4\xe2\xce\x4e\xc2\x78\x7a\xd0\xb3\x05\x45\xe1\x7c\xde\xda\xa8\x33\xb7\xd6\xb8\xa7\x02\x03\x8b\x27\x4e\xae\xa3\xf4\xe4"
         );
     }
 

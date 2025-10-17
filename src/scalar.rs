@@ -116,7 +116,7 @@ impl OidKeeper for ScalarMemOid {
         }
     }
 
-    fn commit(&mut self) -> Result<(), OidErr> {
+    fn commit(&mut self, _user: &User) -> Result<(), OidErr> {
         self.value = self.pending.clone();
         self.transaction = false;
         Ok(())
@@ -191,8 +191,8 @@ impl OidKeeper for PersistentScalar {
         self.scalar.rollback()
     }
 
-    fn commit(&mut self) -> Result<(), OidErr> {
-        let comm_res = self.scalar.commit();
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        let comm_res = self.scalar.commit(user);
         let bytes_res = encode::<ObjectSyntax>(&self.scalar.value);
         match bytes_res {
             Ok(bytes) => {
@@ -234,6 +234,7 @@ mod tests {
         let rules = vec![Rule {
             read: true,
             write: true,
+            context: None,
             include: vec![vec![1u32]],
             exclude: vec![],
         }];
@@ -292,7 +293,7 @@ mod tests {
         assert!(b_res.is_ok());
         let set_rs = pscl.set(oid2.clone(), vb, &user);
         assert!(set_rs.is_ok());
-        let c_res = pscl.commit();
+        let c_res = pscl.commit(&user);
         assert!(c_res.is_ok());
         let res = pscl.get(oid2.clone());
         assert!(res.is_ok());
@@ -343,9 +344,9 @@ mod tests {
         assert!(s.begin_transaction().is_ok());
         assert!(s.set(oid2.clone(), vb.clone(), &user).is_ok());
         // No effect until commit
-        assert_eq!(s.get(oid2.clone()).unwrap(), VarBindValue::Value(value));
-        assert!(s.commit().is_ok());
-        assert_eq!(s.get(oid2.clone()).unwrap(), vb);
+        assert_eq!(s.get(oid2.clone()).unwrap(), VarBindValue::Value(value)); // Checked #[test]
+        assert!(s.commit(&user).is_ok());
+        assert_eq!(s.get(oid2.clone()).unwrap(), vb); // Checked #[test]
     }
 
     #[test]
@@ -364,9 +365,9 @@ mod tests {
         assert!(s.set(oid2.clone(), vb8.clone(), &user).is_err());
         assert!(s.set(oid2.clone(), vb.clone(), &user).is_ok());
         // No effect until commit
-        assert_eq!(s.get(oid2.clone()).unwrap(), VarBindValue::Value(value));
-        assert!(s.commit().is_ok());
-        assert_ne!(s.get(oid2.clone()).unwrap(), vb);
+        assert_eq!(s.get(oid2.clone()).unwrap(), VarBindValue::Value(value)); // Checked #[test]
+        assert!(s.commit(&user).is_ok());
+        assert_ne!(s.get(oid2.clone()).unwrap(), vb); // Checked #[test]
     }
 
     #[test]
@@ -385,9 +386,9 @@ mod tests {
         assert!(s.set(oid2.clone(), vb8.clone(), &user).is_err());
         assert!(s.set(oid2.clone(), vb.clone(), &user).is_ok());
         // No effect until commit
-        assert_eq!(s.get(oid2.clone()).unwrap(), VarBindValue::Value(value));
-        assert!(s.commit().is_ok());
-        let vb0 = s.get(oid2.clone()).unwrap();
+        assert_eq!(s.get(oid2.clone()).unwrap(), VarBindValue::Value(value)); // Checked #[test]
+        assert!(s.commit(&user).is_ok());
+        let vb0 = s.get(oid2.clone()).unwrap(); // Checked #[test]
         if let VarBindValue::Value(s0) = vb0 {
             assert_eq!(s0, simple_from_int(0));
         }

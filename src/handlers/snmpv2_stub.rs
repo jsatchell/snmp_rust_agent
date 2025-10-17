@@ -121,8 +121,8 @@ impl OidKeeper for KeepSnmpInGetNexts {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -169,8 +169,8 @@ impl OidKeeper for KeepSnmpInTotalSetVars {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -222,8 +222,8 @@ impl OidKeeper for KeepSnmpSetSerialNo {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -269,8 +269,8 @@ impl OidKeeper for KeepSnmpOutGetResponses {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -316,8 +316,8 @@ impl OidKeeper for KeepSnmpOutGetNexts {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -364,8 +364,8 @@ impl OidKeeper for KeepSnmpOutPkts {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -432,8 +432,8 @@ impl OidKeeper for KeepSysServices {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -481,8 +481,8 @@ impl OidKeeper for KeepSnmpInBadValues {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -531,7 +531,7 @@ impl OidKeeper for KeepSysUpTime {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         Ok(())
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
+    fn commit(&mut self, _user: &User) -> Result<(), OidErr> {
         Ok(())
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
@@ -580,8 +580,8 @@ impl OidKeeper for KeepSnmpInNoSuchNames {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -628,8 +628,8 @@ impl OidKeeper for KeepSnmpInGetResponses {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -675,8 +675,8 @@ impl OidKeeper for KeepSnmpInTraps {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -733,8 +733,8 @@ impl OidKeeper for KeepSysObjectID {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -811,8 +811,8 @@ impl OidKeeper for KeepSysORTable {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.table.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.table.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.table.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.table.rollback()
@@ -864,8 +864,8 @@ impl OidKeeper for KeepSysContact {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -912,8 +912,8 @@ impl OidKeeper for KeepSnmpInGenErrs {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -969,8 +969,8 @@ impl OidKeeper for KeepSnmpInBadCommunityUses {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -1029,8 +1029,8 @@ impl OidKeeper for KeepSnmpInBadCommunityNames {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -1082,8 +1082,8 @@ impl OidKeeper for KeepSysDescr {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -1137,8 +1137,8 @@ impl OidKeeper for KeepSnmpSilentDrops {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -1184,7 +1184,7 @@ impl OidKeeper for KeepSysORLastChange {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         Ok(())
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
+    fn commit(&mut self, _user: &User) -> Result<(), OidErr> {
         Ok(())
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
@@ -1231,7 +1231,7 @@ impl OidKeeper for KeepSnmpInASNParseErrs {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         Ok(())
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
+    fn commit(&mut self, _user: &User) -> Result<(), OidErr> {
         Ok(())
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
@@ -1280,8 +1280,8 @@ impl OidKeeper for KeepSnmpInTooBigs {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -1327,8 +1327,8 @@ impl OidKeeper for KeepSnmpInPkts {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -1375,8 +1375,8 @@ impl OidKeeper for KeepSnmpInGetRequests {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -1423,8 +1423,8 @@ impl OidKeeper for KeepSnmpOutNoSuchNames {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -1471,8 +1471,8 @@ impl OidKeeper for KeepSnmpOutBadValues {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -1526,8 +1526,8 @@ impl OidKeeper for KeepSnmpEnableAuthenTraps {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -1578,8 +1578,8 @@ impl OidKeeper for KeepSysLocation {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -1626,8 +1626,8 @@ impl OidKeeper for KeepSnmpOutTooBigs {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -1674,8 +1674,8 @@ impl OidKeeper for KeepSnmpOutGenErrs {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -1722,8 +1722,8 @@ impl OidKeeper for KeepSnmpInBadVersions {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -1775,8 +1775,8 @@ impl OidKeeper for KeepSnmpInReadOnlys {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -1824,8 +1824,8 @@ impl OidKeeper for KeepSnmpInTotalReqVars {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -1871,8 +1871,8 @@ impl OidKeeper for KeepSnmpOutGetRequests {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -1918,8 +1918,8 @@ impl OidKeeper for KeepSnmpOutSetRequests {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -1966,8 +1966,8 @@ impl OidKeeper for KeepSnmpInSetRequests {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -2019,8 +2019,8 @@ impl OidKeeper for KeepSysName {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -2073,8 +2073,8 @@ impl OidKeeper for KeepSnmpProxyDrops {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()
@@ -2120,8 +2120,8 @@ impl OidKeeper for KeepSnmpOutTraps {
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
     }
-    fn commit(&mut self) -> Result<(), OidErr> {
-        self.scalar.commit()
+    fn commit(&mut self, user: &User) -> Result<(), OidErr> {
+        self.scalar.commit(user)
     }
     fn rollback(&mut self) -> Result<(), OidErr> {
         self.scalar.rollback()

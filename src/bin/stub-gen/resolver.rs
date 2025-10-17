@@ -126,12 +126,20 @@ mod tests {
     }
 
     #[test]
+    #[should_panic]
+    fn test_failure() {
+        let res = Resolver::new();
+        let _ = res.lookup("no-such-key");
+    }
+
+    #[test]
     fn test_try_add() {
         let mut res = Resolver::new();
         assert!(!res.check_name("testInsert"));
         res.try_add("testInsert", "zeroDotZero", &[2u32, 3u32]);
         assert!(res.check_name("testInsert"));
         assert_eq!([0u32, 0u32, 2u32, 3u32], res.lookup("testInsert"));
+        res.try_add("testInsert", "zeroDotZero", &[2u32, 4u32]);
     }
 
     #[test]
