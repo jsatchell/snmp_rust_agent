@@ -22,6 +22,7 @@ use sha2;
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{Error, Write};
+use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum WhatHash {
@@ -175,7 +176,11 @@ impl User {
     }
 
     /// Key change algorithm from RFC3414#page-84 for HMAC SHA-1.
-    /// In this case, L=20, K=20. data must be 40 bytes.
+    /// In the Sha-1 case, L=20, K=20. data must be 40 bytes. For the other hashes
+    /// * Sha224, L=28, K=28, data 56 bytes
+    /// * Sha256, L=32, K=32, data 64 bytes
+    /// * Sha384, L=48, K=48, data 96 bytes
+    /// * Sha256, L=64, K=64, data 128 bytes
     pub fn key_change(&self, data: &[u8], auth_priv: bool) -> Vec<u8> {
         let mut temp = if auth_priv {
             self.auth_key.borrow().clone()
@@ -205,6 +210,12 @@ impl User {
         new_key
     }
 
+    /// Apply the key change algorithm to update a password.
+    ///
+    /// If auth_priv is true, update the authentication password, otherwise update teh privacy password.
+    ///
+    /// The user struct has clean changed to false, which triggers the agent to save an updated password
+    /// file.
     pub fn update_password(&self, new_val: &[u8], auth_priv: bool) -> Result<(), Error> {
         let new_key = self.key_change(new_val, auth_priv);
         if auth_priv {
@@ -274,20 +285,24 @@ fn k2_128_from_ak(ak: &[u8], trunc: usize) -> Vec<u8> {
 /// User database
 #[derive(Debug, PartialEq, Eq)]
 pub struct Users {
-    filename: String,
+    filename: PathBuf,
     pub users: Vec<User>,
 }
 
 impl Default for Users {
+    /// Create a Users struct associated with the sample users file in the crate.
     fn default() -> Self {
-        Self::new()
+        Self::new(PathBuf::from("users.txt"))
     }
 }
 
 impl<'a> Users {
-    pub fn new() -> Self {
+    /// Create a new, empty Users struct, and associate with a path to save updates in.
+    ///
+    /// pathbuf should be a path to a file that is both readable and writeable by the Agent process.
+    pub fn new(pathbuf: PathBuf) -> Self {
         Users {
-            filename: "users.txt".to_string(),
+            filename: pathbuf,
             users: vec![],
         }
     }
@@ -308,6 +323,9 @@ impl<'a> Users {
     }
 
     /// Populate the User list from a multi-line string.
+    ///
+    /// For consistency with any possible later save, should be the contents of the
+    /// file name passed to new.
     pub fn load_from_str(&mut self, perms: &'a Vec<Perm>, user_text: &str) {
         for line in user_text.lines() {
             // Startup, who cares?
@@ -332,6 +350,7 @@ impl<'a> Users {
 mod tests {
     use super::*;
     use crate::perms::Rule;
+    use std::env::temp_dir;
 
     fn perms() -> Vec<Perm> {
         let rules = vec![Rule {
@@ -510,6 +529,38 @@ mod tests {
     }
 
     #[test]
+    fn test_priv_key_change() {
+        // Appendix A5.2 of RFC3414, localized key from A3.2
+        let hex_data = b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x9c\x10\x17\xf4\xfd\x48\x3d\x2d\xe8\xd5\xfa\xdb\xf8\x43\x92\xcb\x06\x45\x70\x51";
+        let p = perms();
+        let u = User {
+            what: WhatHash::Sha1,
+            group: vec![0, 1],
+            perm: p[0].clone(),
+            name: b"test".to_vec(),
+            auth_key: RefCell::new(
+                b"\x66\x95\xfe\xbc\x92\x88\xe3\x62\x82\x23\x5f\xc7\x15\x1f\x12\x84\x97\xb3\x8f\x3f"
+                    .to_vec(),
+            ),
+            auth_length: 12,
+            trunc: 20,
+            priv_key: RefCell::new(
+                b"\x66\x95\xfe\xbc\x92\x88\xe3\x62\x82\x23\x5f\xc7\x15\x1f\x12\x84\x97\xb3\x8f\x3f"
+                    .to_vec(),
+            ),
+            k1: RefCell::new([0; 64].to_vec()),
+            k2: RefCell::new([0; 64].to_vec()),
+            clean: RefCell::new(true),
+        };
+        let new_k = u.key_change(hex_data, false);
+        assert_eq!(
+            new_k,
+            b"\x78\xe2\xdc\xce\x79\xd5\x94\x03\xb5\x8c\x1b\xba\xa5\xbf\xf4\x63\x91\xf1\xcd\x25"
+                .to_vec()
+        );
+    }
+
+    #[test]
     fn test_passwd_update() {
         // Appendix A5.2 of RFC3414, localized key from A3.2
         let hex_data = b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x9c\x10\x17\xf4\xfd\x48\x3d\x2d\xe8\xd5\xfa\xdb\xf8\x43\x92\xcb\x06\x45\x70\x51";
@@ -549,5 +600,22 @@ mod tests {
         assert!(!u.users.is_empty());
         assert!(u.lookup_user(b"test".to_vec()).is_some());
         assert!(u.lookup_user(b"not".to_vec()).is_none());
+    }
+
+    #[test]
+    fn test_save_file() {
+        let mut u = Users::default();
+        let mut ufile = temp_dir();
+        ufile.push("ufile");
+        u.filename = ufile;
+        assert!(u.users.is_empty());
+        let user_text = "test test sha1 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
+        let pv = perms();
+        u.load_from_str(&pv, user_text);
+        assert!(!u.users.is_empty());
+        assert!(u.lookup_user(b"test".to_vec()).is_some());
+        assert!(u.lookup_user(b"not".to_vec()).is_none());
+        let sav_res = u.save_to_file();
+        assert!(sav_res.is_ok());
     }
 }

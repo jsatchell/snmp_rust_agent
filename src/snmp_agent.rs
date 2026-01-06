@@ -56,9 +56,9 @@ fn get_increment_boot_cnt() -> isize {
             break;
         }
         retry_counter += 1;
-        sleep(Duration::new(0, 10000)); // 10ms sleep, long enough for other thread to clear off
-        if retry_counter > 10 {
-            panic!("Boot count not parsed after 10 retries - probably corrupted file or hardware failure.");
+        sleep(Duration::new(0, retry_counter * 5000)); // 5ms times retry sleep, long enough for other thread to clear off
+        if retry_counter > 12 {
+            panic!("Boot count not parsed after 12 retries - probably corrupted file or hardware failure.");
         }
     }
     boots += 1;
@@ -99,6 +99,12 @@ impl Agent {
     /// addr_str is the address to listen on - often "0.0.0.0:161" can be a good choice
     /// But systems with multiple interfaces (like a firewall, router or crypto) might only listen
     /// on an internal address.
+    ///
+    /// send_auth_fails controls if notifications are sent for authoraisation failures. If true, and
+    /// you have notifications configured, your notification end point could be bombarded with a stream
+    /// of traffic, even if an attacker has no access to it, but does have access to the agent. If false,
+    /// the manager will never find out about the attacks at all. Correct choice
+    /// depends on a balanced risk analysis in the specific deployment architecture.
     pub fn build(eid: OctetString, addr_str: &str, send_auth_fails: bool) -> Self {
         let sock = UdpSocket::bind(addr_str).expect("Couldn't bind to address");
 
@@ -326,9 +332,6 @@ impl Agent {
         roid: ObjectIdentifier,
         oid_map: &mut OidMap,
         vb: &mut Vec<VarBind>,
-        //error_status: &mut u32,
-        //error_index: &mut u32,
-        //vb_cnt: u32,
         parg: &mut PduArg,
         perm: &FlagPerm,
     ) {
@@ -418,13 +421,21 @@ impl Agent {
                                 vb.push(bind);
                                 return;
                             }
-                            // FIXME, map errors here - could be empty table!
-                            Err(_) => {
-                                /*  vb.push(VarBind {
+                            // Map errors here - could be empty table!
+                            Err(err) => {
+                                let val = match err {
+                                    OidErr::GenErr => VarBindValue::Unspecified,
+                                    OidErr::OutOfRange => VarBindValue::EndOfMibView,
+                                    OidErr::NoAccess => VarBindValue::Unspecified,
+                                    OidErr::NoSuchInstance => VarBindValue::NoSuchInstance,
+                                    OidErr::NoSuchName => VarBindValue::NoSuchObject,
+                                    _ => VarBindValue::Unspecified,
+                                };
+                                vb.push(VarBind {
                                     name: oid1.clone(),
-                                    value: VarBindValue::EndOfMibView,
+                                    value: val,
                                 });
-                                return; */
+                                return;
                             }
                         }
                     }
@@ -546,16 +557,19 @@ impl Agent {
                     vb_cnt += 1;
                     let okeep = &mut oid_map.idx(which);
                     let set_result = (**okeep).set(roid.clone(), vbind.value.clone(), user);
-                    if let Err(OidErr::WrongType) = set_result {
-                        // FIXME Need to catch size, data type etc
-                        error_status = Pdu::ERROR_STATUS_WRONG_TYPE;
+                    if set_result.is_err() {
+                        // Map all the error types
+                        error_status = match set_result.err() {
+                            Some(OidErr::WrongType) => Pdu::ERROR_STATUS_WRONG_TYPE,
+                            Some(OidErr::NoSuchInstance) => Pdu::ERROR_STATUS_NO_SUCH_NAME,
+                            _ => Pdu::ERROR_STATUS_GEN_ERR,
+                        };
+
                         vb.push(VarBind {
                             name: roid.clone(),
                             value: vbind.value,
                         });
-                    } else {
-                        let svalue = set_result.unwrap(); // Checked, Error caught above
-
+                    } else if let Ok(svalue) = set_result {
                         vb.push(VarBind {
                             name: roid.clone(),
                             value: svalue,
@@ -711,7 +725,7 @@ impl Agent {
     /// In some cases the message is simply dropped, as no sane processing is possible, and
     /// then None, None is returned.
     ///
-    /// As a side effect various statistical counters in the Agent struct can be incremented.
+    /// As a side effect, various statistical counters in the Agent struct can be incremented.
     fn process_message<'a>(
         &mut self,
         context_map: &'a mut ContextMap,
@@ -1063,7 +1077,7 @@ mod tests {
     }
 
     const ARC2: [u32; 2] = [1, 6];
-    // const ARC3: [u32; 5] = [1, 6, 1, 2, 1];
+    const ARC3: [u32; 2] = [1, 7];
 
     fn tab_fixture() -> Box<dyn OidKeeper> {
         let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); // Checked #[test]
@@ -1122,7 +1136,7 @@ mod tests {
     }
 
     fn users_fixture<'a>(pv: &'a Vec<Perm>) -> usm::Users {
-        let mut u = usm::Users::new();
+        let mut u = usm::Users::default();
         let s ="test test sha1 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
         u.load_from_str(pv, s);
         u
@@ -1249,6 +1263,7 @@ mod tests {
         let agent = make_agent("3165");
         let message_id = Integer::from(213);
         let zb = OctetString::from_static(b"");
+        let z12 = OctetString::from_static(&[0; 12]);
         let gp = get_pdu(&ARC2);
         let eid = static_engine_id(1, b"besttest");
         let scoped_pdu = ScopedPdu {
@@ -1266,15 +1281,155 @@ mod tests {
                 authoritative_engine_time: Integer::from(8),
                 user_name: zb.clone(),
                 authentication_parameters: zb.clone(),
+                privacy_parameters: z12,
+            };
+            let message = agent.prepare_back(message_id, resp, &user, usp, true);
+            assert_eq!(message.version, Integer::from(3));
+        }
+    }
+
+    #[test]
+    fn test_do_scoped_pdu_bad_get() {
+        let pv = perms();
+        let user = user_fixture(&pv);
+        let agent = make_agent("3166");
+        let message_id = Integer::from(213);
+        let zb = OctetString::from_static(b"");
+        let z12 = OctetString::from_static(&[0; 12]);
+        let gp = get_pdu(&ARC3);
+        let eid = static_engine_id(1, b"besttest");
+        let scoped_pdu = ScopedPdu {
+            engine_id: eid.clone(),
+            name: zb.clone(),
+            data: Pdus::GetRequest(gp),
+        };
+        let mut oid_map = make_oid_map();
+        let opt_resp = agent.do_scoped_pdu(2u8, &user, &scoped_pdu, &mut oid_map);
+        assert!(opt_resp.is_some());
+        if let Some(resp) = opt_resp {
+            let usp: USMSecurityParameters = USMSecurityParameters {
+                authoritative_engine_id: eid,
+                authoritative_engine_boots: Integer::from(7),
+                authoritative_engine_time: Integer::from(8),
+                user_name: zb.clone(),
+                authentication_parameters: zb.clone(),
+                privacy_parameters: z12,
+            };
+            let message = agent.prepare_back(message_id, resp, &user, usp, true);
+            assert_eq!(message.version, Integer::from(3));
+        }
+    }
+
+    #[test]
+    fn test_do_scoped_pdu_get_next() {
+        let pv = perms();
+        let user = user_fixture(&pv);
+        let agent = make_agent("3167");
+        let message_id = Integer::from(213);
+        let zb = OctetString::from_static(b"");
+        let gp = get_next_pdu(&ARC2);
+        let eid = static_engine_id(1, b"besttest");
+        let scoped_pdu = ScopedPdu {
+            engine_id: eid.clone(),
+            name: zb.clone(),
+            data: Pdus::GetNextRequest(gp),
+        };
+        let mut oid_map = make_oid_map();
+        let opt_resp = agent.do_scoped_pdu(2u8, &user, &scoped_pdu, &mut oid_map);
+        assert!(opt_resp.is_some());
+        if let Some(resp) = opt_resp {
+            let usp: USMSecurityParameters = USMSecurityParameters {
+                authoritative_engine_id: eid,
+                authoritative_engine_boots: Integer::from(7),
+                authoritative_engine_time: Integer::from(8),
+                user_name: zb.clone(),
+                authentication_parameters: zb.clone(),
                 privacy_parameters: zb,
             };
             let message = agent.prepare_back(message_id, resp, &user, usp, false);
             assert_eq!(message.version, Integer::from(3));
         }
     }
+
+    #[test]
+    fn test_do_scoped_pdu_get_bulk() {
+        let pv = perms();
+        let user = user_fixture(&pv);
+        let agent = make_agent("3168");
+        let message_id = Integer::from(213);
+        let zb = OctetString::from_static(b"");
+        let gp = get_bulk_pdu(&ARC2);
+        let eid = static_engine_id(1, b"besttest");
+        let scoped_pdu = ScopedPdu {
+            engine_id: eid.clone(),
+            name: zb.clone(),
+            data: Pdus::GetBulkRequest(gp),
+        };
+        let mut oid_map = make_oid_map();
+        let opt_resp = agent.do_scoped_pdu(2u8, &user, &scoped_pdu, &mut oid_map);
+        assert!(opt_resp.is_some());
+        if let Some(resp) = opt_resp {
+            let usp: USMSecurityParameters = USMSecurityParameters {
+                authoritative_engine_id: eid,
+                authoritative_engine_boots: Integer::from(7),
+                authoritative_engine_time: Integer::from(8),
+                user_name: zb.clone(),
+                authentication_parameters: zb.clone(),
+                privacy_parameters: zb,
+            };
+            let message = agent.prepare_back(message_id, resp, &user, usp, false);
+            assert_eq!(message.version, Integer::from(3));
+        }
+    }
+
+    #[test]
+    fn test_do_scoped_pdu_set() {
+        let pv = perms();
+        let user = user_fixture(&pv);
+        let agent = make_agent("3169");
+        let zb = OctetString::from_static(b"");
+
+        let gp = set_pdu(&ARC2, simple_from_int(4));
+        let eid = static_engine_id(1, b"besttest");
+        let scoped_pdu = ScopedPdu {
+            engine_id: eid.clone(),
+            name: zb.clone(),
+            data: Pdus::SetRequest(gp),
+        };
+        let mut oid_map = make_oid_map();
+        let opt_resp = agent.do_scoped_pdu(2u8, &user, &scoped_pdu, &mut oid_map);
+        assert!(opt_resp.is_some());
+        if let Some(resp) = opt_resp {
+            assert_eq!(resp.0.error_status, Pdu::ERROR_STATUS_NO_SUCH_NAME);
+            assert_eq!(resp.0.error_index, 0);
+        }
+    }
+
+    #[test]
+    fn test_do_scoped_pdu_set_wrong() {
+        let pv = perms();
+        let user = user_fixture(&pv);
+        let agent = make_agent("3170");
+        let zb = OctetString::from_static(b"");
+
+        let gp = set_pdu(&ARC3, simple_from_int(4));
+        let eid = static_engine_id(1, b"besttest");
+        let scoped_pdu = ScopedPdu {
+            engine_id: eid.clone(),
+            name: zb.clone(),
+            data: Pdus::SetRequest(gp),
+        };
+        let mut oid_map = make_oid_map();
+        let opt_resp = agent.do_scoped_pdu(2u8, &user, &scoped_pdu, &mut oid_map);
+        assert!(opt_resp.is_some());
+        if let Some(resp) = opt_resp {
+            assert_eq!(resp.0.error_status, Pdu::ERROR_STATUS_NO_SUCH_NAME);
+        }
+    }
+
     #[test]
     fn test_reports() {
-        let agent = make_agent("3166");
+        let agent = make_agent("3171");
         let id_message = agent.id_response(7, Integer::from(8));
         assert_eq!(id_message.version, Integer::from(3));
         let auth_message = agent.auth_failure(8, Integer::from(9));
@@ -1285,7 +1440,7 @@ mod tests {
 
     #[test]
     fn test_wrong_and_good_auth() {
-        let mut agent = make_agent("3167");
+        let mut agent = make_agent("3172");
         let pv = perms();
         let user = user_fixture(&pv);
         let zb = OctetString::from_static(b"");
@@ -1321,7 +1476,6 @@ mod tests {
         assert!(auth);
         let _ = message.encode_security_parameters(rasn::Codec::Ber, &usp);
         let sauth = agent.set_auth(&mut message, &user);
-        println!("Set auth returned {sauth:?}");
         let r_sp: Result<USMSecurityParameters, Box<dyn Display>> =
             message.decode_security_parameters(rasn::Codec::Ber);
         let usp: USMSecurityParameters = r_sp.ok().expect("Errors caught above");
@@ -1332,7 +1486,7 @@ mod tests {
 
     #[test]
     fn test_process_message() {
-        let mut agent = make_agent("3168");
+        let mut agent = make_agent("3173");
         let pv = perms();
         let users = users_fixture(&pv);
         let zb = OctetString::from_static(b"");
@@ -1371,6 +1525,95 @@ mod tests {
         let (msg, usr) = agent.process_message(&mut context_map, &users, &mut message);
         assert!(usr.is_none());
         assert!(msg.is_some());
+    }
+
+    #[test]
+    fn test_process_message_no_user() {
+        let mut agent = make_agent("3174");
+        let pv = perms();
+        let users = users_fixture(&pv);
+        let zb = OctetString::from_static(b"");
+        let gp = get_pdu(&ARC2);
+        let eid = static_engine_id(1, b"besttest");
+        let usp: USMSecurityParameters = USMSecurityParameters {
+            authoritative_engine_id: eid.clone(),
+            authoritative_engine_boots: Integer::from(0),
+            authoritative_engine_time: Integer::from(8),
+            user_name: OctetString::from_static(b"zoro"),
+            authentication_parameters: OctetString::from_static(&[0u8; 16]),
+            privacy_parameters: zb.clone(),
+        };
+        let scpl = ScopedPdu {
+            engine_id: eid.clone(),
+            name: zb.clone(),
+            data: Pdus::GetRequest(gp),
+        };
+        let hd = HeaderData {
+            message_id: Integer::from(7),
+            max_size: Integer::from(7650),
+            flags: OctetString::from_static(&[3]),
+            security_model: Integer::from(3),
+        };
+        let mut message = Message {
+            version: Integer::from(3),
+            global_data: hd,
+            security_parameters: OctetString::from_static(&[0u8; 16]),
+            scoped_data: ScopedPduData::CleartextPdu(scpl),
+        };
+        let _ = message.encode_security_parameters(rasn::Codec::Ber, &usp);
+        let mut oid_map = make_oid_map();
+        let mut context_map = ContextMap::new();
+        context_map.insert(b"", &mut oid_map);
+
+        let (msg, usr) = agent.process_message(&mut context_map, &users, &mut message);
+        assert!(usr.is_none());
+        assert!(msg.is_some());
+    }
+
+    #[test]
+    fn test_process_message_no_engine_id() {
+        let mut agent = make_agent("3175");
+        let pv = perms();
+        let users = users_fixture(&pv);
+        let zb = OctetString::from_static(b"");
+        let gp = get_pdu(&ARC2);
+        // let eid = static_engine_id(1, b"besttest");
+        let usp: USMSecurityParameters = USMSecurityParameters {
+            authoritative_engine_id: zb.clone(),
+            authoritative_engine_boots: Integer::from(0),
+            authoritative_engine_time: Integer::from(8),
+            user_name: zb.clone(),
+            authentication_parameters: OctetString::from_static(&[0u8; 16]),
+            privacy_parameters: zb.clone(),
+        };
+        let scpl = ScopedPdu {
+            engine_id: zb.clone(),
+            name: zb.clone(),
+            data: Pdus::GetRequest(gp),
+        };
+        let hd = HeaderData {
+            message_id: Integer::from(7),
+            max_size: Integer::from(7650),
+            flags: OctetString::from_static(&[3]),
+            security_model: Integer::from(3),
+        };
+        let mut message = Message {
+            version: Integer::from(3),
+            global_data: hd,
+            security_parameters: OctetString::from_static(&[0u8; 16]),
+            scoped_data: ScopedPduData::CleartextPdu(scpl),
+        };
+        let _ = message.encode_security_parameters(rasn::Codec::Ber, &usp);
+        let mut oid_map = make_oid_map();
+        let mut context_map = ContextMap::new();
+        context_map.insert(b"", &mut oid_map);
+
+        let (msg, usr) = agent.process_message(&mut context_map, &users, &mut message);
+        assert!(usr.is_none());
+        assert!(msg.is_some());
+        if let Some(mess) = msg {
+            assert_eq!(mess.version, Integer::from(3));
+        }
     }
     // FIXME add tests for more set cases
 }

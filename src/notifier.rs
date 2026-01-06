@@ -17,7 +17,7 @@ const ARC_SYS_UP_TIME: [u32; 9] = [1, 3, 6, 1, 2, 1, 1, 3, 0];
 
 #[derive(Debug)]
 /// Data structure to be passed down the channel to trigger a notification.
-///  
+///
 pub struct Notification {
     /// OID that identifies the notification type
     pub name: ObjectIdentifier,
@@ -115,7 +115,7 @@ impl Notifier {
     /// Send an SNMP V2 Trap.
     ///
     /// This is fire and forget - there is no check that the packet has arrived at the far end.
-    ///     
+    ///
     pub fn msg_v2_trap(&mut self, num: Notification) -> Message<Trap> {
         let up = self.start_time.elapsed().as_millis() / 10;
         let run_time = up.try_into().unwrap_or(u32::MAX); // Checked, alternative value

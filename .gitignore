@@ -6,4 +6,5 @@ boot-cnt.txt
 l
 Cargo.lock
 src/stubs/*.rs
+src/target/
 tools/__pycache__/

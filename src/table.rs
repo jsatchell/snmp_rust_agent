@@ -3,6 +3,7 @@ use crate::usm::User;
 use log::{debug, warn};
 use num_traits::cast::ToPrimitive;
 use rasn::types::{Integer, ObjectIdentifier, OctetString};
+use rasn_smi::v1::IpAddress;
 use rasn_smi::v2::{ApplicationSyntax, ObjectSyntax, SimpleSyntax};
 use rasn_snmp::v3::{VarBind, VarBindValue};
 
@@ -118,15 +119,16 @@ impl TableMemOid {
                             ret.push(bl);
                         }
                     }
-                    ApplicationSyntax::Counter(_) => {}
-                    ApplicationSyntax::BigCounter(_) => {}
                     ApplicationSyntax::Ticks(t) => {
                         ret.push(t.0);
                     }
-                    _ => {
-                        // Could be timeTicks or Unsigned, which I haven't met yet
-                        panic!("Unsupported type in ApplicationWide index construction {os:?}")
+                    ApplicationSyntax::Unsigned(u) => {
+                        ret.push(u.0);
                     }
+                    // These three should never be used for indices, just ignore. Maybe should emit warning?
+                    ApplicationSyntax::Counter(_) => {}
+                    ApplicationSyntax::BigCounter(_) => {}
+                    ApplicationSyntax::Arbitrary(_) => {}
                 },
             }
         }
@@ -174,6 +176,7 @@ impl TableMemOid {
                             let item = *itemp;
                             text.push(item.try_into().unwrap()); // Checked, string is bytes, so everything fits in u8
                         }
+                        idx_idx += slen;
                     }
                     row[*index_column_number - 1] =
                         ObjectSyntax::Simple(SimpleSyntax::String(OctetString::from_slice(&text)));
@@ -193,11 +196,23 @@ impl TableMemOid {
                             let item = *itemp;
                             arc.push(item);
                         }
+                        idx_idx += slen;
                     }
                     row[*index_column_number - 1] = ObjectSyntax::Simple(SimpleSyntax::ObjectId(
                         ObjectIdentifier::new(arc).unwrap().to_owned(), // Checked valid if base valid
                                                                         // (which would be caught earlier), or index not too long
                     ));
+                }
+                OType::Address => {
+                    let mut arc: [u8; 4] = [0; 4];
+                    for (cnt, itemp) in idx[idx_idx..(idx_idx + 4)].iter().enumerate() {
+                        let item: u8 = *itemp as u8;
+                        arc[cnt] = item;
+                    }
+                    idx_idx += 4;
+                    row[*index_column_number - 1] = ObjectSyntax::ApplicationWide(
+                        ApplicationSyntax::Address(IpAddress(arc.into())),
+                    );
                 }
                 _ => {
                     // Could be address, which I haven't met yet
@@ -208,6 +223,7 @@ impl TableMemOid {
         // Mark row as not ready
         for (n, otype) in self.otypes.iter().enumerate() {
             if *otype == OType::RowStatus {
+                // It would be weird but harmless to have more than one RowStatus column.
                 row[n] = ObjectSyntax::Simple(SimpleSyntax::Integer(Integer::from(
                     ROW_STATUS_NOT_READY,
                 )));
@@ -227,8 +243,8 @@ impl TableMemOid {
 
     /// Generate oid corresponding to column and index
     ///
-    /// If the table has OID x.y, the table entry is always x.y.1
-    /// Column n definition is x.y.1.n and never has instances
+    /// If the table has OID x.y, the table entry is always x.y.1 and never instantiated.
+    /// Column n definition is x.y.1.n and never has instances either.
     /// Column n and index m (which could be a whole array) is x.y.1.n.m
     ///
     fn make_oid(&self, col: usize, index: &[u32]) -> ObjectIdentifier {
@@ -579,6 +595,9 @@ mod tests {
 
     const ARC2: [u32; 2] = [1, 6];
     const ARC3: [u32; 5] = [1, 6, 1, 2, 1];
+    const ARC4: [u32; 5] = [1, 6, 2, 2, 1];
+    const ARC5: [u32; 5] = [1, 6, 1, 5, 1];
+    const ARC6: [u32; 5] = [1, 6, 1, 216384, 1];
 
     #[test]
     fn test_simple_from_int() {
@@ -621,10 +640,6 @@ mod tests {
         let s4 = simple_from_int(4);
         let s5 = simple_from_int(5);
         let mut tab = TableMemOid::new(
-            /*vec![
-                vec![first.clone(), s4.clone(), s41.clone()],
-                vec![last.clone(), s5.clone(), s42.clone()],
-            ],*/
             vec![blank.clone(), s0.clone(), s0.clone()],
             3,
             &oid2,
@@ -638,6 +653,28 @@ mod tests {
             vec![first.clone(), s4.clone(), s41.clone()],
             vec![last.clone(), s5.clone(), s42.clone()],
         ]);
+        tab
+    }
+
+    fn tab2_fixture() -> TableMemOid {
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); //Checked #test
+        let first = simple_from_vec(&ARC2);
+        let here = address_from_vec([127, 0, 0, 1]);
+
+        let s0 = simple_from_int(0);
+        let s41 = simple_from_int(41);
+
+        let mut tab = TableMemOid::new(
+            vec![first.clone(), here.clone(), s0.clone()],
+            3,
+            &oid2,
+            vec![OType::ObjectId, OType::Address, OType::Integer],
+            vec![Access::ReadOnly, Access::ReadOnly, Access::ReadWrite],
+            vec![1usize, 2usize],
+            false,
+        );
+        //tab.set_index(vec![1usize, 2usize], false,);
+        tab.set_data(vec![vec![first.clone(), here.clone(), s41.clone()]]);
         tab
     }
     #[test]
@@ -713,6 +750,34 @@ mod tests {
         let o5 = ObjectIdentifier::new(&[1, 6, 1, 2, 4]).unwrap(); // Checked #[test]
         assert_eq!(tab.access(o5), Access::ReadOnly);
     }
+
+    #[test]
+    fn test_row_from_index() {
+        let tab = tab_fixture();
+        let idx = [3, 48, 49, 50, 17];
+        let row = tab.row_from_index(&idx);
+        assert_eq!(row.len(), 3);
+        assert_eq!(row[0], simple_from_str(b"012"));
+        assert_eq!(row[1], simple_from_int(17));
+        assert_eq!(row[2], simple_from_int(0));
+        let tab2 = tab2_fixture();
+        let idx = [3, 1, 2, 50, 10, 0, 1, 1];
+        let row = tab2.row_from_index(&idx);
+        assert_eq!(row.len(), 3);
+        assert_eq!(row[0], simple_from_vec(&[1, 2, 50]));
+        assert_eq!(row[1], address_from_vec([10, 0, 1, 1]));
+        assert_eq!(row[2], simple_from_int(0));
+    }
+
+    #[test]
+    fn test_double_begin() {
+        let mut tab = tab_fixture();
+        let res = tab.begin_transaction();
+        assert!(res.is_ok());
+        let res = tab.begin_transaction();
+        assert!(res.is_err());
+    }
+
     #[test]
     fn test_create_and_wait_obj() {
         let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); //Checked #test
@@ -791,6 +856,33 @@ mod tests {
     }
 
     #[test]
+    fn test_create_and_go() {
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); //Checked #test
+        let oid3: ObjectIdentifier = ObjectIdentifier::new(&ARC3).unwrap(); //Checked #test
+        let s1 = simple_from_int(1);
+        let nr = simple_from_str(b"four");
+        let s5 = simple_from_int(4);
+        let pv = perms();
+        let user = user_fixture(&pv);
+        let mut tab = TableMemOid::new(
+            //vec![],
+            vec![s1.clone(), nr.clone()],
+            2,
+            &oid2,
+            vec![OType::Integer, OType::RowStatus],
+            vec![Access::ReadOnly, Access::ReadWrite],
+            vec![1usize],
+            false,
+        );
+        //tab.set_index(vec![1usize], false,);
+        assert_eq!(tab.rows.len(), 0);
+        assert!(tab.begin_transaction().is_ok());
+        let set_res = tab.set(oid3.clone(), VarBindValue::Value(s5.clone()), &user);
+        assert!(set_res.is_err());
+        assert_eq!(tab.rows.len(), 0);
+    }
+
+    #[test]
     fn test_foreign_table() {
         let mut tab = tab_fixture();
         assert_eq!(tab.rows.len(), 2);
@@ -799,5 +891,62 @@ mod tests {
         let data = vec![(vec![1u32], vec![name, s1.clone(), s1.clone()])];
         tab.set_indexed_data(data);
         assert_eq!(tab.rows.len(), 1);
+    }
+
+    #[test]
+    fn test_bad_gets() {
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); //Checked #test
+
+        let s1 = simple_from_int(1);
+        let nr = simple_from_str(b"four");
+        let mut tab = TableMemOid::new(
+            //vec![],
+            vec![s1.clone(), nr.clone()],
+            2,
+            &oid2,
+            vec![OType::Integer, OType::RowStatus],
+            vec![Access::ReadOnly, Access::ReadWrite],
+            vec![1usize],
+            false,
+        );
+        //tab.set_index(vec![1usize], false,);
+        assert_eq!(tab.rows.len(), 0);
+        assert!(tab.begin_transaction().is_ok());
+        for arc in [&ARC4, &ARC5, &ARC6] {
+            let oid3: ObjectIdentifier = ObjectIdentifier::new(arc).unwrap(); //Checked #test
+            let get_res = tab.get(oid3.clone());
+            assert!(get_res.is_err());
+            assert_eq!(tab.rows.len(), 0);
+        }
+    }
+
+    #[test]
+    fn test_bad_sets() {
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); //Checked #test
+
+        let s1 = simple_from_int(1);
+        let nr = simple_from_str(b"four");
+        let s5 = simple_from_int(4);
+        let pv = perms();
+        let user = user_fixture(&pv);
+        let mut tab = TableMemOid::new(
+            //vec![],
+            vec![s1.clone(), nr.clone()],
+            2,
+            &oid2,
+            vec![OType::Integer, OType::RowStatus],
+            vec![Access::ReadOnly, Access::ReadWrite],
+            vec![1usize],
+            false,
+        );
+        //tab.set_index(vec![1usize], false,);
+        assert_eq!(tab.rows.len(), 0);
+        assert!(tab.begin_transaction().is_ok());
+        for arc in [&ARC4, &ARC5, &ARC6] {
+            let oid3: ObjectIdentifier = ObjectIdentifier::new(arc).unwrap(); //Checked #test
+            let set_res = tab.set(oid3.clone(), VarBindValue::Value(s5.clone()), &user);
+            assert!(set_res.is_err());
+            assert_eq!(tab.rows.len(), 0);
+        }
     }
 }

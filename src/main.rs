@@ -2,7 +2,7 @@
 //! See documentation src/lib.rs
 //!
 use log::{debug, info};
-use snmp_rust_agent::config::{ComplianceStatements, Config};
+use snmp_rust_agent::config::{ComplianceStatements, Config, CONF_FILES};
 use snmp_rust_agent::handlers;
 use snmp_rust_agent::oidmap::{ContextMap, OidMap};
 use snmp_rust_agent::perms;
@@ -22,13 +22,13 @@ fn main() -> std::io::Result<()> {
     }
     env_logger::init();
     // Load configuration
-    let conf = Config::load();
+    let conf = Config::load(&CONF_FILES);
     let users_text = read_to_string(conf.users_file.clone()).expect("Could not read user file");
     let perms_text =
         read_to_string(conf.perms_file.clone()).expect("Could not read permissions file");
     let perms: Vec<perms::Perm> = perms::load_from_str(&perms_text);
 
-    let mut users: usm::Users = usm::Users::new();
+    let mut users: usm::Users = usm::Users::new(conf.users_file.clone());
     users.load_from_str(&perms, &users_text);
 
     let mut agent: Agent = Agent::build(conf.engine_id.clone(), &conf.listen, conf.send_auth_fails);

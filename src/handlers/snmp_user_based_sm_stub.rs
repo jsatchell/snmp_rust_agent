@@ -9,6 +9,7 @@ use log::{debug, warn};
 use rasn::types::{Integer, ObjectIdentifier, OctetString};
 use rasn_smi::v2::{ApplicationSyntax, Counter32, ObjectSyntax, SimpleSyntax};
 use rasn_snmp::v3::{VarBind, VarBindValue};
+use std::path::PathBuf;
 //use std::cell::RefCell
 
 fn simple_from_int(value: i32) -> ObjectSyntax {
@@ -122,7 +123,8 @@ struct KeepUsmUserSpinLock {
 
 impl KeepUsmUserSpinLock {
     fn new(config: &Config) -> Self {
-        let file_name: String = config.storage_path.clone() + "/usm_user_spin_lock";
+        let mut file_name: PathBuf = config.storage_path.clone();
+        file_name.push("/usm_user_spin_lock");
         let mut scalar = PersistentScalar::new(
             simple_from_int(4),
             OType::Integer,
@@ -449,12 +451,12 @@ impl KeepUsmUserTable {
                 ObjectSyntax::Simple(SimpleSyntax::String(engine_id.clone())),
                 simple_from_str(&name),
                 simple_from_str(&name),
-                simple_from_vec(&[0, 0]),
+                simple_from_vec(&[0, 0]), // Creation from template users not supported
                 arc,
-                simple_from_str(b""),
-                simple_from_str(b""),
+                simple_from_str(b""), // Used for password change by admin, not supported yet
+                simple_from_str(b""), // Used for own password changes
                 simple_from_vec(&ARC_USM_AES_CFB_128_PRIV_PROTOCOL),
-                simple_from_str(b""),
+                simple_from_str(b""), // Used for password change by admin, not supported yet
                 simple_from_str(b""),
                 simple_from_str(b""),
                 simple_from_int(4), // Permanent (partly ROM)

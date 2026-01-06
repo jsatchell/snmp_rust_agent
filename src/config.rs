@@ -31,11 +31,12 @@ use crate::engine_id;
 use log::{debug, error};
 use rasn::types::OctetString;
 use std::fs::{exists, read_to_string};
+use std::path::PathBuf;
 
 /// Search path for config files.
 ///
 /// FIXME *nix centric - put something in for Mac and Windows
-const CONF_FILES: [&str; 3] = [
+pub const CONF_FILES: [&str; 3] = [
     "/etc/snmp-agent/snmp-agent.conf",
     "~/.snmp-agent.conf",
     ".snmp-agent.conf",
@@ -47,13 +48,13 @@ pub struct Config {
     pub engine_id: OctetString,
     pub fqdn: String,
     pub listen: String,
-    pub storage_path: String,
+    pub storage_path: PathBuf,
     pub contact: String,
     pub trap_sink: String,
     pub trap_community: String,
     pub send_auth_fails: bool,
-    pub perms_file: String,
-    pub users_file: String,
+    pub perms_file: PathBuf,
+    pub users_file: PathBuf,
     pub inform_timeout: u16,
     pub inform_retries: u8,
 }
@@ -71,13 +72,13 @@ impl Config {
         let mut eid: OctetString = OctetString::from_static(b"");
         let mut fqdn = "".to_string();
         let mut contact = "".to_string();
-        let mut storage_path = "".to_string();
+        let mut storage_path = PathBuf::from("");
         let mut listen = "".to_string();
         let mut trap_sink = "".to_string();
         let mut trap_community = "public".to_string();
         let mut send_auth_fails: bool = false;
-        let mut perms_file = "groups.toml".to_string();
-        let mut users_file = "users.txt".to_string();
+        let mut perms_file = PathBuf::from("groups.toml");
+        let mut users_file = PathBuf::from("users.txt");
         let mut inform_timeout: u16 = 30;
         let mut inform_retries: u8 = 2;
         let mut got_eid = false;
@@ -101,15 +102,15 @@ impl Config {
                     got_listen = true;
                 }
                 "StoragePath" => {
-                    storage_path = parts[1].to_string();
+                    storage_path = PathBuf::from(parts[1]);
                     got_path = true;
                 }
                 "Contact" => contact = parts[1].to_string(),
                 "TrapSink" => trap_sink = parts[1].to_string(),
                 "TrapCommunity" => trap_community = parts[1].to_string(),
                 "SendAuthenticationFailures" => send_auth_fails = parts[1].contains("t"),
-                "PermissionsFile" => perms_file = parts[1].to_string(),
-                "UsersFile" => users_file = parts[1].to_string(),
+                "PermissionsFile" => perms_file = PathBuf::from(parts[1]),
+                "UsersFile" => users_file = PathBuf::from(parts[1]),
                 "InformRetries" => inform_retries = parts[1].parse().unwrap(), // Startup
                 "InformTimeout" => inform_timeout = parts[1].parse().unwrap(), // Startup
                 _ => {
@@ -122,16 +123,16 @@ impl Config {
         } else {
             if !got_eid {
                 error!("EngineID not found in config file");
-            }
+            };
             if !got_listen {
                 error!("Listen not found in config file");
-            }
+            };
             if !got_fqdn {
                 error!("FQDN not found in config file");
-            }
+            };
             if !got_path {
                 error!("StoragePath not found in config file");
-            }
+            };
             panic!("Missing essential keys in config file");
         }
         debug!("Engine ID {0}", engine_id::format_engine_id(eid.clone()));
@@ -154,8 +155,8 @@ impl Config {
     /// Create a config struct by searching for file in well known places.
     ///
     ///  Panics if the file cannot be found, does not contain all the compulsory keys or on parse errors.
-    pub fn load() -> Self {
-        for name in CONF_FILES {
+    pub fn load(conf_files: &[&str]) -> Self {
+        for name in conf_files {
             let good = exists(name);
             if let Ok(is_good) = good {
                 if is_good {
@@ -192,11 +193,19 @@ impl Default for ComplianceStatements {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_log::test;
 
     const ARC: [u32; 2] = [1, 1];
     #[test]
     fn test_load() {
-        let _c = Config::load();
+        let _c = Config::load(&CONF_FILES);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_bad_load() {
+        let bad = ["non-existent"];
+        let _c = Config::load(&bad);
     }
 
     #[test]

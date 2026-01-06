@@ -74,3 +74,79 @@ pub fn process_one(
     }
     extra
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_find_mib_text_none() {
+        let res = find_mib_text("ZZZZ-NOT_THERE", &["BadPath".to_string()]);
+        assert!(res.is_none());
+    }
+
+    #[test]
+    fn test_find_mib_text_some() {
+        let res = find_mib_text("importer.rs", &["src/bin/stub-gen/".to_string()]);
+        assert!(res.is_some());
+    }
+
+    #[test]
+    fn test_process_one() {
+        let mut res = resolver::Resolver::new();
+        let miss = vec![
+            "wont-find-this".to_string(),
+            "snmpUsmAesMIB".to_string(),
+            "usmAesCfb128Protocol".to_string(),
+        ];
+        let mib_name = "TEST";
+        let raw = "SNMP-USM-AES-MIB DEFINITIONS ::= BEGIN
+    IMPORTS
+        MODULE-IDENTITY, OBJECT-IDENTITY,
+        snmpModules             FROM SNMPv2-SMI          -- [RFC2578]
+        snmpPrivProtocols       FROM SNMP-FRAMEWORK-MIB; -- [RFC3411]
+
+snmpUsmAesMIB  MODULE-IDENTITY
+    LAST-UPDATED \"200406140000Z\"
+    ORGANIZATION \"IETF\"
+    CONTACT-INFO \"Uri Blumenthal\"
+
+    DESCRIPTION  \"Definitions of Object Identities needed for
+                  \"
+
+    REVISION     \"200406140000Z\"
+    DESCRIPTION  \"Initial version, published as RFC3826\"
+    ::= { snmpModules 20 }
+
+usmAesCfb128Protocol OBJECT-IDENTITY
+    STATUS        current
+    DESCRIPTION  \"The CFB128-AES-128 Privacy Protocol.\"
+    REFERENCE    \"- Specification for the ADVANCED ENCRYPTION
+                    STANDARD. Federal Information Processing
+                    Standard (FIPS) Publication 197.
+                    (November 2001).
+
+                  - Dworkin, M., NIST Recommendation for Block
+                    Cipher Modes of Operation, Methods and
+                    Techniques. NIST Special Publication 800-38A
+                    (December 2001).
+                 \"
+    ::= { snmpPrivProtocols 4 }
+
+END
+        ";
+        let nodes = process_one(raw, miss, mib_name, &mut res);
+        assert_eq!(nodes.len(), 2);
+    }
+
+    #[test]
+    fn test_process_one_bad_parse() {
+        let mut res = resolver::Resolver::new();
+        let miss = vec![];
+        let mib_name = "TEST";
+        let raw = "Some Garbage
+        ";
+        let nodes = process_one(raw, miss, mib_name, &mut res);
+        assert_eq!(nodes.len(), 0);
+    }
+}

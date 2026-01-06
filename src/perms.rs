@@ -2,7 +2,7 @@
 //!
 //! Simpler than the full VACM model from RFC3415!
 //!
-//! The permissions are read in from the file "groups.toml".
+//! The permissions are read in from a file, the example is in "groups.toml".
 //!
 //! This has a table per user group. The table has three compulsory entries and one optional,
 //! * name, a string, used to correlate groups with users.
@@ -10,13 +10,13 @@
 //! * rules, an array of rule tables. Usefully, you should have at least one rule.
 //! * context, if present is the name of an alternate context that the group applies to. If absent, the default, blank context is assumed.
 //!
-//! The inner rule table has the four entries:
+//! The inner rule table has four entries:
 //! * read, a boolean
 //! * write, a boolean
 //! * include, an array of strings. The strings are OID prefixes, in dotted notation, like "1.3.6.1". The rule applies to everything that starts with at least one of the entries.
 //! * exclude, an array of strings, which could be empty. The strings are OID prefixes, in dotted notation, like "1.3.6.1". Anything that matches at least one will be excluded from matching the rule. The prefixes need to lie within an inclusion prefix to have any effect.
 //!
-//! The big difference from the VACM model is there is no provision to change them, except by editing groups.toml.
+//! The big difference from the VACM model is there is no provision to change them, except by editing the file.
 //!
 //! Not being able to attack them on the wire is a deliberate security feature, not a bug.
 use log::warn;
@@ -97,9 +97,9 @@ impl Perm {
     }
 }
 
-/// Read "groups.toml" and return group definitions.
+/// Parse text and return group definitions.
 ///
-/// Panics if read or parse fails - this is during startup so indicates a configuration error,
+/// Panics if parse fails - this is during startup so indicates a configuration error,
 /// or file system corruption.
 ///
 /// FIXME - setup serde stuff, including wrappers, so deserialize just works, rather than doing
@@ -207,9 +207,11 @@ impl<'a> FlagPerm<'a> {
 mod tests {
     use super::*;
     use rasn::types::ObjectIdentifier;
+    use test_log::test;
 
     const ARC_IN: [u32; 2] = [1, 1];
     const ARC_OUT: [u32; 2] = [2, 1];
+    const ARC_EXC: [u32; 3] = [1, 3, 1];
 
     fn perms() -> Vec<Perm> {
         let rules = vec![
@@ -239,12 +241,14 @@ mod tests {
     fn test_check() {
         let o_in = ObjectIdentifier::new(&ARC_IN).unwrap(); // Checked #[test]
         let o_out = ObjectIdentifier::new(&ARC_OUT).unwrap(); // Checked #[test]
+        let o_exc = ObjectIdentifier::new(&ARC_EXC).unwrap(); // Checked #[test]
         let p = &perms()[0];
         let context = [];
         assert!(p.check(2, true, &o_in, &context));
         assert!(p.check(2, false, &o_in, &context));
         assert!(!p.check(0, false, &o_in, &context));
         assert!(!p.check(2, false, &o_out, &context));
+        assert!(!p.check(2, true, &o_exc, &context));
     }
 
     #[test]
@@ -268,7 +272,7 @@ mod tests {
         let txt = "
 [[groups]]
 name = \"admin\"
-level = \"authPriv\"
+level = \"authNoPriv\"
 rules = [ {read = true, write = true, include=[ \"1.1\" ], exclude = [ \"1.3.6.1.6.3.1.25\"]} ]
 ";
         let perms = load_from_str(&txt);
@@ -302,6 +306,25 @@ rules = [ {read = true, write = true, include=[ \"1.1\" ], exclude = [ \"1.3.6.1
         assert!(!f.check(false, &o_in))
     }
 
+    #[test]
+    fn test_no_rules() {
+        let o_in = ObjectIdentifier::new(&ARC_IN).unwrap(); // Checked #[test]
+        let txt = "
+[[groups]]
+name = \"admin\"
+level = \"noAuthNoPriv\"
+rules = [  ]
+";
+        let perms = load_from_str(&txt);
+        assert_eq!(perms.len(), 1);
+        let p = &perms[0];
+        let f = FlagPerm {
+            perm: p,
+            context: &[6],
+            flags: 2u8,
+        };
+        assert!(!f.check(false, &o_in))
+    }
     #[test]
     fn test_wrong_context() {
         let o_in = ObjectIdentifier::new(&ARC_IN).unwrap(); // Checked #[test]

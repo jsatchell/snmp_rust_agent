@@ -6,6 +6,7 @@ use rasn::types::{Integer, ObjectIdentifier};
 use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
 use rasn_snmp::v3::{VarBind, VarBindValue};
 use std::io::Error;
+use std::path::PathBuf;
 
 use log::{debug, error};
 
@@ -131,11 +132,11 @@ impl OidKeeper for ScalarMemOid {
 #[derive(PartialEq, Eq)]
 pub struct PersistentScalar {
     scalar: ScalarMemOid,
-    file_name: String,
+    file_name: PathBuf,
 }
 
 impl PersistentScalar {
-    pub fn new(value: ObjectSyntax, otype: OType, access: Access, file_name: String) -> Self {
+    pub fn new(value: ObjectSyntax, otype: OType, access: Access, file_name: PathBuf) -> Self {
         let scalar = ScalarMemOid::new(value, otype, access);
         PersistentScalar { scalar, file_name }
     }
@@ -193,16 +194,19 @@ impl OidKeeper for PersistentScalar {
 
     fn commit(&mut self, user: &User) -> Result<(), OidErr> {
         let comm_res = self.scalar.commit(user);
+        comm_res?;
         let bytes_res = encode::<ObjectSyntax>(&self.scalar.value);
         match bytes_res {
             Ok(bytes) => {
                 let outcome = std::fs::write(&self.file_name, bytes);
                 if outcome.is_err() {
-                    error!["Write failure saving to {0}", self.file_name]
+                    error!["Write failure saving to {0:?}", self.file_name];
+                    return Err(OidErr::CommitFail);
                 }
             }
             Err(err) => {
                 error!["Persistence failure {err:?}"];
+                return Err(OidErr::CommitFail);
             }
         }
         comm_res
@@ -257,7 +261,7 @@ mod tests {
             s42.clone(),
             OType::Integer,
             Access::ReadWrite,
-            "/tmp/snmp-rust-persist".to_string(),
+            PathBuf::from("/tmp/snmp-rust-persist"),
         )
     }
 
@@ -303,6 +307,24 @@ mod tests {
         let res = pscl.get(oid2);
         assert!(res.is_ok());
         assert_eq!(res.unwrap(), VarBindValue::Value(s17.clone())); //Checked #test
+    }
+    #[test]
+    fn pscl_rollback() {
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); //Checked #test
+        let mut pscl = pscl_fixture();
+        let s17 = simple_from_int(17);
+        let vb = VarBindValue::Value(s17.clone());
+        let b_res = pscl.begin_transaction();
+        let pv = perms();
+        let user = user_fixture(&pv);
+        assert!(b_res.is_ok());
+        let set_rs = pscl.set(oid2.clone(), vb, &user);
+        assert!(set_rs.is_ok());
+        let c_res = pscl.rollback();
+        assert!(c_res.is_ok());
+        let res = pscl.get(oid2.clone());
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), VarBindValue::Value(simple_from_int(42))); //Checked #test
     }
     #[test]
     fn test_obvious() {

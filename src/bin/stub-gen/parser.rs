@@ -218,19 +218,26 @@ impl<'a> MibNode<'a> {
             }),
             MibNode::Al(_) => MibNode::Al(Alias {}),
             MibNode::Mac(_) => MibNode::Mac(Macro {}),
-            _ => {
-                error!("Cant copy {self:?}");
-                panic!("Not done")
-            } /* MibNode::ObIdy(x) => MibNode::OIdy(),
-
-              MibNode::ObGrp(ObjectGroup<'a>),
-              MibNode::ObTy(ObjectType<'a>),
-              MibNode::NtGrp(NotificationGroup<'a>),
-              MibNode::NtTy(NotificationType<'a>),
-
-              MibNode::ModCp(ModuleCompliance<'a>),
-              MibNode::Imp(ImportBlock<'a>),
-              MibNode::Ent(Entry<'a>),*/
+            MibNode::Imp(x) => MibNode::Imp(ImportBlock {
+                imp_list: x
+                    .imp_list
+                    .iter()
+                    .map(|o| {
+                        (
+                            o.0.iter().map(|s| MibNode::mk_static_str(s)).collect(),
+                            MibNode::mk_static_str(o.1),
+                        )
+                    })
+                    .collect(),
+            }),
+            MibNode::Ent(x) => MibNode::Ent(Entry {
+                name: MibNode::mk_static_str(x.name),
+                syntax: x
+                    .syntax
+                    .iter()
+                    .map(|o| (MibNode::mk_static_str(o.0), MibNode::mk_static_str(o.1)))
+                    .collect(),
+            }),
         }
     }
 }
@@ -951,6 +958,7 @@ SysOREntry ::= SEQUENCE {
      
 ";
         let (_rest, node) = parse_entry(text).unwrap();
+        let node = node.copy();
         assert!(if let MibNode::Ent(ent) = node {
             assert_eq!(ent.name, "SysOREntry");
             true
@@ -1025,6 +1033,7 @@ IMPORTS
 
 ";
         let (_rest, node) = parse_imports(text).unwrap();
+        let node = node.copy();
         assert!(if let MibNode::Imp(imp) = node {
             assert_eq!(imp.imp_list.len(), 4);
             let item = &imp.imp_list[0];
