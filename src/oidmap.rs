@@ -12,22 +12,23 @@
 use crate::keeper::OidKeeper;
 use log::info;
 use rasn::types::ObjectIdentifier;
+use std::cell::RefCell;
 
 /// Mapping between OIDs and trait objects that keep the associated data.
 pub struct OidMap {
-    store: Vec<(ObjectIdentifier, Box<dyn OidKeeper>)>,
+    store: Vec<(ObjectIdentifier, RefCell<Box<dyn OidKeeper>>)>,
 }
 
 impl OidMap {
     /// Return a new empty OidMap
     pub fn new() -> Self {
-        let store: Vec<(ObjectIdentifier, Box<dyn OidKeeper>)> = vec![];
+        let store: Vec<(ObjectIdentifier, RefCell<Box<dyn OidKeeper>>)> = vec![];
         OidMap { store }
     }
 
     /// Insert OID and associated trait object.
     pub fn push(&mut self, oid: ObjectIdentifier, arg: Box<dyn OidKeeper>) {
-        self.store.push((oid, arg));
+        self.store.push((oid, RefCell::new(arg)));
     }
 
     /// Sort into OID order, so binary search will work.
@@ -38,7 +39,11 @@ impl OidMap {
         info!("Sorted");
     }
 
-    /// Binary search for trait object associated with oid, or insert point if not exact match
+    /// Binary search for position of trait object associated with oid, or insert point if not exact match
+    ///
+    /// The comparison ignores any parts of oid that are longer than the keys in the store. This means if you
+    /// search for a specific row inside a table, you will get the position of the trait object containing the table,
+    /// and the OidMap doesn't need to know anything about the implementation of teh table object.  
     pub fn search(&self, oid: &ObjectIdentifier) -> Result<usize, usize> {
         self.store.binary_search_by(|a| {
             let al = a.0.len();
@@ -52,7 +57,10 @@ impl OidMap {
     }
 
     /// Return trait object that owns next key after oid, if found.
-    pub fn search_next(&mut self, oid: &ObjectIdentifier) -> Option<&mut Box<dyn OidKeeper>> {
+    pub fn search_next(
+        &mut self,
+        oid: &ObjectIdentifier,
+    ) -> Option<&mut RefCell<Box<dyn OidKeeper>>> {
         let bin_res = self.store.binary_search_by(|a| {
             let al = a.0.len();
             let b = if oid.len() > al {
@@ -81,7 +89,7 @@ impl OidMap {
     }
 
     /// Look up trait object by integer index
-    pub fn idx(&mut self, i: usize) -> &mut Box<dyn OidKeeper> {
+    pub fn idx(&mut self, i: usize) -> &mut RefCell<Box<dyn OidKeeper>> {
         &mut self.store[i].1
     }
 
@@ -95,7 +103,7 @@ impl OidMap {
     /// Note that if some of these are tables, with potentially many rows,
     /// there can be many more valid oid values.
     ///
-    /// You can also associate a single trait objects with multiple Oid values.
+    /// You can also associate a single trait object with multiple Oid values.
     ///
     /// Sigh.
     pub fn len(&self) -> usize {
@@ -216,7 +224,10 @@ mod tests {
         assert!(resn.is_some());
         let resn = om.search_next(&o0);
         assert!(resn.is_some());
-        assert_eq!(resn.unwrap().get(o1).unwrap(), VarBindValue::Value(value));
+        assert_eq!(
+            resn.unwrap().borrow().get(o1).unwrap(),
+            VarBindValue::Value(value)
+        );
     }
 
     #[test]

@@ -4,7 +4,7 @@ This is work towards a framework for developing SNMP v3 agents, using the rasn A
 
 This agent only supports SNMP v3, older variants have no on the wire security.
 
-This project follows semver - but that means no guarantees at all pre v1! There is a change in the OidKeeper trait in this release, so this is a minor version (0.4.0) rather than a patch version.
+This project follows semver - but that means no guarantees at all pre v1! There is a change in the configuration struct passed to the agent in this release, so this is a minor version (0.5.0) rather than a patch version.
 
 The agent and stub-gen are 100% safe Rust code. The code for both is clippy clean.
 
@@ -24,7 +24,7 @@ The agent now supports multiple contexts. Many applications only use a single de
 
 Unit test coverage is significantly improved. Excluding generated code, there is about 85% line coverage. The agent is better tested than the stub generator.
 
-Possible panic sites have been audited. All the known sites have been fixed, but there is a lot more to do. The ambition is for there to be no panics once the agent is running. *This version does not meet the target yet*. Reading about #[no_panic] made me realize that is hard to achieve and very, very hard to prove. Panic at startup due to detected configuration problems will be allowed; graceful exit with helpful messages would be even better!
+Possible panic sites have been audited. All the known sites have been fixed, but there is a lot more to do. The ambition is for there to be no panics once the agent is running. *This version does not meet the target yet*. Reading about #[no_panic] made me realize that is hard to achieve and very, very hard to prove. Panic at startup due to detected configuration problems will be allowed for now; graceful exit with helpful messages would be even better!
 
 A security policy has been added in SECURITY.md. Support will only be provided for the most recent version, until the code is more stable, or other projects depend on it. Please report security issues through the Github machinery.
 

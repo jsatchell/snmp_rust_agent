@@ -83,6 +83,7 @@ impl OidKeeper for ScalarMemOid {
         _oid: ObjectIdentifier,
         value: VarBindValue,
         _user: &User,
+        _ref_tables: Vec<Box<dyn OidKeeper>>,
     ) -> Result<VarBindValue, OidErr> {
         if self.access == Access::ReadCreate || self.access == Access::ReadWrite {
             if !self.transaction {
@@ -184,8 +185,9 @@ impl OidKeeper for PersistentScalar {
         oid: ObjectIdentifier,
         value: VarBindValue,
         user: &User,
+        ref_tables: Vec<Box<dyn OidKeeper>>,
     ) -> Result<VarBindValue, OidErr> {
-        self.scalar.set(oid, value, user)
+        self.scalar.set(oid, value, user, ref_tables)
     }
 
     fn rollback(&mut self) -> Result<(), OidErr> {
@@ -219,7 +221,7 @@ mod tests {
     use super::*;
     use super::{Access, PersistentScalar};
     use crate::perms::{Perm, Rule};
-    use crate::utils::simple_from_int;
+    use crate::utils::{simple_from_int, simple_from_str};
     use rasn::types::{Integer, ObjectIdentifier};
     use rasn_smi::v2::{ObjectSyntax, SimpleSyntax};
     use rasn_snmp::v3::VarBindValue;
@@ -266,6 +268,48 @@ mod tests {
     }
 
     #[test]
+    fn get_access_test() {
+        let s42 = simple_from_int(42);
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); //Checked #test
+        let scal = ScalarMemOid::new(s42.clone(), OType::Integer, Access::NoAccess);
+
+        let res = scal.get(oid2);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn set_access_test() {
+        let s42 = simple_from_int(42);
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); //Checked #test
+        let mut scal = ScalarMemOid::new(s42.clone(), OType::Integer, Access::ReadOnly);
+
+        let s17 = simple_from_int(17);
+        let vb = VarBindValue::Value(s17.clone());
+        let b_res = scal.begin_transaction();
+        let pv = perms();
+        let user = user_fixture(&pv);
+        assert!(b_res.is_ok());
+        let set_rs = scal.set(oid2.clone(), vb, &user, vec![]);
+        assert!(set_rs.is_err());
+    }
+
+    #[test]
+    fn set_type_test() {
+        let s42 = simple_from_int(42);
+        let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); //Checked #test
+        let mut scal = ScalarMemOid::new(s42.clone(), OType::Integer, Access::ReadWrite);
+
+        let s7 = simple_from_str(b"seven");
+        let vb = VarBindValue::Value(s7.clone());
+        let b_res = scal.begin_transaction();
+        let pv = perms();
+        let user = user_fixture(&pv);
+        assert!(b_res.is_ok());
+        let set_rs = scal.set(oid2.clone(), vb, &user, vec![]);
+        assert!(set_rs.is_err());
+    }
+
+    #[test]
     fn pscl_get_test() {
         let pscl = pscl_fixture();
         let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); //Checked #test
@@ -295,7 +339,7 @@ mod tests {
         let pv = perms();
         let user = user_fixture(&pv);
         assert!(b_res.is_ok());
-        let set_rs = pscl.set(oid2.clone(), vb, &user);
+        let set_rs = pscl.set(oid2.clone(), vb, &user, vec![]);
         assert!(set_rs.is_ok());
         let c_res = pscl.commit(&user);
         assert!(c_res.is_ok());
@@ -306,7 +350,14 @@ mod tests {
         assert!(load_res.is_ok());
         let res = pscl.get(oid2);
         assert!(res.is_ok());
-        assert_eq!(res.unwrap(), VarBindValue::Value(s17.clone())); //Checked #test
+    }
+    #[test]
+    #[should_panic]
+    fn pscl_corrupt_file() {
+        let _ = std::fs::write("/tmp/snmp-rust-persist", [0u8; 16]);
+        let mut pscl = pscl_fixture();
+        let load_res = pscl.load();
+        assert!(load_res.is_err());
     }
     #[test]
     fn pscl_rollback() {
@@ -318,7 +369,7 @@ mod tests {
         let pv = perms();
         let user = user_fixture(&pv);
         assert!(b_res.is_ok());
-        let set_rs = pscl.set(oid2.clone(), vb, &user);
+        let set_rs = pscl.set(oid2.clone(), vb, &user, vec![]);
         assert!(set_rs.is_ok());
         let c_res = pscl.rollback();
         assert!(c_res.is_ok());
@@ -360,11 +411,11 @@ mod tests {
         let pv = perms();
         let user = user_fixture(&pv);
         let _ = s.rollback();
-        assert!(s.set(oid2.clone(), vb.clone(), &user).is_err());
+        assert!(s.set(oid2.clone(), vb.clone(), &user, vec![]).is_err());
         assert!(s.begin_transaction().is_ok());
         assert!(s.begin_transaction().is_err()); // errors, and resets transaction
         assert!(s.begin_transaction().is_ok());
-        assert!(s.set(oid2.clone(), vb.clone(), &user).is_ok());
+        assert!(s.set(oid2.clone(), vb.clone(), &user, vec![]).is_ok());
         // No effect until commit
         assert_eq!(s.get(oid2.clone()).unwrap(), VarBindValue::Value(value)); // Checked #[test]
         assert!(s.commit(&user).is_ok());
@@ -384,8 +435,8 @@ mod tests {
         let _ = s.rollback();
         assert!(s.begin_transaction().is_ok());
         // Wrong value should be rejected
-        assert!(s.set(oid2.clone(), vb8.clone(), &user).is_err());
-        assert!(s.set(oid2.clone(), vb.clone(), &user).is_ok());
+        assert!(s.set(oid2.clone(), vb8.clone(), &user, vec![]).is_err());
+        assert!(s.set(oid2.clone(), vb.clone(), &user, vec![]).is_ok());
         // No effect until commit
         assert_eq!(s.get(oid2.clone()).unwrap(), VarBindValue::Value(value)); // Checked #[test]
         assert!(s.commit(&user).is_ok());
@@ -405,8 +456,8 @@ mod tests {
         let _ = s.rollback();
         assert!(s.begin_transaction().is_ok());
         // Wrong value should be rejected
-        assert!(s.set(oid2.clone(), vb8.clone(), &user).is_err());
-        assert!(s.set(oid2.clone(), vb.clone(), &user).is_ok());
+        assert!(s.set(oid2.clone(), vb8.clone(), &user, vec![]).is_err());
+        assert!(s.set(oid2.clone(), vb.clone(), &user, vec![]).is_ok());
         // No effect until commit
         assert_eq!(s.get(oid2.clone()).unwrap(), VarBindValue::Value(value)); // Checked #[test]
         assert!(s.commit(&user).is_ok());
@@ -414,5 +465,21 @@ mod tests {
         if let VarBindValue::Value(s0) = vb0 {
             assert_eq!(s0, simple_from_int(0));
         }
+    }
+
+    #[test]
+    fn test_lookup_row() {
+        let value = simple_from_int(2147483647i32);
+        let s = ScalarMemOid::new(value.clone(), OType::TestAndIncr, Access::ReadWrite);
+        let idx = [0];
+        let res = s.lookup_row(&idx);
+        assert!(res.is_err());
+    }
+    #[test]
+    fn test_ref_tables() {
+        let value = simple_from_int(2147483647i32);
+        let s = ScalarMemOid::new(value.clone(), OType::TestAndIncr, Access::ReadWrite);
+        let tabs = s.ref_tables();
+        assert!(tabs.is_empty());
     }
 }

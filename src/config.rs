@@ -15,10 +15,13 @@
 //! * TrapSink - address and port where Trap PDUs will be sent when the agent has trap support.
 //! * SendAuthenticationFailures - if "true" or "t", and TrapSink is defined, send authentication failure traps.
 //!
-//! These three have built-in defaults, corresponding to the legacy fixed values
+//! These three  have built-in defaults, corresponding to the legacy fixed values
 //! * PermissionsFile - toml file containing the group permissions data, defaults to groups.toml
 //! * UsersFile - username and password data, defaults to users.txt
 //! * TrapCommunity - community name for v2 notifications. If not set, defaults to "public".
+//! 
+//! This has a built in default.
+//! * MaxBulkRepeats - limit on number of repeats that can be requested in GetBulk. Must be parseable as n integer. If not set defaults to 32. Max  2^16 - 1.
 //!
 //! These have built-in defaults and are not used yet, but will be when notifications support Inform messages.
 //! * InformTimeout - time in seconds, must be parseable to a positive integer. Default 30, max 2^16 - 1
@@ -57,6 +60,7 @@ pub struct Config {
     pub users_file: PathBuf,
     pub inform_timeout: u16,
     pub inform_retries: u8,
+    pub bulk_limit: u16,
 }
 
 impl Config {
@@ -85,6 +89,7 @@ impl Config {
         let mut got_fqdn = false;
         let mut got_listen = false;
         let mut got_path = false;
+        let mut bulk_limit = 32;
         for line in text.lines() {
             // Startup
             let parts: Vec<&str> = line.splitn(2, ' ').collect();
@@ -113,6 +118,7 @@ impl Config {
                 "UsersFile" => users_file = PathBuf::from(parts[1]),
                 "InformRetries" => inform_retries = parts[1].parse().unwrap(), // Startup
                 "InformTimeout" => inform_timeout = parts[1].parse().unwrap(), // Startup
+                "MaxBulkRepeats" => bulk_limit = parts[1].parse().unwrap(), // Startup
                 _ => {
                     debug!("Unexpected keyword in config file {0}", parts[0]);
                 }
@@ -149,6 +155,7 @@ impl Config {
             users_file,
             inform_retries,
             inform_timeout,
+            bulk_limit,
         }
     }
 
@@ -168,6 +175,8 @@ impl Config {
     }
 }
 
+/// Struct gathers Compliance Statements for handlers.
+/// 
 pub struct ComplianceStatements {
     pub claims: Vec<(&'static [u32], &'static str)>,
 }
@@ -177,6 +186,7 @@ impl ComplianceStatements {
         ComplianceStatements { claims: vec![] }
     }
 
+    /// Register a compliance claim for a specific OID.
     pub fn register_compliance(&mut self, arc: &'static [u32], text: &'static str, doit: bool) {
         if doit {
             self.claims.push((arc, text));

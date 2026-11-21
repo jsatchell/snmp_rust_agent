@@ -69,8 +69,9 @@ impl OidKeeper for KeepSnmpTargetSpinLock {
         oid: ObjectIdentifier,
         value: VarBindValue,
         user: &User,
+        ref_tables: Vec<Box<dyn OidKeeper>>,
     ) -> Result<VarBindValue, OidErr> {
-        self.scalar.set(oid, value, user)
+        self.scalar.set(oid, value, user, ref_tables)
     }
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
@@ -165,8 +166,9 @@ impl OidKeeper for KeepSnmpTargetAddrTable {
         oid: ObjectIdentifier,
         value: VarBindValue,
         user: &User,
+        ref_tables: Vec<Box<dyn OidKeeper>>,
     ) -> Result<VarBindValue, OidErr> {
-        self.table.set(oid, value, user)
+        self.table.set(oid, value, user, ref_tables)
     }
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.table.begin_transaction()
@@ -255,8 +257,9 @@ impl OidKeeper for KeepSnmpTargetParamsTable {
         oid: ObjectIdentifier,
         value: VarBindValue,
         user: &User,
+        ref_tables: Vec<Box<dyn OidKeeper>>,
     ) -> Result<VarBindValue, OidErr> {
-        self.table.set(oid, value, user)
+        self.table.set(oid, value, user, ref_tables)
     }
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.table.begin_transaction()
@@ -303,6 +306,7 @@ impl OidKeeper for KeepSnmpUnavailableContexts {
         _oid: ObjectIdentifier,
         _value: VarBindValue,
         _user: &User,
+        _ref_tables: Vec<Box<dyn OidKeeper>>,
     ) -> Result<VarBindValue, OidErr> {
         Err(OidErr::NotWritable)
     }
@@ -350,6 +354,7 @@ impl OidKeeper for KeepSnmpUnknownContexts {
         _oid: ObjectIdentifier,
         _value: VarBindValue,
         _user: &User,
+        _ref_tables: Vec<Box<dyn OidKeeper>>,
     ) -> Result<VarBindValue, OidErr> {
         Err(OidErr::NotWritable)
     }

@@ -448,8 +448,9 @@ fn set(
         oid: ObjectIdentifier,
         value: VarBindValue,
         user: &User,
+        ref_table: Vec<Box<dyn OidKeeper>>,
     ) -> Result<VarBindValue, OidErr> {{
-    self.table.set(oid, value, user) }}
+    self.table.set(oid, value, user, ref_table) }}
 fn begin_transaction(&mut self) -> Result<(), OidErr> {{
         self.table.begin_transaction()
     }}
@@ -516,8 +517,8 @@ impl OidKeeper for {struct_name} {{
     fn access(&self, oid: ObjectIdentifier) -> Access {{
         self.scalar.access(oid)
     }}
-    fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue, user: &User) -> Result<VarBindValue, OidErr> {{
-        self.scalar.set(oid, value, user)
+    fn set(&mut self, oid: ObjectIdentifier, value: VarBindValue, user: &User, ref_table: Vec<Box<dyn OidKeeper>>) -> Result<VarBindValue, OidErr> {{
+        self.scalar.set(oid, value, user, ref_table)
     }}
     fn begin_transaction(&mut self) -> Result<(), OidErr> {{
         self.scalar.begin_transaction()
@@ -816,6 +817,7 @@ mod tests {
             ("OType::BigCounter", "big_counter_from_int(0)"),
             ("OType::Ticks", "ticks_from_int(0)"),
             ("OType::Address", "address_from_vec([0, 0, 0, 0])"),
+            ("OType::Integer", "simple_from_int(4)"),
         ] {
             assert_eq!(value_from_syntax(syntax), val);
         }

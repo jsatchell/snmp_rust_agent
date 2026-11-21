@@ -196,14 +196,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 error!("Unknown compliance parent {parent}")
                             }
                         }
-                        parser::MibNode::NtTy(o) => {
+                        parser::MibNode::NtTy(o)
                             /*let v = &o.val;
                             let parent = v.parent;
                             let added = res.try_add(o.name, v.parent, &v.num);
                             if good_parent && !added && pass > 1 {
                                 error!("Unknown compliance parent {parent}")
                             }*/
-                            if pass > 1 {
+                            if pass > 1 => {
                                 for obj in &o.objects {
                                     if !res.check_name(obj) {
                                         warn!(
@@ -212,7 +212,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                                         );
                                     }
                                 }
-                            }
                         }
                         _ => (),
                     }

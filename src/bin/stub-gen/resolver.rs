@@ -102,10 +102,8 @@ impl Resolver {
                         good += 1;
                     }
                 }
-                parser::MibNode::ObIdy(ref o) => {
-                    if self.try_add(o.name, o.val.parent, &o.val.num) {
-                        good += 1;
-                    }
+                parser::MibNode::ObIdy(ref o) if self.try_add(o.name, o.val.parent, &o.val.num) => {
+                    good += 1;
                 }
                 _ => (),
             };

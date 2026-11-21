@@ -97,6 +97,7 @@ impl OidKeeper for KeepUsmStatsUnknownUserNames {
         _oid: ObjectIdentifier,
         _value: VarBindValue,
         _user: &User,
+        _ref_tables: Vec<Box<dyn OidKeeper>>,
     ) -> Result<VarBindValue, OidErr> {
         Err(OidErr::NotWritable)
     }
@@ -159,8 +160,9 @@ impl OidKeeper for KeepUsmUserSpinLock {
         oid: ObjectIdentifier,
         value: VarBindValue,
         user: &User,
+        ref_tables: Vec<Box<dyn OidKeeper>>,
     ) -> Result<VarBindValue, OidErr> {
-        self.scalar.set(oid, value, user)
+        self.scalar.set(oid, value, user, ref_tables)
     }
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
@@ -208,6 +210,7 @@ impl OidKeeper for KeepUsmStatsWrongDigests {
         _oid: ObjectIdentifier,
         _value: VarBindValue,
         _user: &User,
+        _ref_tables: Vec<Box<dyn OidKeeper>>,
     ) -> Result<VarBindValue, OidErr> {
         Err(OidErr::NotWritable)
     }
@@ -257,6 +260,7 @@ impl OidKeeper for KeepUsmStatsDecryptionErrors {
         _oid: ObjectIdentifier,
         _value: VarBindValue,
         _user: &User,
+        _ref_tables: Vec<Box<dyn OidKeeper>>,
     ) -> Result<VarBindValue, OidErr> {
         Err(OidErr::NotWritable)
     }
@@ -306,8 +310,9 @@ impl OidKeeper for KeepUsmStatsUnknownEngineIDs {
         oid: ObjectIdentifier,
         value: VarBindValue,
         user: &User,
+        ref_tables: Vec<Box<dyn OidKeeper>>,
     ) -> Result<VarBindValue, OidErr> {
-        self.scalar.set(oid, value, user)
+        self.scalar.set(oid, value, user, ref_tables)
     }
     fn begin_transaction(&mut self) -> Result<(), OidErr> {
         self.scalar.begin_transaction()
@@ -355,6 +360,7 @@ impl OidKeeper for KeepUsmStatsNotInTimeWindows {
         _oid: ObjectIdentifier,
         _value: VarBindValue,
         _user: &User,
+        _ref_tables: Vec<Box<dyn OidKeeper>>,
     ) -> Result<VarBindValue, OidErr> {
         Err(OidErr::NotWritable)
     }
@@ -405,6 +411,7 @@ impl OidKeeper for KeepUsmStatsUnsupportedSecLevels {
         _oid: ObjectIdentifier,
         _value: VarBindValue,
         _user: &User,
+        _ref_tables: Vec<Box<dyn OidKeeper>>,
     ) -> Result<VarBindValue, OidErr> {
         Err(OidErr::NotWritable)
     }
@@ -553,6 +560,7 @@ impl OidKeeper for KeepUsmUserTable {
         oid: ObjectIdentifier,
         value: VarBindValue,
         user: &User,
+        ref_tables: Vec<Box<dyn OidKeeper>>,
     ) -> Result<VarBindValue, OidErr> {
         if !self.table.in_transaction {
             warn!("Not in transaction in set");
@@ -605,7 +613,7 @@ impl OidKeeper for KeepUsmUserTable {
         } else {
             return Err(OidErr::NotWritable);
         }
-        self.table.set(oid, value, user)
+        self.table.set(oid, value, user, ref_tables)
     }
 
     fn begin_transaction(&mut self) -> Result<(), OidErr> {

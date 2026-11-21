@@ -55,7 +55,7 @@ pub enum OType {
     Ticks,
 }
 
-/// Return true if the type of val is consistent with the enum otype.
+/// Return true if the type of val is consistent with the enum OType.
 ///
 /// Not a one to one mapping, as there are some distinct integer cases with distinct
 /// semantics which the Enum seperates.
@@ -95,6 +95,21 @@ pub trait OidKeeper {
     /// Return the access for the given Oid
     fn access(&self, oid: ObjectIdentifier) -> Access;
 
+    /// Row for given index.
+    ///
+    /// Default impl used by scalars always returns an OidError
+    fn lookup_row(&self, _idx: &[u32]) -> Result<Vec<ObjectSyntax>, OidErr> {
+        Err(OidErr::NoSuchInstance)
+    }
+
+    /// Return vector of foreign tables.
+    ///
+    /// Default implementation return empty vector, appropriate for scalars and
+    /// the majority of tables that do not use foreign indices or augmentation.
+    fn ref_tables(&self) -> Vec<ObjectIdentifier> {
+        vec![]
+    }
+
     /// Start a set transaction
     fn begin_transaction(&mut self) -> Result<(), OidErr>;
 
@@ -105,6 +120,7 @@ pub trait OidKeeper {
         oid: ObjectIdentifier,
         value: VarBindValue,
         user: &User,
+        ref_tables: Vec<Box<dyn OidKeeper>>,
     ) -> Result<VarBindValue, OidErr>;
 
     /// Commit the transaction

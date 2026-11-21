@@ -15,7 +15,6 @@
 //!
 use crate::perms::Perm;
 use digest::DynDigest;
-use log::warn;
 use regex::Regex;
 use sha1;
 use sha2;
@@ -310,16 +309,11 @@ impl<'a> Users {
     /// Look up user by name.
     ///
     /// Get None if name is not known, otherwise Some(&user)
-    pub fn lookup_user(&self, name: Vec<u8>) -> Option<&User> {
-        // FIXME change to binary search to support many users better
-        for user in &self.users {
-            let uname = user.name.clone();
-            if uname == name {
-                return Some(user);
-            }
-        }
-        warn!("Name doesn't match");
-        None
+    pub fn lookup_user(&self, name: &[u8]) -> Option<&User> {
+        self.users
+            .binary_search_by(|user| user.name.as_slice().cmp(name))
+            .ok()
+            .map(|index| &self.users[index])
     }
 
     /// Populate the User list from a multi-line string.
@@ -529,6 +523,36 @@ mod tests {
     }
 
     #[test]
+    fn test_long_key_change() {
+        // Appendix A5.2 of RFC3414, localized key from A3.2
+        let hex_data = b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x9c\x10\x17\xf4\xfd\x48\x3d\x2d\xe8\xd5\xfa\xdb\xf8\x43\x92\xcb\x06\x45\x70\x51";
+        let p = perms();
+        let u = User {
+            what: WhatHash::Sha384,
+            group: vec![0, 1],
+            perm: p[0].clone(),
+            name: b"test".to_vec(),
+            auth_key: RefCell::new(
+                b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x66\x95\xfe\xbc\x92\x88\xe3\x62\x82\x23\x5f\xc7\x15\x1f\x12\x84\x97\xb3\x8f\x3f"
+                    .to_vec(),
+            ),
+            auth_length: 32,
+            trunc: 48,
+            priv_key: RefCell::new(vec![]),
+            k1: RefCell::new([0; 128].to_vec()),
+            k2: RefCell::new([0; 128].to_vec()),
+            clean: RefCell::new(true),
+        };
+        let _new_k = u.key_change(hex_data, true);
+        /* No test vectors, just check it runs
+        assert_eq!(
+             new_k,
+             b"\x78\xe2\xdc\xce\x79\xd5\x94\x03\xb5\x8c\x1b\xba\xa5\xbf\xf4\x63\x91\xf1\xcd\x25"
+                 .to_vec()
+         ); */
+    }
+
+    #[test]
     fn test_priv_key_change() {
         // Appendix A5.2 of RFC3414, localized key from A3.2
         let hex_data = b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x9c\x10\x17\xf4\xfd\x48\x3d\x2d\xe8\xd5\xfa\xdb\xf8\x43\x92\xcb\x06\x45\x70\x51";
@@ -591,15 +615,169 @@ mod tests {
     }
 
     #[test]
+    fn test_224_passwd_update() {
+        // No test vectors in RFC
+        let hex_data = b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x9c\x10\x17\xf4\xfd\x48\x3d\x2d\xe8\xd5\xfa\xdb\xf8\x43\x92\xcb\x06\x45\x70\x51";
+        let p = perms();
+        let u = User {
+            what: WhatHash::Sha224,
+            group: vec![0, 1],
+            perm: p[0].clone(),
+            name: b"test".to_vec(),
+            auth_key: RefCell::new(
+                b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x66\x95\xfe\xbc\x92\x88\xe3\x62\x82\x23\x5f\xc7\x15\x1f\x12\x84\x97\xb3\x8f\x3f"
+                    .to_vec(),
+            ),
+            auth_length: 16,
+            trunc: 28,
+            priv_key: RefCell::new(vec![]),
+            k1: RefCell::new([0; 64].to_vec()),
+            k2: RefCell::new([0; 64].to_vec()),
+            clean: RefCell::new(true),
+        };
+        let res = u.update_password(hex_data, true);
+        assert!(res.is_ok());
+        /*assert_eq!(
+            *u.auth_key.borrow(),
+            b"\x78\xe2\xdc\xce\x79\xd5\x94\x03\xb5\x8c\x1b\xba\xa5\xbf\xf4\x63\x91\xf1\xcd\x25"
+                .to_vec()
+        );*/
+    }
+
+    #[test]
+    fn test_256_passwd_update() {
+        // No test vectors in RFC
+        let hex_data = b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x9c\x10\x17\xf4\xfd\x48\x3d\x2d\xe8\xd5\xfa\xdb\xf8\x43\x92\xcb\x06\x45\x70\x51";
+        let p = perms();
+        let u = User {
+            what: WhatHash::Sha256,
+            group: vec![0, 1],
+            perm: p[0].clone(),
+            name: b"test".to_vec(),
+            auth_key: RefCell::new(
+                b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x66\x95\xfe\xbc\x92\x88\xe3\x62\x82\x23\x5f\xc7\x15\x1f\x12\x84\x97\xb3\x8f\x3f"
+                    .to_vec(),
+            ),
+            auth_length: 24,
+            trunc: 32,
+            priv_key: RefCell::new(vec![]),
+            k1: RefCell::new([0; 64].to_vec()),
+            k2: RefCell::new([0; 64].to_vec()),
+            clean: RefCell::new(true),
+        };
+        let res = u.update_password(hex_data, true);
+        assert!(res.is_ok());
+        /*assert_eq!(
+            *u.auth_key.borrow(),
+            b"\x78\xe2\xdc\xce\x79\xd5\x94\x03\xb5\x8c\x1b\xba\xa5\xbf\xf4\x63\x91\xf1\xcd\x25"
+                .to_vec()
+        );*/
+    }
+
+    #[test]
+    fn test_long_passwd_update() {
+        // No test vectors in RFC
+        let hex_data = b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x9c\x10\x17\xf4\xfd\x48\x3d\x2d\xe8\xd5\xfa\xdb\xf8\x43\x92\xcb\x06\x45\x70\x51";
+        let p = perms();
+        let u = User {
+            what: WhatHash::Sha384,
+            group: vec![0, 1],
+            perm: p[0].clone(),
+            name: b"test".to_vec(),
+            auth_key: RefCell::new(
+                b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x66\x95\xfe\xbc\x92\x88\xe3\x62\x82\x23\x5f\xc7\x15\x1f\x12\x84\x97\xb3\x8f\x3f"
+                    .to_vec(),
+            ),
+            auth_length: 32,
+            trunc: 48,
+            priv_key: RefCell::new(vec![]),
+            k1: RefCell::new([0; 128].to_vec()),
+            k2: RefCell::new([0; 128].to_vec()),
+            clean: RefCell::new(true),
+        };
+        let res = u.update_password(hex_data, true);
+        assert!(res.is_ok());
+        /*assert_eq!(
+            *u.auth_key.borrow(),
+            b"\x78\xe2\xdc\xce\x79\xd5\x94\x03\xb5\x8c\x1b\xba\xa5\xbf\xf4\x63\x91\xf1\xcd\x25"
+                .to_vec()
+        );*/
+    }
+
+    #[test]
+    fn test_long_512passwd_update() {
+        // No test vectors in RFC
+        let hex_data = b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x9c\x10\x17\xf4\xfd\x48\x3d\x2d\xe8\xd5\xfa\xdb\xf8\x43\x92\xcb\x06\x45\x70\x51";
+        let p = perms();
+        let u = User {
+            what: WhatHash::Sha512,
+            group: vec![0, 1],
+            perm: p[0].clone(),
+            name: b"test".to_vec(),
+            auth_key: RefCell::new(
+                b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x66\x95\xfe\xbc\x92\x88\xe3\x62\x82\x23\x5f\xc7\x15\x1f\x12\x84\x97\xb3\x8f\x3f"
+                    .to_vec(),
+            ),
+            auth_length: 48,
+            trunc: 64,
+            priv_key: RefCell::new(vec![]),
+            k1: RefCell::new([0; 128].to_vec()),
+            k2: RefCell::new([0; 128].to_vec()),
+            clean: RefCell::new(true),
+        };
+        let res = u.update_password(hex_data, true);
+        assert!(res.is_ok());
+        /*assert_eq!(
+            *u.auth_key.borrow(),
+            b"\x78\xe2\xdc\xce\x79\xd5\x94\x03\xb5\x8c\x1b\xba\xa5\xbf\xf4\x63\x91\xf1\xcd\x25"
+                .to_vec()
+        );*/
+    }
+    #[test]
+    fn test_priv_passwd_update() {
+        // Appendix A5.2 of RFC3414, localized key from A3.2
+        let hex_data = b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x9c\x10\x17\xf4\xfd\x48\x3d\x2d\xe8\xd5\xfa\xdb\xf8\x43\x92\xcb\x06\x45\x70\x51";
+        let p = perms();
+        let u = User {
+            what: WhatHash::Sha1,
+            group: vec![0, 1],
+            perm: p[0].clone(),
+            name: b"test".to_vec(),
+            auth_key: RefCell::new(
+                b"\x66\x95\xfe\xbc\x92\x88\xe3\x62\x82\x23\x5f\xc7\x15\x1f\x12\x84\x97\xb3\x8f\x3f"
+                    .to_vec(),
+            ),
+            auth_length: 12,
+            trunc: 20,
+            priv_key: RefCell::new(
+                b"\x66\x95\xfe\xbc\x92\x88\xe3\x62\x82\x23\x5f\xc7\x15\x1f\x12\x84\x97\xb3\x8f\x3f"
+                    .to_vec(),
+            ),
+            k1: RefCell::new([0; 64].to_vec()),
+            k2: RefCell::new([0; 64].to_vec()),
+            clean: RefCell::new(true),
+        };
+        let res = u.update_password(hex_data, false);
+        assert!(res.is_ok());
+        assert_eq!(
+            *u.priv_key.borrow(),
+            b"\x78\xe2\xdc\xce\x79\xd5\x94\x03\xb5\x8c\x1b\xba\xa5\xbf\xf4\x63\x91\xf1\xcd\x25"
+                .to_vec()
+        );
+    }
+    #[test]
     fn test_empty_users() {
         let mut u = Users::default();
         assert!(u.users.is_empty());
-        let user_text = "test test sha1 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c";
+        let user_text = "test test sha1 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c\n";
+        let use2_text = "best test sha1 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b aes 0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c\n";
         let pv = perms();
         u.load_from_str(&pv, user_text);
+        u.load_from_str(&pv, use2_text);
         assert!(!u.users.is_empty());
-        assert!(u.lookup_user(b"test".to_vec()).is_some());
-        assert!(u.lookup_user(b"not".to_vec()).is_none());
+        assert!(u.lookup_user(&b"best".to_vec()).is_some());
+        assert!(u.lookup_user(&b"test".to_vec()).is_some());
+        assert!(u.lookup_user(&b"not".to_vec()).is_none());
     }
 
     #[test]
@@ -613,9 +791,10 @@ mod tests {
         let pv = perms();
         u.load_from_str(&pv, user_text);
         assert!(!u.users.is_empty());
-        assert!(u.lookup_user(b"test".to_vec()).is_some());
-        assert!(u.lookup_user(b"not".to_vec()).is_none());
+        assert!(u.lookup_user(&b"test".to_vec()).is_some());
+        assert!(u.lookup_user(&b"not".to_vec()).is_none());
         let sav_res = u.save_to_file();
         assert!(sav_res.is_ok());
+        // FIXME check file contents
     }
 }

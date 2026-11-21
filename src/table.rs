@@ -270,6 +270,20 @@ impl OidKeeper for TableMemOid {
         self.rows.is_empty()
     }
 
+    /// Override default implementation. Return error if we can't find it
+    fn lookup_row(&self, index: &[u32]) -> Result<Vec<ObjectSyntax>, OidErr> {
+        // FIXME nice to do something faster than O(N) sequential search
+        // Maybe argument for keeping rows sorted by index, then binary_search
+        for row in &self.rows {
+            let r0 = &row.0;
+            debug!("Index {index:?} r0 {r0:?}");
+            if index == row.0 {
+                return Ok(row.1.clone());
+            }
+        }
+        Err(OidErr::NoSuchName)
+    }
+
     /// Get value, matching index_fn of row.
     fn get(&self, oid: ObjectIdentifier) -> Result<VarBindValue, OidErr> {
         let suffix = self.suffix(oid);
@@ -296,15 +310,11 @@ impl OidKeeper for TableMemOid {
         let index = &suffix[2..];
         debug!("Col {col} Index is {index:?}");
         // FIXME nice to do something faster than O(N) sequential search
-        // Maybe argument for keeping rows sorted by index, then binary_search
-        for row in &self.rows {
-            let r0 = &row.0;
-            debug!("Index {index:?} r0 {r0:?}");
-            if index == row.0 {
-                return Ok(VarBindValue::Value(row.1[col - 1].clone()));
-            }
+        if let Ok(row) = self.lookup_row(index) {
+            Ok(VarBindValue::Value(row[col - 1].clone()))
+        } else {
+            Err(OidErr::NoSuchInstance)
         }
-        Err(OidErr::NoSuchName)
     }
 
     fn get_next(&self, oid: ObjectIdentifier) -> Result<VarBind, OidErr> {
@@ -418,6 +428,7 @@ impl OidKeeper for TableMemOid {
         oid: ObjectIdentifier,
         value: VarBindValue,
         _user: &User,
+        _ref_tables: Vec<Box<dyn OidKeeper>>,
     ) -> Result<VarBindValue, OidErr> {
         if !self.in_transaction {
             warn!("Not in transaction in set");
@@ -660,21 +671,37 @@ mod tests {
         let oid2: ObjectIdentifier = ObjectIdentifier::new(&ARC2).unwrap(); //Checked #test
         let first = simple_from_vec(&ARC2);
         let here = address_from_vec([127, 0, 0, 1]);
+        let tick = ticks_from_int(0);
 
         let s0 = simple_from_int(0);
         let s41 = simple_from_int(41);
 
         let mut tab = TableMemOid::new(
-            vec![first.clone(), here.clone(), s0.clone()],
-            3,
+            vec![first.clone(), here.clone(), s0.clone(), tick.clone()],
+            4,
             &oid2,
-            vec![OType::ObjectId, OType::Address, OType::Integer],
-            vec![Access::ReadOnly, Access::ReadOnly, Access::ReadWrite],
-            vec![1usize, 2usize],
+            vec![
+                OType::ObjectId,
+                OType::Address,
+                OType::Integer,
+                OType::Ticks,
+            ],
+            vec![
+                Access::ReadOnly,
+                Access::ReadOnly,
+                Access::ReadWrite,
+                Access::ReadOnly,
+            ],
+            vec![1usize, 2usize, 3usize],
             false,
         );
         //tab.set_index(vec![1usize, 2usize], false,);
-        tab.set_data(vec![vec![first.clone(), here.clone(), s41.clone()]]);
+        tab.set_data(vec![vec![
+            first.clone(),
+            here.clone(),
+            s41.clone(),
+            tick.clone(),
+        ]]);
         tab
     }
     #[test]
@@ -761,12 +788,13 @@ mod tests {
         assert_eq!(row[1], simple_from_int(17));
         assert_eq!(row[2], simple_from_int(0));
         let tab2 = tab2_fixture();
-        let idx = [3, 1, 2, 50, 10, 0, 1, 1];
+        let idx = [3, 1, 2, 50, 10, 0, 1, 1, 0];
         let row = tab2.row_from_index(&idx);
-        assert_eq!(row.len(), 3);
+        assert_eq!(row.len(), 4);
         assert_eq!(row[0], simple_from_vec(&[1, 2, 50]));
         assert_eq!(row[1], address_from_vec([10, 0, 1, 1]));
         assert_eq!(row[2], simple_from_int(0));
+        assert_eq!(row[3], ticks_from_int(0));
     }
 
     #[test]
@@ -801,18 +829,18 @@ mod tests {
         let user = user_fixture(&pv);
         assert_eq!(tab.rows.len(), 0);
         assert!(tab.begin_transaction().is_ok());
-        let set_res = tab.set(oid3.clone(), VarBindValue::Value(s5.clone()), &user);
+        let set_res = tab.set(oid3.clone(), VarBindValue::Value(s5.clone()), &user, vec![]);
         assert!(set_res.is_ok());
         assert_eq!(tab.rows.len(), 0);
         assert!(tab.commit(&user).is_ok());
         assert_eq!(tab.rows.len(), 1);
         assert!(tab.begin_transaction().is_ok());
-        let set_res = tab.set(oid3.clone(), VarBindValue::Value(s1.clone()), &user);
+        let set_res = tab.set(oid3.clone(), VarBindValue::Value(s1.clone()), &user, vec![]);
         assert!(set_res.is_ok());
         assert_eq!(tab.rows.len(), 1);
         assert!(tab.commit(&user).is_ok());
         assert!(tab.begin_transaction().is_ok());
-        let set_res = tab.set(oid3.clone(), VarBindValue::Value(nr.clone()), &user);
+        let set_res = tab.set(oid3.clone(), VarBindValue::Value(nr.clone()), &user, vec![]);
         assert_eq!(set_res, Err(OidErr::WrongType));
         assert!(tab.rollback().is_ok());
     }
@@ -839,18 +867,18 @@ mod tests {
         //tab.set_index(vec![1usize], false,);
         assert_eq!(tab.rows.len(), 0);
         assert!(tab.begin_transaction().is_ok());
-        let set_res = tab.set(oid3.clone(), VarBindValue::Value(s5.clone()), &user);
+        let set_res = tab.set(oid3.clone(), VarBindValue::Value(s5.clone()), &user, vec![]);
         assert!(set_res.is_ok());
         assert_eq!(tab.rows.len(), 0);
         assert!(tab.commit(&user).is_ok());
         assert_eq!(tab.rows.len(), 1);
         assert!(tab.begin_transaction().is_ok());
-        let set_res = tab.set(oid3.clone(), VarBindValue::Value(s1.clone()), &user);
+        let set_res = tab.set(oid3.clone(), VarBindValue::Value(s1.clone()), &user, vec![]);
         assert!(set_res.is_ok());
         assert_eq!(tab.rows.len(), 1);
         assert!(tab.commit(&user).is_ok());
         assert!(tab.begin_transaction().is_ok());
-        let set_res = tab.set(oid3.clone(), VarBindValue::Value(nr.clone()), &user);
+        let set_res = tab.set(oid3.clone(), VarBindValue::Value(nr.clone()), &user, vec![]);
         assert_eq!(set_res, Err(OidErr::WrongType));
         assert!(tab.rollback().is_ok());
     }
@@ -877,7 +905,7 @@ mod tests {
         //tab.set_index(vec![1usize], false,);
         assert_eq!(tab.rows.len(), 0);
         assert!(tab.begin_transaction().is_ok());
-        let set_res = tab.set(oid3.clone(), VarBindValue::Value(s5.clone()), &user);
+        let set_res = tab.set(oid3.clone(), VarBindValue::Value(s5.clone()), &user, vec![]);
         assert!(set_res.is_err());
         assert_eq!(tab.rows.len(), 0);
     }
@@ -944,9 +972,17 @@ mod tests {
         assert!(tab.begin_transaction().is_ok());
         for arc in [&ARC4, &ARC5, &ARC6] {
             let oid3: ObjectIdentifier = ObjectIdentifier::new(arc).unwrap(); //Checked #test
-            let set_res = tab.set(oid3.clone(), VarBindValue::Value(s5.clone()), &user);
+            let set_res = tab.set(oid3.clone(), VarBindValue::Value(s5.clone()), &user, vec![]);
             assert!(set_res.is_err());
             assert_eq!(tab.rows.len(), 0);
         }
+    }
+
+    #[test]
+    fn test_lookup_fail() {
+        let idx = [3, 48, 49, 50, 17];
+        let tab = tab_fixture();
+        let res = tab.lookup_row(&idx);
+        assert!(res.is_err());
     }
 }

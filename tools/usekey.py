@@ -33,6 +33,7 @@ def eid_from_str(text: str) -> bytes:
         return ent + b"\x04" + parts[2].encode("utf-8")
     if parts[1] == "5":
         return ent + b"\x05" + bytes.fromhex(parts[2])
+    sys.stderr.write("Unable to parse engine ID\n")
     sys.exit(8)
 
 
@@ -46,6 +47,7 @@ def get_engine_id(path: str) -> bytes:
             parts = line.split(" ", 1)
             if parts[0] == "EngineID":
                 return eid_from_str(parts[1].strip())
+    sys.stderr.write("Unable to find engine ID in configuration file\n")
     sys.exit(7)
 
 
@@ -71,7 +73,7 @@ def localise_key(pass_word: bytes, engine_id: bytes,
 if len(sys.argv) not in [4, 5, 6]:
     print("Usage:\npython3 usekey.py <group> <user> <password> [<password2> [hash]]")
     print("<group> should be a group name in groups.txt")
-    print("hash (if present) should be one of sha1 sha224 sha256")
+    print("hash (if present) should be one of sha1 sha224 sha256 sha384 sha512")
     sys.exit(1)
 
 HMAP = {"sha1": (sha1, 20),
@@ -90,6 +92,9 @@ hashname = sys.argv[5] if len(sys.argv) >= 6 else "sha1"
 # engine_id = b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02'
 # ENGINE_ID = b"\x80\x00\x4e\x2c\x03\x34\x48\xed\x2d\xe2\x88"
 conf_engine_id = get_engine_id(".snmp-agent.conf")
+if hashname not in HMAP:
+    sys.stderr.write("Unrecognised hash name\n")
+    sys.exit(9)
 
 hasher, trunc = HMAP[hashname]
 

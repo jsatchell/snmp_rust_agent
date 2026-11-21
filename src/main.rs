@@ -31,7 +31,7 @@ fn main() -> std::io::Result<()> {
     let mut users: usm::Users = usm::Users::new(conf.users_file.clone());
     users.load_from_str(&perms, &users_text);
 
-    let mut agent: Agent = Agent::build(conf.engine_id.clone(), &conf.listen, conf.send_auth_fails);
+    let mut agent: Agent = Agent::build(conf.engine_id.clone(), &conf.listen, conf.send_auth_fails, conf.bulk_limit);
     if conf.trap_sink.is_empty() {
         debug!("No Trapsink defined in config, won't start notifier");
     } else {

@@ -27,6 +27,7 @@ use std::str::FromStr;
 use std::sync::mpsc::Sender;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
+use std::cmp::min;
 
 const BOOT_CNT_FILENAME: &str = "boot-cnt.txt";
 const Z12: OctetString = OctetString::from_static(&[0u8; 12]);
@@ -42,6 +43,8 @@ const ARC_AUTHENTICATION_FAILURE: [u32; 10] = [1, 3, 6, 1, 6, 3, 1, 1, 5, 5];
 /// Panic if the file cannot be parsed or updated, as that indicates tampering or hardware failure.
 /// This function is not really thread safe, but the retry makes it robust in practice for testing
 /// and actual normal use is strictly single threaded.
+/// 
+///  FIXME use File::lock instead, to block if need be.
 fn get_increment_boot_cnt() -> isize {
     let mut boots: isize = 0;
     let mut retry_counter = 0;
@@ -57,8 +60,8 @@ fn get_increment_boot_cnt() -> isize {
         }
         retry_counter += 1;
         sleep(Duration::new(0, retry_counter * 5000)); // 5ms times retry sleep, long enough for other thread to clear off
-        if retry_counter > 12 {
-            panic!("Boot count not parsed after 12 retries - probably corrupted file or hardware failure.");
+        if retry_counter > 20 {
+            panic!("Boot count not parsed after 20 retries - probably corrupted file or hardware failure.");
         }
     }
     boots += 1;
@@ -89,6 +92,7 @@ pub struct Agent {
     pub unknown_contexts: u32,
     notifier: Option<Sender<notifier::Notification>>,
     send_auth_fails: bool,
+    bulk_limit: u16,
 }
 
 impl Agent {
@@ -105,7 +109,7 @@ impl Agent {
     /// of traffic, even if an attacker has no access to it, but does have access to the agent. If false,
     /// the manager will never find out about the attacks at all. Correct choice
     /// depends on a balanced risk analysis in the specific deployment architecture.
-    pub fn build(eid: OctetString, addr_str: &str, send_auth_fails: bool) -> Self {
+    pub fn build(eid: OctetString, addr_str: &str, send_auth_fails: bool, bulk_limit: u16) -> Self {
         let sock = UdpSocket::bind(addr_str).expect("Couldn't bind to address");
 
         Agent {
@@ -123,6 +127,7 @@ impl Agent {
             unknown_contexts: 0u32,
             notifier: None,
             send_auth_fails,
+            bulk_limit,
         }
     }
 
@@ -147,7 +152,9 @@ impl Agent {
         self.report(request_id, message_id, vb)
     }
 
-    /// Internal method for supporting engine ID discovery by managers
+    /// Internal method for reporting unknown user
+    ///
+    /// This is required by the RFC, but is a bad idea, and should have been lumped in with other authorisation failures.
     fn unknown_user(&self, request_id: i32, message_id: Integer) -> Message {
         let vb: Vec<VarBind> = vec![VarBind {
             name: ObjectIdentifier::new_unchecked(vec![1, 3, 6, 1, 6, 3, 15, 1, 1, 3, 0].into()),
@@ -158,7 +165,7 @@ impl Agent {
         self.report(request_id, message_id, vb)
     }
 
-    /// Internal method for supporting engine ID discovery by managers
+    /// Internal method for reporting authorisation  failure.
     fn auth_failure(&self, request_id: i32, message_id: Integer) -> Message {
         let vb: Vec<VarBind> = vec![VarBind {
             name: ObjectIdentifier::new_unchecked(vec![1, 3, 6, 1, 6, 3, 15, 1, 1, 5, 0].into()),
@@ -214,7 +221,7 @@ impl Agent {
         message
     }
 
-    /// Internal method that builds response packets.
+    /// Internal method that builds Response packets.
     fn prepare_back(
         &self,
         message_id: Integer,
@@ -280,7 +287,7 @@ impl Agent {
         let mut error_status = Pdu::ERROR_STATUS_NO_ERROR;
         let mut error_index = 0;
         let request_id = r.0.request_id;
-        let mut vb_cnt = 0;
+        let mut vb_cnt = 1;
         for vbind in r.0.variable_bindings {
             let roid = vbind.name.clone();
             if !perm.check(false, &roid) {
@@ -302,7 +309,7 @@ impl Agent {
                 }
                 Ok(which) => {
                     vb_cnt += 1;
-                    let okeep = &mut oid_map.idx(which);
+                    let okeep = &mut oid_map.idx(which).borrow();
                     let value_res = okeep.get(roid.clone());
                     if let Ok(value) = value_res {
                         vb.push(VarBind {
@@ -369,7 +376,7 @@ impl Agent {
                 cnt = insert_point;
             }
             Ok(which) => {
-                if oid_map.idx(which).is_scalar(roid.clone()) {
+                if oid_map.idx(which).borrow().is_scalar(roid.clone()) {
                     cnt = which + 1;
                     oid1 = oid_map.oid(cnt).clone();
                 } else {
@@ -381,7 +388,8 @@ impl Agent {
         loop {
             //let oid1 = oid_map.oid(cnt).clone();
             if perm.check(false, &oid1) {
-                let keep = oid_map.idx(cnt);
+                let name = oid_map.oid(cnt).clone();
+                let keep = oid_map.idx(cnt).borrow();
 
                 let acc = if keep.is_scalar(oid1.clone()) {
                     keep.access(oid1.clone())
@@ -398,10 +406,7 @@ impl Agent {
                         let value_res = keep.get(oid1.clone());
                         match value_res {
                             Ok(value) => {
-                                vb.push(VarBind {
-                                    name: oid_map.oid(cnt).clone(),
-                                    value,
-                                });
+                                vb.push(VarBind { name, value });
                                 return;
                             }
                             Err(_err) => {
@@ -509,7 +514,7 @@ impl Agent {
             }
         }
         for indx in &keeps {
-            let okeep = oid_map.idx(*indx);
+            let mut okeep = oid_map.idx(*indx).borrow_mut();
             let _ = okeep.begin_transaction();
         }
         for vbind in r.0.variable_bindings {
@@ -524,7 +529,7 @@ impl Agent {
             match opt_set {
                 Err(insert_point) => {
                     debug!("Set miss case {insert_point}");
-                    let okeep = &mut oid_map.idx(insert_point - 1);
+                    let okeep = &mut oid_map.idx(insert_point - 1).borrow_mut();
                     if okeep.is_scalar(roid.clone()) {
                         debug!("Scalar set miss"); // This should error and generate a report?
                         error_status = Pdu::ERROR_STATUS_NO_SUCH_NAME;
@@ -536,7 +541,7 @@ impl Agent {
                         break;
                     } else {
                         debug!("Table set ");
-                        let set_res = okeep.set(roid.clone(), vbind.value, user);
+                        let set_res = okeep.set(roid.clone(), vbind.value, user, vec![]);
                         debug!("Table set {set_res:?}");
                         match set_res {
                             Ok(res) => vb.push(VarBind {
@@ -555,8 +560,8 @@ impl Agent {
                 }
                 Ok(which) => {
                     vb_cnt += 1;
-                    let okeep = &mut oid_map.idx(which);
-                    let set_result = (**okeep).set(roid.clone(), vbind.value.clone(), user);
+                    let okeep = &mut oid_map.idx(which).borrow_mut();
+                    let set_result = (**okeep).set(roid.clone(), vbind.value.clone(), user, vec![]);
                     if set_result.is_err() {
                         // Map all the error types
                         error_status = match set_result.err() {
@@ -579,7 +584,7 @@ impl Agent {
             }
         }
         for indx in &keeps {
-            let keep = oid_map.idx(*indx);
+            let mut keep = oid_map.idx(*indx).borrow_mut();
             if error_status == Pdu::ERROR_STATUS_NO_ERROR {
                 let cres = keep.commit(user);
                 if cres.is_err() {
@@ -609,7 +614,7 @@ impl Agent {
         let request_id = r.0.request_id;
         // FIXME should error if unreasonably big -
         let non_repeaters: usize = r.0.non_repeaters.try_into().unwrap(); // Checked U32 fits into usize execpt on microcontrollers
-        let max_repeats = r.0.max_repetitions;
+        let max_repeats = min(r.0.max_repetitions, self.bulk_limit.into());
         let mut rep_oids: Vec<ObjectIdentifier> = vec![];
         for (n, vbind) in r.0.variable_bindings.iter().enumerate() {
             if n < non_repeaters {
@@ -754,7 +759,7 @@ impl Agent {
         let usp: USMSecurityParameters = r_sp.ok().expect("Errors caught above");
 
         if !usp.user_name.is_empty() {
-            opt_user = users.lookup_user(usp.user_name.to_vec());
+            opt_user = users.lookup_user(&usp.user_name.to_vec());
             if opt_user.is_none() {
                 self.unknown_users += 1;
                 if self.send_auth_fails {
@@ -839,7 +844,7 @@ impl Agent {
                 if pdu_decode_res.is_err() {
                     // Should return decode error
                     self.decryption_errors += 1;
-                    warn!("Decode error {pdu_decode_res:?}");
+                    warn!("Decode error");
                     return (None, None);
                 }
                 let scoped_pdu: ScopedPdu = pdu_decode_res.unwrap(); // Checked Error case above
@@ -924,8 +929,13 @@ impl Agent {
             16 => Z16,
             24 => Z24,
             32 => Z32,
-            _ => Z48,
+            48 => Z48,
+            _ => ZB,
         };
+        if usp.authentication_parameters == ZB {
+            warn!("Auth is unsupported length");
+            return vec![];
+        }
         let enc_res = message.encode_security_parameters(rasn::Codec::Ber, &usp);
         if enc_res.is_err() {
             warn!("Encode security parameters failed");
@@ -964,6 +974,7 @@ impl Agent {
             .unwrap_or(isize::MAX);
         if boots != self.boots {
             self.not_in_time_window += 1;
+            warn!("boots wrong ");
             return true;
         }
         let run_time: i32 = self
@@ -976,6 +987,7 @@ impl Agent {
         let delta_t: i32 = man_time - run_time;
         if !(-150..=150).contains(&delta_t) {
             self.not_in_time_window += 1;
+            warn!("Run time outside window");
             return true;
         }
 
@@ -983,7 +995,7 @@ impl Agent {
         let our_hmac = self.set_auth(message, user);
         // Actually check the auth
         if hmac != our_hmac {
-            warn!("Message hmac {hmac:?} ours {our_hmac:?} ");
+            warn!("Message hmac !=  authentication_parameters ");
             self.wrong_digests += 1;
             return true;
         }
@@ -1007,10 +1019,9 @@ mod tests {
 
     fn make_agent(port: &str) -> Agent {
         env::set_var("RUST_LOG", "info");
-        //env_logger::init();
         let eid = OctetString::from_static(b"test");
         let addr = "127.0.0.1:".to_owned() + port;
-        Agent::build(eid, &addr, false)
+        Agent::build(eid, &addr, false, 8u16)
     }
 
     fn get_pdu(arg: &'static [u32]) -> GetRequest {
@@ -1153,14 +1164,14 @@ mod tests {
         let fperm = FlagPerm::new(3, &context, perm);
         let (status, idx, r_id) = agent.get(&mut oid_map, gp, &mut vb, &fperm);
         assert_eq!(r_id, 1);
-        assert_eq!(idx, 1);
+        assert_eq!(idx, 2);
         assert_eq!(status, Pdu::ERROR_STATUS_NO_SUCH_NAME);
         assert_eq!(vb.len(), 1);
         vb.clear();
         let gp = get_pdu(&[1, 7, 1, 3, 4]);
         let (status, idx, r_id) = agent.get(&mut oid_map, gp, &mut vb, &fperm);
         assert_eq!(r_id, 1);
-        assert_eq!(idx, 0);
+        assert_eq!(idx, 1);
         assert_eq!(status, Pdu::ERROR_STATUS_NO_SUCH_NAME);
         assert_eq!(vb.len(), 1);
         vb.clear();
@@ -1434,7 +1445,7 @@ mod tests {
         assert_eq!(id_message.version, Integer::from(3));
         let auth_message = agent.auth_failure(8, Integer::from(9));
         assert_eq!(auth_message.version, Integer::from(3));
-        let use_message = agent.unknown_user(8, Integer::from(9));
+        let use_message = agent.unknown_user(8, Integer::from(10));
         assert_eq!(use_message.version, Integer::from(3));
     }
 
@@ -1475,7 +1486,7 @@ mod tests {
         let auth = agent.wrong_auth(&mut message, &user, usp.clone());
         assert!(auth);
         let _ = message.encode_security_parameters(rasn::Codec::Ber, &usp);
-        let sauth = agent.set_auth(&mut message, &user);
+        let _sauth = agent.set_auth(&mut message, &user);
         let r_sp: Result<USMSecurityParameters, Box<dyn Display>> =
             message.decode_security_parameters(rasn::Codec::Ber);
         let usp: USMSecurityParameters = r_sp.ok().expect("Errors caught above");
@@ -1486,9 +1497,11 @@ mod tests {
 
     #[test]
     fn test_process_message() {
+        // Happy case of processing message
         let mut agent = make_agent("3173");
         let pv = perms();
         let users = users_fixture(&pv);
+
         let zb = OctetString::from_static(b"");
         let gp = get_pdu(&ARC2);
         let eid = static_engine_id(1, b"besttest");
@@ -1528,8 +1541,123 @@ mod tests {
     }
 
     #[test]
-    fn test_process_message_no_user() {
+    fn test_process_encrypted_message() {
+        // This test is an internal round trip - just checks that our encryption and authentication
+        // are consistent on way in and way out.
         let mut agent = make_agent("3174");
+        let pv = perms();
+        let users = users_fixture(&pv);
+        let user = &users.users[0];
+        let zb = OctetString::from_static(b"");
+        let gp = get_pdu(&ARC2);
+        let eid = static_engine_id(1, b"besttest");
+        let username = OctetString::from_slice(&user.name);
+
+        let scpl = ScopedPdu {
+            engine_id: eid.clone(),
+            name: zb.clone(),
+            data: Pdus::GetRequest(gp),
+        };
+        let hd = HeaderData {
+            message_id: Integer::from(1),
+            max_size: Integer::from(7650),
+            flags: OctetString::from_static(&[3]),
+            security_model: Integer::from(3),
+        };
+
+        let spd = ScopedPduData::CleartextPdu(scpl);
+
+        let run_time = 0;
+        let usm: USMSecurityParameters = USMSecurityParameters {
+            authoritative_engine_boots: Integer::from(agent.boots),
+            authoritative_engine_id: eid.clone(),
+            authoritative_engine_time: Integer::from(run_time),
+            user_name: username.clone(),
+            authentication_parameters: Z12,
+            privacy_parameters: OctetString::from_static(&[0u8; 16]),
+        };
+        
+        let key = &user.priv_key.borrow();
+        let enc_octs = rasn::ber::encode(&spd).unwrap(); // Checked spd constructed by safe rust code, so should encode
+        let value: Vec<u8> = privacy::encrypt(&mut enc_octs.to_vec(), usm.clone(), key);
+        let espd = ScopedPduData::EncryptedPdu(OctetString::from(value));
+       
+        let mut input: Message = Message {
+            version: Integer::from(3),
+            global_data: hd,
+            scoped_data: espd,
+            security_parameters: ZB,
+        };
+  
+        let _ = input.encode_security_parameters(rasn::Codec::Ber, &usm);
+
+        _ = agent.set_auth(&mut input, user );// FIXME Should check return value
+        let mut oid_map = make_oid_map();
+        let mut context_map = ContextMap::new();
+        context_map.insert(b"", &mut oid_map);
+
+        
+        let (msg, usr) = agent.process_message(&mut context_map, &users, &mut input);
+
+        assert!(msg.is_some());
+        assert!(usr.is_some());
+    }
+    #[test]
+    fn test_process_message_bad_crypto() {
+        // should take an error path.
+        let mut agent = make_agent("3175");
+        let pv = perms();
+        let users = users_fixture(&pv);
+        let user = &users.users[0];
+        let zb = OctetString::from_static(b"");
+        let gp = get_pdu(&ARC2);
+        let eid = static_engine_id(1, b"besttest");
+
+        let usp: USMSecurityParameters = USMSecurityParameters {
+            authoritative_engine_id: eid.clone(),
+            authoritative_engine_boots: Integer::from(0),
+            authoritative_engine_time: Integer::from(8),
+            user_name: OctetString::from_static(b"test"),
+            authentication_parameters: OctetString::from_static(&[0u8; 16]),
+            privacy_parameters: OctetString::from_static(&[0u8; 16]),
+        };
+        let scpl = ScopedPdu {
+            engine_id: eid.clone(),
+            name: zb.clone(),
+            data: Pdus::GetRequest(gp),
+        };
+        let hd = HeaderData {
+            message_id: Integer::from(7),
+            max_size: Integer::from(7650),
+            flags: OctetString::from_static(&[3]),
+            security_model: Integer::from(3),
+        };
+
+        let mut spd = ScopedPduData::CleartextPdu(scpl);
+        let key = &user.priv_key.borrow();
+        let enc_octs = rasn::ber::encode(&spd).unwrap(); // Checked spd constructed by safe rust code, so should encode
+        let value: Vec<u8> = privacy::encrypt(&mut enc_octs.to_vec(), usp.clone(), key);
+        spd = ScopedPduData::EncryptedPdu(OctetString::from(value));
+
+        let mut message = Message {
+            version: Integer::from(3),
+            global_data: hd,
+            security_parameters: OctetString::from_static(&[0u8; 16]),
+            scoped_data: spd,
+        };
+        let _ = message.encode_security_parameters(rasn::Codec::Ber, &usp);
+        let mut oid_map = make_oid_map();
+        let mut context_map = ContextMap::new();
+        context_map.insert(b"", &mut oid_map);
+
+        let (msg, usr) = agent.process_message(&mut context_map, &users, &mut message);
+        assert!(usr.is_none());
+        assert!(msg.is_none());
+    }
+
+    #[test]
+    fn test_process_message_no_user() {
+        let mut agent = make_agent("3176");
         let pv = perms();
         let users = users_fixture(&pv);
         let zb = OctetString::from_static(b"");
@@ -1572,7 +1700,7 @@ mod tests {
 
     #[test]
     fn test_process_message_no_engine_id() {
-        let mut agent = make_agent("3175");
+        let mut agent = make_agent("3177");
         let pv = perms();
         let users = users_fixture(&pv);
         let zb = OctetString::from_static(b"");
@@ -1615,5 +1743,20 @@ mod tests {
             assert_eq!(mess.version, Integer::from(3));
         }
     }
-    // FIXME add tests for more set cases
+
+    #[test]
+    fn test_notifier_start_stop() {
+        let mut agent = make_agent("3178");
+        let zero_dot_zero = ObjectIdentifier::new(&[0, 0]).unwrap(); //Checked, valid arc
+        let end_it = notifier::Notification {
+            name: zero_dot_zero,
+            vb: vec![],
+        };
+        assert!(agent.notifier.is_none());
+        agent.start_notifier("127.0.0.1:127", "public");
+        assert!(agent.notifier.is_some());
+        agent.notifier.unwrap().send(end_it).unwrap();
+    }
+
+    // FIXME add tests for more set and get cases
 }

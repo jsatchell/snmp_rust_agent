@@ -5,8 +5,7 @@
 //!
 //! This agent only supports SNMP v3, older variants have no on the wire security.
 //!
-//! This project follows semver - but that means no guarantees at all pre v1! There are changes in the internal APIs
-//!  and traits in this release, so this is a minor version (0.4.0) rather than a patch.
+//! This project follows semver - but that means no guarantees at all pre v1! See the README for changes in this release.
 //!
 //! The standards define the use of horrible old crypto types like single DES for privacy, and
 //! MD5 in the authentication. The code currently supports HMAC-SHA-1-96, the stronger hashes
@@ -29,7 +28,7 @@
 //! default, rules apply to all contexts, but you can mark a rule as applying to a specific context.  The
 //! integration of this permissions model into GetNext handling is fixed.
 //!
-//! In this release the Engine ID is loaded from a configuration file. A sample configuration file is included
+//! The Engine ID is loaded from a configuration file. A sample configuration file is included
 //! at .snmp-agent.conf.
 //!
 //! Two example MIB module handlers are included under src/handlers for SNMPv3-MIB and SNMP-USER-BASED-SM-MIB.
@@ -128,6 +127,7 @@
 //! touch users.txt
 //! python3 tools/usekey.py admin myv3user password password1 >> users.txt
 //! ```
+//!
 //! You can run the python tool again to add extra lines to the file for other users.
 //!
 //! Optionally, edit groups.toml.

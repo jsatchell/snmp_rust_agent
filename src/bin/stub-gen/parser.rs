@@ -1137,4 +1137,32 @@ END
         assert_eq!(y, 0);
         assert!(x);
     }
+
+    #[test]
+    fn test_bad_parse_mib() {
+        let cases = [
+            ("###     ", 1),
+            ("", 1),
+            (
+                "xxx DEFINITIONS ::= BEGIN
+    IMPORTS
+        MODULE-IDENTITY, ; -- [RFC3411]",
+                2,
+            ),
+            (
+                "xxx DEFINITIONS ::= BEGIN
+    IMPORTS
+        A FROM B;",
+                4,
+            ),
+        ];
+
+        for (text, num) in cases {
+            let mut nodes = vec![];
+            let (x, y) = parse_mib(text, &mut nodes);
+
+            assert_eq!(y, num);
+            assert!(!x);
+        }
+    }
 }
