@@ -19,6 +19,7 @@ use rasn_snmp::v3::VarBindValue;
 use rasn_snmp::v3::{GetBulkRequest, GetNextRequest, GetRequest, SetRequest};
 use rasn_snmp::v3::{HeaderData, Message, Pdus, ScopedPdu, USMSecurityParameters};
 use rasn_snmp::v3::{Response, ScopedPduData};
+use std::cmp::min;
 use std::collections::HashSet;
 use std::fmt::Display;
 use std::fs::{read_to_string, write};
@@ -27,7 +28,7 @@ use std::str::FromStr;
 use std::sync::mpsc::Sender;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
-use std::cmp::min;
+use subtle::ConstantTimeEq;
 
 const BOOT_CNT_FILENAME: &str = "boot-cnt.txt";
 const Z12: OctetString = OctetString::from_static(&[0u8; 12]);
@@ -43,7 +44,7 @@ const ARC_AUTHENTICATION_FAILURE: [u32; 10] = [1, 3, 6, 1, 6, 3, 1, 1, 5, 5];
 /// Panic if the file cannot be parsed or updated, as that indicates tampering or hardware failure.
 /// This function is not really thread safe, but the retry makes it robust in practice for testing
 /// and actual normal use is strictly single threaded.
-/// 
+///
 ///  FIXME use File::lock instead, to block if need be.
 fn get_increment_boot_cnt() -> isize {
     let mut boots: isize = 0;
@@ -759,7 +760,7 @@ impl Agent {
         let usp: USMSecurityParameters = r_sp.ok().expect("Errors caught above");
 
         if !usp.user_name.is_empty() {
-            opt_user = users.lookup_user(&usp.user_name.to_vec());
+            opt_user = users.lookup_user(&usp.user_name);
             if opt_user.is_none() {
                 self.unknown_users += 1;
                 if self.send_auth_fails {
@@ -993,13 +994,14 @@ impl Agent {
 
         let hmac = usp.authentication_parameters.clone().to_vec();
         let our_hmac = self.set_auth(message, user);
-        // Actually check the auth
-        if hmac != our_hmac {
+        // Actually check the auth using constant time comparison
+        if hmac.ct_eq(&our_hmac).into() {
+            false
+        } else {
             warn!("Message hmac !=  authentication_parameters ");
             self.wrong_digests += 1;
-            return true;
+            true
         }
-        false
     }
 }
 
@@ -1576,27 +1578,26 @@ mod tests {
             authentication_parameters: Z12,
             privacy_parameters: OctetString::from_static(&[0u8; 16]),
         };
-        
+
         let key = &user.priv_key.borrow();
         let enc_octs = rasn::ber::encode(&spd).unwrap(); // Checked spd constructed by safe rust code, so should encode
         let value: Vec<u8> = privacy::encrypt(&mut enc_octs.to_vec(), usm.clone(), key);
         let espd = ScopedPduData::EncryptedPdu(OctetString::from(value));
-       
+
         let mut input: Message = Message {
             version: Integer::from(3),
             global_data: hd,
             scoped_data: espd,
             security_parameters: ZB,
         };
-  
+
         let _ = input.encode_security_parameters(rasn::Codec::Ber, &usm);
 
-        _ = agent.set_auth(&mut input, user );// FIXME Should check return value
+        _ = agent.set_auth(&mut input, user); // FIXME Should check return value
         let mut oid_map = make_oid_map();
         let mut context_map = ContextMap::new();
         context_map.insert(b"", &mut oid_map);
 
-        
         let (msg, usr) = agent.process_message(&mut context_map, &users, &mut input);
 
         assert!(msg.is_some());

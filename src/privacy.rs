@@ -8,10 +8,10 @@ type Aes128CfbDec = cfb_mode::Decryptor<aes::Aes128>;
 /// Calculate the Initial Value for the crypt.
 /// If you get this wrong, the first block comes out wrong,
 /// but it then recovers - this is a CFB feature
-fn make_iv(usp: USMSecurityParameters) -> Option<[u8; 16]>{
+fn make_iv(usp: USMSecurityParameters) -> Option<[u8; 16]> {
     // Manager chooses salt, agent just uses it (except for v3 traps, which we don't do yet)
     if usp.privacy_parameters.len() < 8 {
-        return None
+        return None;
     }
     let mut iv: [u8; 16] = [0; 16];
     let (boot32p, needed) = usp.authoritative_engine_boots.to_unsigned_bytes_be();
@@ -37,12 +37,12 @@ pub fn decrypt(data: &mut [u8], usp: USMSecurityParameters, pkey: &[u8]) -> Vec<
     if ivopt.is_none() {
         vec![]
     } else {
-    let iv = ivopt.unwrap();
-    let key: &[u8] = &pkey[0..16];
-    Aes128CfbDec::new_from_slices(key, &iv)
-        .unwrap() // Checked, length is valid
-        .decrypt(data);
-    data.to_vec()
+        let iv = ivopt.unwrap();
+        let key: &[u8] = &pkey[0..16];
+        Aes128CfbDec::new_from_slices(key, &iv)
+            .unwrap() // Checked, length is valid
+            .decrypt(data);
+        data.to_vec()
     }
 }
 
@@ -52,12 +52,12 @@ pub fn encrypt(data: &mut [u8], usp: USMSecurityParameters, pkey: &[u8]) -> Vec<
     if ivopt.is_none() {
         vec![]
     } else {
-         let iv = ivopt.unwrap();
-    let key: &[u8] = &pkey[0..16];
-    Aes128CfbEnc::new_from_slices(key, &iv)
-        .unwrap() // Checked, length is valid
-        .encrypt(data);
-    data.to_vec()
+        let iv = ivopt.unwrap();
+        let key: &[u8] = &pkey[0..16];
+        Aes128CfbEnc::new_from_slices(key, &iv)
+            .unwrap() // Checked, length is valid
+            .encrypt(data);
+        data.to_vec()
     }
 }
 

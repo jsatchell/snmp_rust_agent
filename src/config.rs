@@ -19,7 +19,7 @@
 //! * PermissionsFile - toml file containing the group permissions data, defaults to groups.toml
 //! * UsersFile - username and password data, defaults to users.txt
 //! * TrapCommunity - community name for v2 notifications. If not set, defaults to "public".
-//! 
+//!
 //! This has a built in default.
 //! * MaxBulkRepeats - limit on number of repeats that can be requested in GetBulk. Must be parseable as n integer. If not set defaults to 32. Max  2^16 - 1.
 //!
@@ -118,7 +118,7 @@ impl Config {
                 "UsersFile" => users_file = PathBuf::from(parts[1]),
                 "InformRetries" => inform_retries = parts[1].parse().unwrap(), // Startup
                 "InformTimeout" => inform_timeout = parts[1].parse().unwrap(), // Startup
-                "MaxBulkRepeats" => bulk_limit = parts[1].parse().unwrap(), // Startup
+                "MaxBulkRepeats" => bulk_limit = parts[1].parse().unwrap(),    // Startup
                 _ => {
                     debug!("Unexpected keyword in config file {0}", parts[0]);
                 }
@@ -176,7 +176,7 @@ impl Config {
 }
 
 /// Struct gathers Compliance Statements for handlers.
-/// 
+///
 pub struct ComplianceStatements {
     pub claims: Vec<(&'static [u32], &'static str)>,
 }
