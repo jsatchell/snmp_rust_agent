@@ -293,6 +293,10 @@ impl Agent {
             let roid = vbind.name.clone();
             if !perm.check(false, &roid) {
                 error_status = Pdu::ERROR_STATUS_NO_ACCESS;
+                vb.push(VarBind {
+                    name: roid,
+                    value: VarBindValue::Unspecified,
+                });
                 error_index = vb_cnt;
                 return (error_status, error_index, request_id);
             }
@@ -412,8 +416,8 @@ impl Agent {
                             }
                             Err(_err) => {
                                 // FIXME map errors
-                                parg.error_index = parg.vb_cnt;
-                                parg.error_status = Pdu::ERROR_STATUS_GEN_ERR;
+                                parg.error_index = parg.vb_cnt + 1;
+                                parg.error_status = Pdu::ERROR_STATUS_NO_ACCESS;
                                 vb.push(VarBind {
                                     name: oid1.clone(),
                                     value: VarBindValue::Unspecified,
@@ -429,6 +433,15 @@ impl Agent {
                             }
                             // Map errors here - could be empty table!
                             Err(err) => {
+                                parg.error_index = parg.vb_cnt + 1;
+                                parg.error_status = match err {
+                                    OidErr::GenErr => Pdu::ERROR_STATUS_GEN_ERR,
+                                    OidErr::OutOfRange => Pdu::ERROR_STATUS_NO_ERROR,
+                                    OidErr::NoAccess => Pdu::ERROR_STATUS_NO_ACCESS,
+                                    OidErr::NoSuchInstance => Pdu::ERROR_STATUS_NO_SUCH_NAME,
+                                    OidErr::NoSuchName => Pdu::ERROR_STATUS_NO_SUCH_NAME,
+                                    _ => Pdu::ERROR_STATUS_GEN_ERR,
+                                };
                                 let val = match err {
                                     OidErr::GenErr => VarBindValue::Unspecified,
                                     OidErr::OutOfRange => VarBindValue::EndOfMibView,
@@ -1135,11 +1148,26 @@ mod tests {
             include: vec![vec![1u32]],
             exclude: vec![],
         }];
-        vec![Perm {
-            rules,
-            security_level: 1u8, // Just flags
-            group_name: "test".as_bytes().to_vec(),
-        }]
+        let rule2 = vec![Rule {
+            read: false,
+            write: false,
+            context: None,
+            include: vec![vec![1u32]],
+            exclude: vec![],
+        }];
+
+        vec![
+            Perm {
+                rules,
+                security_level: 1u8, // Just flags
+                group_name: "test".as_bytes().to_vec(),
+            },
+            Perm {
+                rules: rule2,
+                security_level: 1u8, // Just flags
+                group_name: "test".as_bytes().to_vec(),
+            },
+        ]
     }
 
     fn user_fixture<'a>(pv: &'a Vec<Perm>) -> User {
@@ -1162,8 +1190,10 @@ mod tests {
         let mut vb: Vec<VarBind> = vec![];
         let mut oid_map = make_oid_map();
         let perm = &perms()[0];
+        let perms2 = &perms()[1];
         let context = [];
         let fperm = FlagPerm::new(3, &context, perm);
+        let fperm2 = FlagPerm::new(3, &context, perms2);
         let (status, idx, r_id) = agent.get(&mut oid_map, gp, &mut vb, &fperm);
         assert_eq!(r_id, 1);
         assert_eq!(idx, 2);
@@ -1184,6 +1214,14 @@ mod tests {
         assert_eq!(status, Pdu::ERROR_STATUS_NO_ERROR);
         assert_eq!(vb.len(), 1);
         assert_eq!(vb[0].value, VarBindValue::Value(simple_from_int(5)));
+        vb.clear();
+        // Case where permissions fail
+        let gp = get_pdu(&[1, 6, 1, 2, 3, 120, 121, 122, 5]);
+        let (status, idx, r_id) = agent.get(&mut oid_map, gp, &mut vb, &fperm2);
+        assert_eq!(r_id, 1);
+        assert_eq!(idx, 1);
+        assert_eq!(status, Pdu::ERROR_STATUS_NO_ACCESS);
+        assert_eq!(vb.len(), 1);
     }
 
     #[test]
